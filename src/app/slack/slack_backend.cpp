@@ -1737,16 +1737,19 @@ void SlackBackend::moveToSection(ConvRef conv, const std::string &id) {
     const std::string            old     = from ? from->id : std::string();
     if (old == id)
         return;
-    // Out of a section it goes back to Slack's own one for its kind.
+    // Out of a custom section: put Slack Connect conversations back in
+    // Slack's own slack_connect system section, not ordinary Channels/DMs.
     std::string to = id;
     if (to.empty()) {
         const bool app = cv.kind == model::ConvKind::Dm && cv.dmUser != model::kNoUser &&
                          _store.user(cv.dmUser).bot;
-        const auto it  = _read->systemSections.find(
-            app             ? "recent_apps"
-            : cv.isDirect() ? "direct_messages"
-                            : "channels"
+        const char *defaultType =
+            app ? "recent_apps" : cv.isDirect() ? "direct_messages" : "channels";
+        auto it = _read->systemSections.find(
+            cv.extShared.value_or(false) && !app ? "slack_connect" : defaultType
         );
+        if (it == _read->systemSections.end())
+            it = _read->systemSections.find(defaultType); // older API responses
         if (it != _read->systemSections.end())
             to = it->second;
     }
