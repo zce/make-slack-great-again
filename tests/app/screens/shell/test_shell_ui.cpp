@@ -212,13 +212,13 @@ TEST("title layout: huddle belongs to tab actions, title controls stay compact")
     h.backend.huddles = true;
     h.sh->header().refresh();
     pump();
-    CHECK(h.sh->titleBarHeight() <= 48);
+    CHECK(h.sh->header().height() <= 48);
     CHECK(h.sh->workspaceSwitcher()->height() == 34);
     const ui::View *huddle = h.sh->header().huddle();
     REQUIRE(huddle->parent() != nullptr);
     CHECK(huddle->parent()->parent() == &h.sh->tabs());
     CHECK(huddle->visible());
-    CHECK(huddle->windowRect().y >= h.sh->titleBarHeight());
+    CHECK(huddle->windowRect().y >= h.sh->header().windowRect().y + h.sh->header().height());
 #endif
 }
 
