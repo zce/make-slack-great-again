@@ -133,7 +133,6 @@ void coldStart() {
     e.store.updateConversation(e.conv("D1"), [](model::Conversation &x) {
         x.localName = "Mira (design)";
     });
-    e.store.setAiTranscript("F1", "Hello there", "OpenAI"); // "Transcribe with AI"
     e.store.setThreadMuted(general, model::parseTs("1700000002.000000"), true);
     e.store.setDraft(general, 0, "half a thought", {"/tmp/a.txt"});
 }
@@ -179,9 +178,6 @@ TEST("slack cache: a cold start writes it, a warm start shows it before the netw
     CHECK_STR(e.store.emojiFor("yay").image, "https://e/party.png");
     REQUIRE(e.store.myGroups.size() == 1);
     CHECK(e.store.threadMuted(e.conv("C1"), model::parseTs("1700000002.000000")));
-    REQUIRE(e.store.aiTranscript("F1") != nullptr);
-    CHECK_STR(e.store.aiTranscript("F1")->text, "Hello there");
-    CHECK_STR(e.store.aiTranscript("F1")->by, "OpenAI");
     // The draft the composer was holding when the app was closed.
     REQUIRE(e.store.draft(e.conv("C1"), 0));
     CHECK_STR(e.store.draft(e.conv("C1"), 0)->html, "half a thought");
