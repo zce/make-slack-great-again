@@ -699,6 +699,21 @@ TEST("sections: moving headers persists a workspace-local order") {
     CHECK_STR(titles(sb), "Activity|Threads|Starred|Projects|Externals|Channels|Direct messages");
 }
 
+TEST("sections: adjacent custom section moves also update Slack's order") {
+    Harness h;
+    shell::Sidebar &sb = h.sh->sidebar();
+    h.backend.createSection("Projects", "", kNoConv);
+    h.backend.createSection("Later", "", kNoConv);
+    pump();
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Later|Projects|Channels|Direct messages");
+    REQUIRE(h.store.sections().size() == 2);
+    const std::string projects = h.store.sections()[1].id;
+    REQUIRE(sb.moveSection(projects, -1));
+    pump();
+    CHECK_STR(h.store.sections()[0].id, projects);
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Projects|Later|Channels|Direct messages");
+}
+
 TEST("sections: a new section sits under Starred and takes its rows out of the others") {
     Harness         h;
     shell::Sidebar &sb  = h.sh->sidebar();
