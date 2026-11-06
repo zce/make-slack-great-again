@@ -142,6 +142,46 @@ struct TextRows : ui::VirtualList::Adapter {
 };
 } // namespace
 
+TEST("theme: absolute font sizes do not inherit the Body token adjustment") {
+    const float preference = ui::font(ui::Font::Body).size / 16.5f;
+    const auto actual = ui::pxFont(14.f, text::Weight::Regular, ui::color(ui::C::Text));
+    CHECK(std::abs(actual.size - 14.f * preference) < 0.001f);
+}
+
+TEST("damage: ARGB window scroll remains correct at integer and fractional scales") {
+    for (double scale : {1.0, 1.25, 1.5, 2.0}) {
+        Win w(400, 300);
+        plat::testing_internal::setHeadlessScale(w.native(), scale);
+        w.w->setTransparentBackground(true);
+        w.w->setOverlayClip(10, 10);
+        w.w->setVerify(true);
+
+        auto *surface = w.root().add<ui::View>();
+        surface->style().stack().margins(10, 10, 10, 10);
+        surface->setBackground(ui::C::Sidebar, 10);
+        surface->setClipChildren(true);
+        TextRows rows;
+        auto *list = surface->add<ui::VirtualList>(&rows);
+        list->style().margins(8, 8, 8, 8);
+        list->setBackground(ui::C::Surface);
+        list->setStickToBottom(true);
+        w.frame();
+
+        // Small wheel deltas, alternating directions and large jumps should
+        // not leave old rows, translucent patches or old popup pixels behind.
+        for (float step : {-7.f, -13.f, -40.f, 18.f, -91.f, -0.4f, -0.4f, 25.f})
+            list->scrollBy(step), w.frame();
+
+        const auto incremental = grab(w);
+        CHECK(incremental.front() == 0u); // top-left ARGB corner stays clear
+        w.w->damageAll();
+        w.frame();
+        const auto full = grab(w);
+        CHECK(incremental == full);
+        CHECK(w.w->stats().verifyMismatches == 0);
+    }
+}
+
 TEST("damage: a blit-scrolled frame equals a full repaint (scale 1 and 1.5)") {
     for (double scale : {1.0, 1.5}) {
         Win w(400, 300);
