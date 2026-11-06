@@ -3264,6 +3264,42 @@ TEST("Slack workspaces do not expose Claude's zen-mode toggle") {
     CHECK_FALSE(f.zenToggle()->visible());
 }
 
+#ifndef __APPLE__
+TEST("headerless shell: search stays centered and message pane has symmetric side insets") {
+    Harness h;
+    h.sh->setSignedIn(false);
+    pump();
+
+    // The search belongs to the title content, which grows between the
+    // workspace navigation and the right-hand window controls.
+    auto *titleContent = h.sh->header().parent();
+    REQUIRE(titleContent);
+    REQUIRE(titleContent->childCount() >= 2);
+    auto *search = titleContent->child(1);
+    const auto r = search->windowRect();
+    CHECK(std::abs(r.x + r.w / 2 - h.win->size().w / 2) < 2.f);
+
+    // When the sidebar is hidden, the signed-out card should have the
+    // same 6 px left inset as its right and bottom insets.
+    auto *screen = titleContent->parent()->parent();
+    REQUIRE(screen);
+    ui::View *body = nullptr;
+    for (size_t i = 0; i < screen->childCount(); ++i) {
+        auto *candidate = screen->child(i);
+        if (candidate->childCount() >= 5 && candidate->child(1) == &h.sh->sidebar()) {
+            body = candidate;
+            break;
+        }
+    }
+    REQUIRE(body);
+    auto *signedOut = body->child(4);
+    REQUIRE(signedOut->visible());
+    CHECK(signedOut->currentStyle().pad.l == 6.f);
+    CHECK(signedOut->currentStyle().pad.r == 6.f);
+    CHECK(signedOut->child(0)->windowRect().x >= signedOut->windowRect().x + 5.5f);
+}
+#endif
+
 TEST("single-sidebar layout: one profile controller in the title bar") {
     TwoWorkspaces w;
     auto &f = w.sh->sidebar().footer();
