@@ -1006,6 +1006,22 @@ Shell::Shell(
         storeSorts();
         saveSettingsSoon();
     };
+    _sidebar->onCollapsedUnreadsChanged = [this] {
+        std::erase_if(
+            _settings.sidebarCollapsedUnreads,
+            [this](const Settings::CollapsedUnreadPref &p) { return p.workspace == _activeKey; }
+        );
+        for (const std::string &section : _sidebar->collapsedUnreads())
+            _settings.sidebarCollapsedUnreads.push_back({_activeKey, section});
+        std::sort(
+            _settings.sidebarCollapsedUnreads.begin(),
+            _settings.sidebarCollapsedUnreads.end(),
+            [](const Settings::CollapsedUnreadPref &a, const Settings::CollapsedUnreadPref &b) {
+                return std::tie(a.workspace, a.section) < std::tie(b.workspace, b.section);
+            }
+        );
+        saveSettingsSoon();
+    };
     _sidebar->onSectionOrderChanged = [this] {
         std::erase_if(_settings.sidebarSectionOrders, [this](const Settings::SectionOrderPref &p) {
             return p.workspace == _activeKey;
@@ -3864,6 +3880,11 @@ void Shell::loadSorts() {
         if (p.workspace == _activeKey)
             sorts[p.section] = SectionSort::decode(p.sort);
     _sidebar->setSorts(std::move(sorts));
+    Sidebar::CollapsedUnreads collapsed;
+    for (const Settings::CollapsedUnreadPref &p : _settings.sidebarCollapsedUnreads)
+        if (p.workspace == _activeKey)
+            collapsed.insert(p.section);
+    _sidebar->setCollapsedUnreads(std::move(collapsed));
     std::vector<std::string> order;
     for (const Settings::SectionOrderPref &p : _settings.sidebarSectionOrders)
         if (p.workspace == _activeKey) {
