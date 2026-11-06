@@ -38,7 +38,17 @@ constexpr float kRowHBase = 32, kTopPad = 8, kPill = 12, kPadH = 14, kContentX =
 constexpr int   kAvatarPx = 40; // 20 logical, sharp at 2x
 
 float rowH() {
-    return std::round(kRowHBase * (app() ? app()->userTextScale() : 1.f));
+    const auto *a = app();
+    // Display DPR is applied by the painter, not to logical layout metrics.
+    // OS and in-app text preferences do change the glyph's logical size:
+    // allow the row to grow with those preferences instead of clipping text.
+    const double textScale = a ? a->settings().textScale * a->userTextScale() : 1.0;
+    return std::round(kRowHBase * std::max(1.0, textScale));
+}
+
+void followTextRowHeight(View *row) {
+    row->style().height(rowH());
+    row->onStyleChanged = [row] { row->style().height(rowH()); };
 }
 
 // A row's label and icon: the selected pill's ink, bright, or dim.
@@ -53,6 +63,7 @@ void pillRow(Clickable *r) {
     r->setRole(Role::ListItem);
     r->style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
     r->style().padding(kContentX - kPill, 0, 6, 0);
+    followTextRowHeight(r);
 }
 
 // The 20 px rounded avatar rows show, its placeholder the away grey.
@@ -263,6 +274,7 @@ public:
         setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 0}); // full width
         setRole(Role::Button);
         style().row().height(rowH()).padding(kContentX, 0, kPadH, 0).items(Align::Center);
+        followTextRowHeight(this);
         label = add<Label>(std::move(text), Font::Section, C::SidebarTextMuted);
         label->setMaxLines(1);
         label->style().shrink = 1;
@@ -402,6 +414,7 @@ public:
         setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 0});
         setRole(Role::Button);
         style().row().height(rowH()).items(Align::Center);
+        followTextRowHeight(this);
         style().padding(withPlus ? kContentX + 14 + 6 : kContentX, 0, kPadH, 0);
         label = add<Label>(std::move(text), Font::Body, C::SidebarTextMuted);
         label->setMaxLines(1);
