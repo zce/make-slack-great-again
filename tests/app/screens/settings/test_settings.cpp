@@ -19,6 +19,7 @@
 #include "app/mrkdwn/markdown.h"
 #include "screens/shell/composer.h"
 #include "screens/shell/shell.h"
+#include "screens/shell/sidebar_footer.h"
 #include "screens/shell/shortcuts.h"
 
 #ifdef MSGA_HAVE_MESSAGES
@@ -362,11 +363,19 @@ TEST("settings: one-click reactions keep their places as the most used reorder")
     CHECK(names.empty());
 }
 
-TEST("settings: the gear opens a window-filling overlay; Escape and the backdrop close it") {
-    Harness   h;
-    ui::View *gear = findIn(&h.win->root(), "Settings"); // the rail tooltip
-    REQUIRE(gear != nullptr);
-    h.click(gear);
+TEST("settings: the profile menu opens a window-filling overlay; Escape and backdrop close it") {
+    Harness h;
+    // On the integrated title bar, Settings lives in the existing avatar
+    // menu rather than a redundant toolbar gear.
+    ui::View *avatar = h.sh->sidebar().footer().avatarButton();
+    REQUIRE(avatar != nullptr);
+    h.click(avatar);
+    auto *menu = static_cast<ui::Menu *>(h.win->topPopup());
+    REQUIRE(menu != nullptr);
+    const ui::RectF item = menu->itemRect("Settings");
+    REQUIRE(item.w > 0 && item.h > 0);
+    const ui::RectF frame = menu->windowRect();
+    h.clickAt(frame.x + item.x + item.w / 2, frame.y + item.y + item.h / 2);
     SettingsDialog *d = h.sh->settingsDialog();
     REQUIRE(d != nullptr);
     CHECK(h.win->topPopup() == d);
