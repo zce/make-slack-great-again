@@ -525,7 +525,7 @@ void SidebarFooter::showAvatarMenu() {
     const RectF r = _avatarBtn->windowRect();
     Menu::show(
         *w,
-        {r.x, r.y, 0, 0},
+        {r.x, _inTitle ? r.y + r.h : r.y, 0, 0},
         std::move(items),
         [this](int id) {
             if (id == 3)

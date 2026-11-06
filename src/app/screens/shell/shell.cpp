@@ -926,7 +926,7 @@ Shell::Shell(
     _listHandle = body->add<ListHandle>(*_sidebar, [this](float width) {
 #ifndef __APPLE__
         if (_titleSidebar)
-            _titleSidebar->style().width(width);
+            _titleSidebar->style().width(width + 42);
 #endif
     });
     buildMain(body);
@@ -1381,7 +1381,7 @@ void Shell::buildTitleBar(View *parent) {
     _titleBarH = kTitleBarH;
     _titleBar->style().row().height(kTitleBarH).noShrink().items(Align::Center);
     _titleSidebar = _titleBar->add<View>();
-    _titleSidebar->style().row().width(kListW).height(kTitleBarH)
+    _titleSidebar->style().row().width(kListW + 42).height(kTitleBarH)
         .padding(20, 0, 8, 0).spacing(3).items(Align::Center).noShrink();
 
     auto *workspace = _titleSidebar->add<Clickable>();
@@ -1415,11 +1415,11 @@ void Shell::buildTitleBar(View *parent) {
     search->add<View>()->style().flex(1);
     search->add<IconView>(Icon::Plus, 14, C::SidebarTextMuted);
     search->onClick = [this] { showQuickSwitcher(); };
-    _titleBar->add<View>()->style().flex(1);
+    _titleBar->add<View>()->style().width(24).noShrink();
 
     _titleActions = _titleBar->add<View>();
-    _titleActions->style().row().height(kTitleBarH).padding(0, 0, 6, 0)
-        .spacing(8).items(Align::Center).noShrink();
+    _titleActions->style().row().height(kTitleBarH).padding(0, 0, 28, 0)
+        .spacing(24).items(Align::Center).noShrink();
     auto *help = _titleActions->add<Clickable>();
     help->style().size(28, 28).items(Align::Center)
         .justifyContent(Justify::Center).noShrink();
