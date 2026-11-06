@@ -44,6 +44,8 @@ extern char **environ;
 #define NET_TEST_POSIX 1
 #define NET_TEST_OWN_TLS 1 // our CA loading honours SSL_CERT_FILE
 #include "net/posix/posix.h"
+#include "net/posix/proxy.h"
+#include <sys/socket.h>
 
 #include <atomic>
 #include <dirent.h>
@@ -408,6 +410,132 @@ long voluntarySwitches(pid_t tid) {
     return -1;
 }
 } // namespace
+
+// Save and restore the caller's process environment so proxy tests do not
+// influence unrelated network cases (or the user running the test suite).
+struct ProxyEnvGuard {
+    struct Saved { const char *key; std::string value; bool set; };
+    std::vector<Saved> values;
+    ProxyEnvGuard() {
+        for (const char *key : {"http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY",
+                                "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"}) {
+            const char *value = std::getenv(key);
+            values.push_back({key, value ? value : "", value != nullptr});
+            base::test::unsetEnv(key);
+        }
+    }
+    ~ProxyEnvGuard() {
+        for (const Saved &entry : values) {
+            if (entry.set) base::test::setEnv(entry.key, entry.value);
+            else base::test::unsetEnv(entry.key);
+        }
+    }
+};
+
+TEST("proxy: environment precedence, bypass and invalid settings") {
+    ProxyEnvGuard guard;
+    net::Url https, http;
+    REQUIRE(https.parse("https://api.slack.com:443/"));
+    REQUIRE(http.parse("http://api.slack.com:8080/"));
+    using Kind = net::detail::Proxy::Kind;
+    base::test::setEnv("ALL_PROXY", "socks5h://127.0.0.1:1080");
+    auto p = net::detail::proxyFor(https);
+    CHECK(p.kind == Kind::Socks5);
+    CHECK_STR(p.host, "127.0.0.1");
+    CHECK(p.port == 1080);
+    base::test::setEnv("https_proxy", "http://127.0.0.1:7890");
+    p = net::detail::proxyFor(https);
+    CHECK(p.kind == Kind::Http);
+    CHECK(p.port == 7890);
+    base::test::setEnv("http_proxy", "http://localhost:8888");
+    p = net::detail::proxyFor(http);
+    CHECK(p.port == 8888);
+    base::test::setEnv("NO_PROXY", ".slack.com,localhost,10.0.0.0/8");
+    p = net::detail::proxyFor(https);
+    CHECK(p.kind == Kind::Direct);
+    net::Url ip;
+    REQUIRE(ip.parse("https://10.12.0.5/"));
+    CHECK(net::detail::proxyFor(ip).kind == Kind::Direct);
+    base::test::setEnv("NO_PROXY", "api.slack.com:8080");
+    CHECK(net::detail::proxyFor(http).kind == Kind::Direct);
+    CHECK(net::detail::proxyFor(https).kind == Kind::Http);
+    base::test::setEnv("https_proxy", "https://localhost:7890");
+    p = net::detail::proxyFor(https);
+    CHECK(p.kind == Kind::Invalid);
+    CHECK(startsWith(p.error, "proxy:"));
+}
+
+TEST("proxy: HTTP CONNECT tunnel handshake and rejection") {
+    ProxyEnvGuard guard;
+    net::Url target;
+    REQUIRE(target.parse("https://api.slack.com:443/"));
+    net::detail::Proxy proxy;
+    proxy.kind = net::detail::Proxy::Kind::Http;
+    proxy.host = "127.0.0.1";
+    proxy.port = 7890;
+    for (int code : {200, 407}) {
+        int pair[2];
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+        std::string request;
+        std::thread server([&] {
+            char ch;
+            while (request.size() < 4096 && request.find("\r\n\r\n") == std::string::npos) {
+                if (::read(pair[1], &ch, 1) != 1) break;
+                request += ch;
+            }
+            const std::string response = "HTTP/1.1 " + std::to_string(code) +
+                " Result\r\nContent-Length: 0\r\n\r\n";
+            (void)::write(pair[1], response.data(), response.size());
+            ::close(pair[1]);
+        });
+        net::detail::Waiter w;
+        w.deadline = net::detail::nowMs() + 3000;
+        std::string error;
+        const bool ok = net::detail::proxyTunnel(pair[0], target, proxy, w, &error);
+        ::close(pair[0]);
+        server.join();
+        CHECK(startsWith(request, "CONNECT api.slack.com:443 HTTP/1.1\r\n"));
+        CHECK(ok == (code == 200));
+        if (code != 200) CHECK(startsWith(error, "proxy: CONNECT rejected"));
+    }
+}
+
+TEST("proxy: SOCKS5 tunnel uses remote DNS") {
+    int pair[2];
+    REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    std::string destination;
+    std::thread server([&] {
+        unsigned char greeting[3];
+        if (::read(pair[1], greeting, sizeof greeting) == 3 &&
+            greeting[0] == 5 && greeting[1] == 1 && greeting[2] == 0) {
+            const unsigned char accept[] = {5, 0};
+            (void)::write(pair[1], accept, sizeof accept);
+            unsigned char header[5];
+            if (::read(pair[1], header, sizeof header) == 5 &&
+                header[0] == 5 && header[1] == 1 && header[3] == 3) {
+                std::string tail(header[4] + 2, '\0');
+                if (::read(pair[1], tail.data(), tail.size()) == ssize_t(tail.size()))
+                    destination = tail.substr(0, header[4]);
+            }
+            const unsigned char reply[] = {5, 0, 0, 1, 127, 0, 0, 1, 0, 0};
+            (void)::write(pair[1], reply, sizeof reply);
+        }
+        ::close(pair[1]);
+    });
+    net::Url target;
+    REQUIRE(target.parse("wss://slack.com/socket"));
+    net::detail::Proxy proxy;
+    proxy.kind = net::detail::Proxy::Kind::Socks5;
+    net::detail::Waiter w;
+    w.deadline = net::detail::nowMs() + 3000;
+    std::string error;
+    const bool ok = net::detail::proxyTunnel(pair[0], target, proxy, w, &error);
+    ::close(pair[0]);
+    server.join();
+    CHECK(ok);
+    CHECK_STR(error, "");
+    CHECK_STR(destination, "slack.com");
+}
 
 // An idle WebSocket reader waits with a wake fd and no deadline: it must
 // sleep until something happens (no 4×/s poll timeouts), yet an abort (flag +
