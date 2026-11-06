@@ -152,7 +152,11 @@ std::vector<ui::MenuItem> Menus::workspaceItems(const Workspace &w) const {
     return items;
 }
 
-std::vector<ui::MenuItem> Menus::sectionItems(const std::string &section, SectionSort sort) const {
+std::vector<ui::MenuItem> Menus::sectionItems(
+    const std::string &section,
+    SectionSort sort,
+    std::optional<std::pair<bool, bool>> localMoves
+) const {
     std::vector<ui::MenuItem> items;
     if (_ctx.backend.capabilities().customSections) {
         add(items, kCreateSection);
@@ -161,11 +165,18 @@ std::vector<ui::MenuItem> Menus::sectionItems(const std::string &section, Sectio
             if (all[i].id == section) {
                 add(items, kRenameSection);
                 ui::addMenuSeparator(items);
-                add(items, kSectionUp, false, i > 0);
-                add(items, kSectionDown, false, i + 1 < all.size());
-                ui::addMenuSeparator(items);
+                if (!localMoves) {
+                    add(items, kSectionUp, false, i > 0);
+                    add(items, kSectionDown, false, i + 1 < all.size());
+                    ui::addMenuSeparator(items);
+                }
                 add(items, kDeleteSection);
             }
+        ui::addMenuSeparator(items);
+    }
+    if (localMoves) {
+        add(items, kSectionUp, false, localMoves->first);
+        add(items, kSectionDown, false, localMoves->second);
         ui::addMenuSeparator(items);
     }
     // The sort: one of the orders ticked, and unreads on top on or off.
@@ -218,16 +229,20 @@ void Menus::showSection(
     const std::string               &section,
     SectionSort                      sort,
     ui::PointF                       at,
-    std::function<void(SectionSort)> onSort
+    std::function<void(SectionSort)> onSort,
+    std::pair<bool, bool>            canMove,
+    std::function<void(int)>         onMove
 ) {
     ui::Menu::popupAt(
         _win,
         at,
-        sectionItems(section, sort),
-        [this, section, sort, onSort = std::move(onSort)](int id) {
+        sectionItems(section, sort, canMove),
+        [this, section, sort, onSort = std::move(onSort), onMove = std::move(onMove)](int id) {
             if (id >= kSortDefault && id <= kUnreadsFirst) {
                 if (onSort)
                     onSort(sortAfter(id, sort));
+            } else if ((id == kSectionUp || id == kSectionDown) && onMove) {
+                onMove(id == kSectionUp ? -1 : 1);
             } else if (id)
                 runSection(id, section);
         }
