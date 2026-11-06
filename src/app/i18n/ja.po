@@ -2768,6 +2768,10 @@ msgid "Agents & apps"
 msgstr "エージェントとアプリ"
 
 #: src/app/screens/shell/sidebar.cpp
+msgid "Externals"
+msgstr ""
+
+#: src/app/screens/shell/sidebar.cpp
 msgid "%1 more %2"
 msgstr "他%1件の%2"
 
