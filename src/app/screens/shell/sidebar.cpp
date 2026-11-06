@@ -371,7 +371,7 @@ public:
     }
     Sidebar                      &sidebar;
     // 0 starred, 1 channels, 2 direct messages, 3 Slack agents & apps,
-    // 5 a custom section (sectionId)
+    // 5 a custom section (sectionId), 6 external connections
     int                           kind;
     Icon                          icon;
     std::string                   title;
@@ -742,7 +742,10 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
                 (r ? r->unread != paintsUnread(cv) : cv.member && paintsUnread(cv));
             const bool starFlip =
                 r && r->section->kind != 5 && (r->section->kind == 0) != cv.starred;
-            if (!r != !cv.member || starFlip || filterFlip)
+            const bool externalFlip =
+                r && r->section->kind != 5 && !cv.starred && !isApp(cv) &&
+                (r->section->kind == 6) != cv.extShared.value_or(false);
+            if (!r != !cv.member || starFlip || filterFlip || externalFlip)
                 rebuildSoon(false); // once per burst; the list stays where it was scrolled
             else {
                 refresh(ch.conv);
@@ -881,9 +884,9 @@ void Sidebar::rebuild() {
         _navSelected = Nav::None;
     showNavSelection();
 
-    // Starred first (any kind), then channels, direct messages, agents &
-    // apps; fixture (= server) order inside each.
-    std::vector<ConvRef> lists[4], hiddenCh;
+    // Starred and custom sections win over automatic grouping; external
+    // Slack Connect conversations get one shared section (channels and DMs).
+    std::vector<ConvRef> lists[4], externals, hiddenCh;
     const auto           listed = [&](ConvRef c) {
         return !_filters.unreadsOnly || c == _selected || paintsUnread(store.conversation(c));
     };
@@ -929,6 +932,11 @@ void Sidebar::rebuild() {
         else if (isApp(cv)) {
             if (listed(c) && (_filters.showAgentsApps || c == _selected))
                 lists[3].push_back(c);
+        } else if (cv.extShared.value_or(false)) {
+            // External connections are few and worth keeping discoverable,
+            // even when idle beyond the usual relevant-days cutoff.
+            if (listed(c))
+                externals.push_back(c);
         } else if (cv.isDirect()) {
             if (relevant(c) && listed(c))
                 lists[2].push_back(c);
@@ -957,7 +965,7 @@ void Sidebar::rebuild() {
                              const std::vector<ConvRef> &rows,
                              const std::string          &id = {}) {
         auto *h      = _items->add<SectionHeader>(*this, kind, icon, std::move(title));
-        h->collapsed = kind < 5 && _collapsed[kind];
+        h->collapsed = (kind < 5 || kind == 6) && _collapsed[kind];
         _sections.push_back(h);
         h->onClick = [this, h] {
             h->collapsed = !h->collapsed;
@@ -977,7 +985,9 @@ void Sidebar::rebuild() {
         return h;
     };
     for (int s = 0; s < 4; ++s) {
-        if (s == 1) // the user's own sections, between Starred and Channels
+        if (s == 1) {
+            // User-defined sections are explicit placements; the automatic
+            // Externals section comes after them, before ordinary channels.
             for (size_t i = 0; i < custom.size(); ++i) {
                 auto *h = section(5, Icon::List, secs[i].name, custom[i], secs[i].id);
                 if (!secs[i].emoji.empty())
@@ -986,6 +996,11 @@ void Sidebar::rebuild() {
                 h->collapsed   = was != _collapsedCustom.end() && was->second;
                 applyCollapse(h);
             }
+            if (!externals.empty()) {
+                auto *h = section(6, Icon::ExternalLink, tr("Externals"), externals);
+                applyCollapse(h);
+            }
+        }
         // No Starred section until starred, no Agents & apps without an app DM.
         if (lists[s].empty() && (s == 0 || s == 3))
             continue;
@@ -1203,6 +1218,8 @@ std::string Sidebar::sectionKey(int kind, const std::string &id) {
         return "#apps";
     case 5:
         return id;
+    case 6:
+        return "#externals";
     }
     return {};
 }
@@ -1274,12 +1291,19 @@ SectionHeader *Sidebar::sectionAt(PointF windowPos) const {
 
 // Where the dragged row would land (null: nowhere new): a custom section,
 // Starred, or out of its custom section / Starred via the other built-ins.
-static bool accepts(const SectionHeader *to, const SectionHeader *from) {
+static bool accepts(const SectionHeader *to, const SectionHeader *from, bool external) {
     if (!to || to == from)
         return false;
     if (to->kind == 5 || to->kind == 0)
         return true;
-    return from->kind == 5 || from->kind == 0; // back to its own section
+    // These built-in sections are derived from Slack metadata, not a
+    // user-defined destination. A drop that would immediately bounce back
+    // to Externals (or put an internal channel there) must not be offered.
+    if (to->kind == 6)
+        return external && (from->kind == 5 || from->kind == 0);
+    if (external)
+        return false;
+    return from->kind == 5 || from->kind == 0; // back to its default section
 }
 
 void Sidebar::dragRow(ConvRow *row, PointF windowPos) {
@@ -1287,7 +1311,8 @@ void Sidebar::dragRow(ConvRow *row, PointF windowPos) {
         return;
     _dragRow           = row;
     SectionHeader *to  = sectionAt(windowPos);
-    SectionHeader *hit = accepts(to, row->section) ? to : nullptr;
+    const bool external = _ctx.store().conversation(row->conv).extShared.value_or(false);
+    SectionHeader *hit = accepts(to, row->section, external) ? to : nullptr;
     for (SectionHeader *h : _sections)
         if (h->dropTarget != (h == hit)) {
             h->dropTarget = h == hit;
@@ -1330,7 +1355,8 @@ void Sidebar::moveInto(ConvRef conv, SectionHeader *to) {
 bool Sidebar::dropOnSection(ConvRef conv, std::string_view title) {
     const ConvRow *r = rowFor(conv);
     for (SectionHeader *h : _sections)
-        if (r && h->title == title && accepts(h, r->section)) {
+        if (r && h->title == title &&
+            accepts(h, r->section, _ctx.store().conversation(conv).extShared.value_or(false))) {
             moveInto(conv, h);
             return true;
         }
