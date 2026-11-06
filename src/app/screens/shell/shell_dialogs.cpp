@@ -49,7 +49,6 @@ struct Target {
     ConvRef     conv   = kNoConv;
     UserRef     person = kNoUser; // someone without a DM yet
     std::string label;
-    std::string role; // an agent workspace's teammate: a new session with it
 };
 
 class ConvSelector;
@@ -256,12 +255,6 @@ private:
             if (match(name))
                 out.push_back({c, kNoUser, direct ? name : "#" + name});
         }
-        // An agent workspace's teammates:
-        // writing to one starts a session with it.
-        if (!chans && _ctx.backend.capabilities().agentSessions)
-            for (const model::Backend::AgentRole &r : _ctx.backend.agentRoles())
-                if (!r.id.empty() && match(r.name))
-                    out.push_back({kNoConv, kNoUser, r.name, r.id});
         if (!chans) { // people without a DM (up to 50): prefix matches first
             struct Person {
                 bool        prefix;
@@ -447,11 +440,10 @@ public:
         std::string                              onlyFile,
         std::function<void(const std::string &)> onError,
         std::vector<ForwardWorkspace>            workspaces,
-        PrefillTeammate                          prefillTeammate
     )
         : Dialog(onlyFile.empty() ? tr("Forward this message") : tr("Forward this file")),
           _conv(conv), _ts(ts), _onlyFile(std::move(onlyFile)), _onError(std::move(onError)),
-          _workspaces(std::move(workspaces)), _prefillTeammate(std::move(prefillTeammate)) {
+          _workspaces(std::move(workspaces)) {
         // The message's workspace: the open one. Its own backend reads its
         // files (not the screens' proxy, which follows the next switch).
         model::Backend *srcBackend = &ctx.backend;
@@ -591,9 +583,7 @@ private:
         auto                    deliver = [to,
                                            conv    = t->conv,
                                            person  = t->person,
-                                           role    = t->role,
                                            ws      = to.store->workspaceId,
-                                           prefill = _prefillTeammate,
                                            onError = _onError](std::string text, ForwardFiles ff) {
             auto cleanup = [temps = ff.temps] {
                 for (const std::string &t : temps)
@@ -604,16 +594,6 @@ private:
             };
             if (!there() || (text.empty() && ff.paths.empty()))
                 return cleanup();
-            if (conv == kNoConv && !role.empty()) {
-                // The teammate's page with it all in
-                // the composer, left to send (the copies stay for that send).
-                if (prefill)
-                    return prefill(to.key, role, std::move(text), std::move(ff.paths));
-                cleanup();
-                if (onError)
-                    onError(tr("Couldn't open the chat."));
-                return;
-            }
             auto send = [to, there, text = std::move(text), paths = std::move(ff.paths), cleanup](
                             ConvRef c
                         ) {
@@ -678,7 +658,6 @@ private:
     std::vector<ForwardWorkspace>            _workspaces;
     int                                      _target = -1;
     std::unique_ptr<screens::Context>        _src, _tctx; // the message's; the pick's (if other)
-    PrefillTeammate                          _prefillTeammate;
     DraftStash                               _drafts;
     Dropdown                                *_wsPicker = nullptr;
     ConvSelector                            *_picker   = nullptr;
@@ -1131,7 +1110,6 @@ Popup *showForwardDialog(
     const std::string                       &onlyFile,
     std::function<void(const std::string &)> onError,
     std::vector<ForwardWorkspace>            workspaces,
-    PrefillTeammate                          prefillTeammate
 ) {
     if (!ctx.store().findMessage(conv, ts))
         return nullptr;
@@ -1141,8 +1119,7 @@ Popup *showForwardDialog(
         ts,
         onlyFile,
         std::move(onError),
-        std::move(workspaces),
-        std::move(prefillTeammate)
+        std::move(workspaces)
     );
     auto *raw = d.get();
     w.showPopup(std::move(d));
@@ -1325,8 +1302,7 @@ Popup *showRenameDialog(screens::Context &ctx, Window &w, ConvRef c) {
     if (c >= ctx.store().conversationCount())
         return nullptr;
     const model::Conversation &cv    = ctx.store().conversation(c);
-    const bool                 agent = ctx.backend.isAgentSession(c);
-    auto d = std::make_unique<Dialog>(agent ? tr("Rename session") : tr("Name conversation"));
+    auto d = std::make_unique<Dialog>(tr("Name conversation"));
     styledLabel(d->content(), tr("Name"), pxFont(15, text::Weight::Bold, color(C::FormText)));
     auto *field = d->content()->add<TextField>(
         // Empty: the placeholder is the name it falls back to (derivedName).
@@ -1338,9 +1314,7 @@ Popup *showRenameDialog(screens::Context &ctx, Window &w, ConvRef c) {
     field->edit().selectAll();
     styledLabel(
         d->content(),
-        agent ? tr("Only msga shows this name; Claude Code keeps its own. Leave it empty to use "
-                   "Claude Code's name again.")
-              : tr("Only you see this name. Leave it empty to show the members' names again."),
+        tr("Only you see this name. Leave it empty to show the members' names again."),
         pxFont(11, text::Weight::Regular, color(C::FormTextMuted))
     );
     auto *save = Dialog::makeButton(tr("Save"), V::Primary);
