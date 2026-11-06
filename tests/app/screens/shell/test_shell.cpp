@@ -2007,6 +2007,7 @@ TEST("workspace switch: the open chat and thread are left before the Store empti
 
 // ── Workspace rail ──────────────────────────────────────────────────────────
 
+#ifdef __APPLE__
 namespace {
 
 const std::string kSlackKey = "slack:T0LUMEN", kClaudeKey = "claude-code:local";
@@ -2135,6 +2136,8 @@ TEST("workspace rail: a background workspace's menu acts on it") {
     m.run(shell::Menus::kSignOut, 0);    // the menu was used up: the open one's now
     CHECK_STR(signedOut, "");
 }
+
+#endif // __APPLE__: legacy vertical workspace rail
 
 TEST("notifications: pictures are a rounded square (roundedNotifIcon)") {
     gfx::Bitmap b(80, 64); // wider than tall: centre-cropped to 64
@@ -3226,21 +3229,21 @@ TEST("Slack workspaces do not expose Claude's zen-mode toggle") {
     CHECK_FALSE(f.zenToggle()->visible());
 }
 
-TEST("activity bar: profile avatar frees sidebar space and survives rail toggle") {
+TEST("single-sidebar layout: one profile controller in the title bar") {
     TwoWorkspaces w;
     auto &f = w.sh->sidebar().footer();
-    REQUIRE(f.parent() == w.sh->rail());
-    CHECK(f.inRail());
+#ifndef __APPLE__
+    CHECK_FALSE(w.sh->rail()->visible());
+    REQUIRE(f.parent() != &w.sh->sidebar());
+    REQUIRE(f.parent() != w.sh->rail());
+    CHECK(f.inRail()); // presence is managed by the avatar dropdown
     CHECK(f.avatarButton()->visible());
     CHECK_FALSE(f.toggle()->visible());
-    f.toggleRail();
-    CHECK_FALSE(w.sh->rail()->visible());
-    CHECK(f.parent() == &w.sh->sidebar());
-    CHECK_FALSE(f.inRail());
-    f.toggleRail();
-    CHECK(w.sh->rail()->visible());
+    CHECK(w.sh->workspaceSwitcher() != nullptr);
+    CHECK(w.sh->workspaceSwitcher()->parent() == &w.sh->sidebar());
+#else
     CHECK(f.parent() == w.sh->rail());
-    CHECK(f.inRail());
+#endif
 }
 
 TEST("header: names, presence, DND and my phantom state follow the Store") {
@@ -3557,6 +3560,7 @@ TEST("thread panel: Esc closes it once the focused view has no use for the key")
     CHECK_FALSE(h.sh->threadOpen());
 }
 
+#ifdef __APPLE__
 TEST("sidebar footer: the avatar menu hides the workspace rail and remembers it") {
     Harness h;
     CHECK(h.sh->rail()->visible());
@@ -3581,6 +3585,8 @@ TEST("sidebar footer: the avatar menu hides the workspace rail and remembers it"
     CHECK(h.sh->rail()->visible());
     CHECK(h.settings.showRail);
 }
+
+#endif // legacy rail preference
 
 #ifdef __APPLE__
 TEST("window: full screen drops the title bar strip and puts the header over the right pane") {

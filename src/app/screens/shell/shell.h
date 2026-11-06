@@ -88,6 +88,7 @@ public:
     std::vector<std::string>      railOrder() const;
     ui::View                     *workspaceTile(const std::string &key) const; // tests
     int workspaceDot(const std::string &key) const; // tests: its tile's dot (0, 1 blue, 2 red)
+    ui::View *workspaceSwitcher() const { return _workspaceSwitch; } // compact footer
     // A click on a tile or its tray item, and a drop that reordered the rail.
     std::function<void(const std::string &key)>               onSwitchWorkspace;
     std::function<void(const std::vector<std::string> &keys)> onReorderWorkspaces;

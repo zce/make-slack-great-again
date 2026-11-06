@@ -287,6 +287,7 @@ void SidebarFooter::setInTitleBar() {
     hideTasksPopup();
     _inTitle = true;
     _inRail = true;
+    _tasks->setRole(Role::Button); // the title strip otherwise treats hover as caption drag
     style().row().width(kAuto).height(kAuto).padding(0).items(Align::Center).spacing(6);
     _spacer->setVisible(false);
     adopt(remove(_tasks), 0);

@@ -453,10 +453,18 @@ TEST("sidebar footer: the background-task cog turns while jobs run and lists the
     pump();
     REQUIRE(cog->visible());
     CHECK(f.tasksTurning());
-    // Left of the presence toggle, 8 px apart, the same 40 px square.
-    const ui::RectF c = cog->windowRect(), t = f.toggle()->windowRect();
+    const ui::RectF c = cog->windowRect();
+    CHECK(c.w == 40 && c.h == 40);
+#ifdef __APPLE__
+    // The old footer puts the spinner before the presence toggle.
+    const ui::RectF t = f.toggle()->windowRect();
     CHECK(std::abs(c.x + c.w + 8 - t.x) < 0.5f);
-    CHECK(c.w == 40 && c.h == 40 && c.y == t.y);
+    CHECK(c.y == t.y);
+#else
+    // The integrated title bar places the spinner next to the avatar.
+    CHECK(c.y < 48);
+    CHECK_FALSE(f.toggle()->visible());
+#endif
     // Hovering it: the count, then the jobs; it follows the list.
     auto *hooks = app().platform().testHooks();
     hooks->injectPointerMove(h.win->native(), {c.x + 20, c.y + 20});
@@ -465,7 +473,11 @@ TEST("sidebar footer: the background-task cog turns while jobs run and lists the
     CHECK_STR(
         f.tasksPopup()->accessibleName(), "1 background task running\nDownloading report.pdf"
     );
+#ifdef __APPLE__
     CHECK(f.tasksPopup()->windowRect().y + f.tasksPopup()->height() <= c.y); // above it
+#else
+    CHECK(f.tasksPopup()->windowRect().y >= c.y); // below the title bar
+#endif
     const int b = model::jobs().begin("Copying photo.png");
     pump();
     CHECK_STR(
