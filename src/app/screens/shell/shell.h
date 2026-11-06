@@ -294,6 +294,7 @@ private:
     void        showMessageArea(); // out of a full-width thread panel
     void        closeThreadOnEscape();
     void        addWorkspace(ui::PointF anchor);
+    void        showWorkspacePicker(ui::PointF anchor);
     void        togglePin();  // "Pin window on top"
     void        syncChrome(); // the OS-drawn chrome follows the app theme
     // macOS full screen: no title bar strip; the conversation header moves
@@ -433,6 +434,9 @@ private:
     Sidebar               *_sidebar  = nullptr;
     Composer              *_composer = nullptr;
     ui::View              *_titleBar = nullptr, *_rail = nullptr;
+    ui::View              *_titleSidebar = nullptr, *_titleActions = nullptr;
+    ui::View              *_workspaceSwitch = nullptr;
+    Avatar                *_workspaceAvatar = nullptr;
     float                  _titleBarH  = 0;       // buildTitleBar
     ui::Label             *_titleLabel = nullptr; // macOS: the workspace, without a header
     WorkspaceStack        *_wsStack    = nullptr;

@@ -36,6 +36,7 @@ public:
     // Reuse this control in the Activity Bar; if it is hidden, move it back
     // to the sidebar so profile and settings remain accessible.
     void setInRail(bool inRail);
+    void setInTitleBar();
     bool inRail() const { return _inRail; }
 
     // The avatar menu's items; unset ones show disabled.
@@ -86,6 +87,7 @@ private:
     bool                    _zenOn        = false;
     bool                    _railShown    = true;
     bool                    _inRail       = false;
+    bool                    _inTitle      = false;
     plat::TimerId           _confirm      = 0; // settle back if the service never answers
 };
 

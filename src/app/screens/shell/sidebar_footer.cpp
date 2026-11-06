@@ -281,6 +281,23 @@ void SidebarFooter::setInRail(bool inRail) {
     refresh();
 }
 
+void SidebarFooter::setInTitleBar() {
+    if (_inTitle)
+        return;
+    hideTasksPopup();
+    _inTitle = true;
+    _inRail = true;
+    style().row().width(kAuto).height(kAuto).padding(0).items(Align::Center).spacing(6);
+    _spacer->setVisible(false);
+    adopt(remove(_tasks), 0);
+    _avatarBtn->style().size(30, 30);
+    _avatar->style().size(30, 30);
+    _avatar->setRadius(7);
+    _toggle->setVisible(false);
+    _zen->setVisible(false);
+    refresh();
+}
+
 View *SidebarFooter::tasksIndicator() const {
     return _tasks;
 }
@@ -375,7 +392,7 @@ void SidebarFooter::refresh() {
         : active           ? P::Active
         : sp.phantomAway() ? P::Phantom
                            : P::Away,
-        _inRail ? C::Rail : C::Sidebar
+        _inRail && !_inTitle ? C::Rail : C::Sidebar
     );
     _avatarBtn->setTooltip(caps.selfStatus ? tr("Profile & status") : tr("Profile"));
     _toggle->setVisible(self && !_inRail);
@@ -495,12 +512,14 @@ void SidebarFooter::showAvatarMenu() {
     settings.enabled = bool(onOpenSettings);
     items.push_back(std::move(settings));
 
-    MenuItem rail;
-    rail.id      = 3;
-    rail.label   = tr("Show workspaces");
-    rail.icon    = uint16_t(Icon::PanelLeft);
-    rail.checked = _railShown;
-    items.push_back(std::move(rail));
+    if (!_inTitle) {
+        MenuItem rail;
+        rail.id      = 3;
+        rail.label   = tr("Show workspaces");
+        rail.icon    = uint16_t(Icon::PanelLeft);
+        rail.checked = _railShown;
+        items.push_back(std::move(rail));
+    }
 
     const RectF r = _avatarBtn->windowRect();
     Menu::show(
@@ -521,7 +540,7 @@ void SidebarFooter::showAvatarMenu() {
                     hook();
             }
         },
-        Popup::Place::Above
+        _inTitle ? Popup::Place::Below : Popup::Place::Above
     );
 }
 
