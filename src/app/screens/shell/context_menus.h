@@ -65,6 +65,7 @@ public:
         kSortAlpha,
         kSortRecent,
         kUnreadsFirst,
+        kShowUnreadWhenCollapsed,
         // "Move to section" → the n-th section (target: ConvRef)
         kMoveToSection = 200,
     };
@@ -81,7 +82,8 @@ public:
     // messages…); `sort` is the section's, ticked in the menu.
     std::vector<ui::MenuItem> sectionItems(
         const std::string &section, SectionSort sort,
-        std::optional<std::pair<bool, bool>> localMoves = {}
+        std::optional<std::pair<bool, bool>> localMoves = {},
+        std::optional<bool> showUnreadWhenCollapsed = {}
     ) const;
     void                      runSection(int id, const std::string &section);
     // The sort a sort item picks (`sort` unchanged for any other item).
@@ -99,7 +101,9 @@ public:
         ui::PointF                       at,
         std::function<void(SectionSort)> onSort,
         std::pair<bool, bool>            canMove,
-        std::function<void(int)>         onMove
+        std::function<void(int)>         onMove,
+        bool                             showUnreadWhenCollapsed,
+        std::function<void()>            onToggleCollapsedUnreads
     );
 
 private:
