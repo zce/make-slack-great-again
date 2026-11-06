@@ -451,7 +451,8 @@ TEST("global search: Ctrl+K includes message text, not only conversation names")
     auto *search = h.sh->quickSwitcher();
     REQUIRE(search);
     search->field().setText("proposal b");
-    REQUIRE(until([&] { return !search->messageResults().empty(); }));
+    for (int i = 0; i < 1000 && search->messageResults().empty(); ++i) pump(5);
+    REQUIRE(!search->messageResults().empty());
     CHECK(search->messageResults()[0].conv == h.conv("C0DESIGN"));
     search->choose(int(search->results().size()));
     pump();
