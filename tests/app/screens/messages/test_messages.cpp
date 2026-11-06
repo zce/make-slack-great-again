@@ -3203,9 +3203,18 @@ TEST("blocks: headers, dividers, images and tables; ten rows and the pill; cards
     dump(e, "blocks_top");
     // Hiding a preview (not mine: hidden here only).
     CHECK_FALSE(e.list->removesPreviewServerSide(*e.store.findMessage(c, (t0 + 600) * 1000000)));
-    e.list->dismissAttachment((t0 + 600) * 1000000, 0);
-    pump(4);
-    row2 = e.row((t0 + 600) * 1000000);
+    const Ts secondTs = (t0 + 600) * 1000000;
+    e.list->dismissAttachment(secondTs, 0);
+    // The first message's table/image may now occupy an entire viewport.
+    // Scroll to the updated row before inspecting its virtualized view.
+    const auto &items = e.list->items();
+    const auto it = std::find_if(items.begin(), items.end(), [secondTs](const auto &item) {
+        return item.kind == Kind::Message && item.ts == secondTs;
+    });
+    REQUIRE(it != items.end());
+    e.list->list().scrollToItem(int(it - items.begin()), ui::VirtualList::ItemAlign::End, false);
+    pump(6);
+    row2 = e.row(secondTs);
     REQUIRE(row2 != nullptr);
     CHECK(findLeaf(row2, "quoted words") == nullptr);
 }
