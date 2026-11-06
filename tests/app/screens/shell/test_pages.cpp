@@ -369,11 +369,11 @@ TEST("quick switcher: fuzzy, the placeholder and the empty state") {
     pump();
     shell::QuickSwitcher *qs = h.sh->quickSwitcher();
     REQUIRE(qs);
-    CHECK(findIn(qs, "No conversations match.") == nullptr);
+    CHECK(findIn(qs, "No results found.") == nullptr);
     qs->field().insertText("qqqq");
     pump();
     CHECK(qs->results().empty());
-    CHECK(findIn(qs, "No conversations match.") != nullptr);
+    CHECK(findIn(qs, "Searching messages\\xE2\\x80\\xA6") != nullptr);
     qs->close();
     pump();
 }
