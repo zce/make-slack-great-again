@@ -87,7 +87,7 @@ jobs:
           chmod +x dist/msga
           (cd dist && sha256sum msga > SHA256SUMS)
       - name: Upload pull request test build
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && matrix.artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: msga-linux-x86_64-pr${{ github.event.pull_request.number }}
