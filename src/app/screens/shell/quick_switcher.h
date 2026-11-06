@@ -1,4 +1,4 @@
-// Ctrl/Cmd+K: integrated search of conversations, people and Slack messages.
+// Ctrl/Cmd+K: message-first search across all connected Slack workspaces.
 #pragma once
 
 #include "screens/common/context.h"
@@ -76,7 +76,11 @@ public:
     ~QuickSwitcher() override;
     ui::TextEdit                      &field() { return *_field; }
     const std::vector<model::ConvRef> &results() const { return _results; }
-    const std::vector<model::Backend::SearchHit> &messageResults() const { return _hits; }
+    struct MessageMatch {
+        size_t workspace = 0; // _tabs index
+        model::Backend::SearchHit hit;
+    };
+    const std::vector<MessageMatch> &messageResults() const { return _hits; }
     void                               choose(int index); // opens results[index] and closes
     int                                tab() const { return _tab; }
     void                               setTab(int index); // a click on its bubble
@@ -112,7 +116,8 @@ private:
     bool                        _manualTab = false; // picked by hand since typing began
     std::vector<model::ConvRef> _results;
     std::vector<model::UserRef> _people;
-    std::vector<model::Backend::SearchHit> _hits;
+    std::vector<MessageMatch> _hits;
+    size_t _pendingSearches = 0;
     uint32_t                    _searchGeneration = 0;
     plat::TimerId               _searchTimer = 0;
     bool                        _searching = false;
