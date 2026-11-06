@@ -51,6 +51,7 @@ constexpr ui::MenuDef kDefs[] = {
     {Menus::kSortAlpha, kNone, N_("Alphabetically"), nullptr, nullptr},
     {Menus::kSortRecent, kNone, N_("By most recent"), nullptr, nullptr},
     {Menus::kUnreadsFirst, kNone, N_("Unreads on top"), nullptr, nullptr},
+    {Menus::kShowUnreadWhenCollapsed, kNone, N_("Show unread conversations when collapsed"), nullptr, nullptr},
 };
 
 ui::MenuItem &add(std::vector<ui::MenuItem> &out, int id, bool direct = false, bool on = true) {
@@ -155,7 +156,8 @@ std::vector<ui::MenuItem> Menus::workspaceItems(const Workspace &w) const {
 std::vector<ui::MenuItem> Menus::sectionItems(
     const std::string &section,
     SectionSort sort,
-    std::optional<std::pair<bool, bool>> localMoves
+    std::optional<std::pair<bool, bool>> localMoves,
+    std::optional<bool> showUnreadWhenCollapsed
 ) const {
     std::vector<ui::MenuItem> items;
     if (_ctx.backend.capabilities().customSections) {
@@ -186,6 +188,10 @@ std::vector<ui::MenuItem> Menus::sectionItems(
     add(items, kSortRecent).checked  = sort.by == SectionSort::By::Recent;
     ui::addMenuSeparator(items);
     add(items, kUnreadsFirst).checked = sort.unreadsFirst;
+    if (showUnreadWhenCollapsed) {
+        ui::addMenuSeparator(items);
+        add(items, kShowUnreadWhenCollapsed).checked = *showUnreadWhenCollapsed;
+    }
     return items;
 }
 
@@ -231,16 +237,21 @@ void Menus::showSection(
     ui::PointF                       at,
     std::function<void(SectionSort)> onSort,
     std::pair<bool, bool>            canMove,
-    std::function<void(int)>         onMove
+    std::function<void(int)>         onMove,
+    bool                             showUnreadWhenCollapsed,
+    std::function<void()>            onToggleCollapsedUnreads
 ) {
     ui::Menu::popupAt(
         _win,
         at,
-        sectionItems(section, sort, canMove),
-        [this, section, sort, onSort = std::move(onSort), onMove = std::move(onMove)](int id) {
+        sectionItems(section, sort, canMove, showUnreadWhenCollapsed),
+        [this, section, sort, onSort = std::move(onSort), onMove = std::move(onMove),
+         onToggle = std::move(onToggleCollapsedUnreads)](int id) {
             if (id >= kSortDefault && id <= kUnreadsFirst) {
                 if (onSort)
                     onSort(sortAfter(id, sort));
+            } else if (id == kShowUnreadWhenCollapsed && onToggle) {
+                onToggle();
             } else if ((id == kSectionUp || id == kSectionDown) && onMove) {
                 onMove(id == kSectionUp ? -1 : 1);
             } else if (id)
