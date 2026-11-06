@@ -1075,7 +1075,17 @@ TEST("actions: one-click reactions go in my skin tone and find mine under any to
     screens::EmojiPicker::restoreState({}, 3);
     e.list->showConversation(design);
     pump(10);
-    ui::View *row = e.row(e.store.conversation(design).messages.back().ts);
+    // The fixture mixes wall-clock and relative timestamps: its last message
+    // depends on the hour of day and may already have one of my reactions.
+    // The exact reaction-list assertions below need a clean starting message.
+    Ts target = 0;
+    for (const model::Message &m : e.store.conversation(design).messages)
+        if (m.reactions.empty())
+            target = m.ts;
+    REQUIRE(target != 0);
+    e.list->scrollToMessage(target, false, false);
+    pump(4);
+    ui::View *row = e.row(target);
     REQUIRE(row != nullptr);
     auto           *h  = app().platform().testHooks();
     const ui::RectF rr = row->windowRect();
@@ -1083,7 +1093,8 @@ TEST("actions: one-click reactions go in my skin tone and find mine under any to
     pump(4);
     // The message the toolbar is on (the hover, whichever row it found).
     REQUIRE(e.list->toolbarRow() != nullptr);
-    const Ts  ts  = e.list->toolbarRow()->ts();
+    REQUIRE(e.list->toolbarRow()->ts() == target);
+    const Ts  ts  = target;
     ui::View *bar = e.list->quickReactionBar();
     REQUIRE(bar->visible());
     REQUIRE(bar->childCount() == 3);
