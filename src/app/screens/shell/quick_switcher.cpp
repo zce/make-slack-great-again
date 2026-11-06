@@ -247,7 +247,7 @@ public:
             name = body->add<Label>("", Font::Body);
             name->setMaxLines(1);
             snippet = body->add<Label>("", Font::Small, C::TextMuted);
-            snippet->setMaxLines(1);
+            snippet->setMaxLines(2);
             snippet->setVisible(false);
         }
         Avatar   *avatar  = nullptr;
@@ -266,16 +266,29 @@ public:
         return r;
     }
 
+
     void bind(View &v, int i) override {
         Row &r = static_cast<Row &>(v);
+        const size_t index = size_t(i);
+        const size_t messages = _q._hits.size(), conversations = _q._results.size();
         const model::Store &st = *_q._tabs[size_t(_q._tab)].store;
-        const size_t index = size_t(i), conversations = _q._results.size();
-        const size_t people = _q._people.size();
         r.index = i;
-        r.snippet->setVisible(index >= conversations + people);
-        r.style().height(index >= conversations + people ? 52 : 32);
-        if (index < conversations) {
-            const ConvRef c = _q._results[index];
+        const bool isMessage = index < messages;
+        r.snippet->setVisible(isMessage);
+        r.style().height(isMessage ? 64 : 32);
+        if (isMessage) {
+            const auto &match = _q._hits[index];
+            const auto &tab = _q._tabs[match.workspace];
+            r.avatar->setVisible(false);
+            r.icon->setVisible(true);
+            r.icon->setIcon(Icon::Search);
+            std::string heading = searchConvLabel(*tab.store, match.hit.conv);
+            if (_q._tabs.size() > 1 && !tab.name.empty())
+                heading += " \xC2\xB7 " + tab.name;
+            r.name->setText(std::move(heading));
+            r.snippet->setText(searchPreview(*tab.store, match.hit.text));
+        } else if (index < messages + conversations) {
+            const ConvRef c = _q._results[index - messages];
             const auto &cv = st.conversation(c);
             const std::string nm = st.displayName(c);
             const bool person = cv.isDirect();
@@ -288,25 +301,18 @@ public:
                                                    : nullptr);
             } else r.icon->setIcon(convIcon(cv));
             r.name->setText(nm);
-        } else if (index < conversations + people) {
-            const auto &u = st.user(_q._people[index - conversations]);
+        } else {
+            const auto &u = st.user(_q._people[index - messages - conversations]);
             r.avatar->setVisible(true);
             r.icon->setVisible(false);
             r.avatar->setInitial(u.label());
             r.avatar->setBitmap(_q._avatars.get(u.avatar, 40));
             r.name->setText(std::string(u.label()));
-        } else {
-            const auto &hit = _q._hits[index - conversations - people];
-            r.avatar->setVisible(false);
-            r.icon->setVisible(true);
-            r.icon->setIcon(Icon::Search);
-            r.name->setText(searchConvLabel(st, hit.conv));
-            r.snippet->setText(searchPreview(st, hit.text));
         }
         r.setChecked(i == _q._current);
     }
     float estimateHeight(int i) const override {
-        return size_t(i) < _q._results.size() + _q._people.size() ? 32 : 52;
+        return size_t(i) < _q._hits.size() ? 64 : 32;
     }
 
 private:
@@ -479,8 +485,7 @@ void QuickSwitcher::setTab(int index) {
     // empty field it is just browsing.
     _manualTab = !str::trim(_field->text()).empty();
     refreshStrip();
-    refilter();
-    queueSearch();
+    refilter(); // changing tab scopes quick navigation, not message results
 }
 
 void QuickSwitcher::stepTab(int delta) {
@@ -562,36 +567,47 @@ void QuickSwitcher::queueSearch() {
         _searchTimer = 0;
     }
     _hits.clear();
+    _pendingSearches = 0;
     const std::string query(str::trim(_field->text()));
     _searching = !query.empty();
     refreshResults();
     if (query.empty()) return;
+
     const uint32_t generation = _searchGeneration;
-    const int tabIndex = _tab;
     std::weak_ptr<int> alive = _alive;
-    _searchTimer = _ctx.app.addTimer(250, false, [this, generation, tabIndex, query, alive] {
+    // A single debounce launches searches on all connected Slack backends.
+    _searchTimer = _ctx.app.addTimer(250, false, [this, generation, query, alive] {
         if (alive.expired() || generation != _searchGeneration) return;
         _searchTimer = 0;
-        model::Backend *backend = _tabs[size_t(tabIndex)].backend;
-        if (!backend && _tabs[size_t(tabIndex)].store == &_ctx.store())
-            backend = &_ctx.backend;
-        if (!backend) {
+        std::vector<std::pair<size_t, model::Backend *>> targets;
+        for (size_t i = 0; i < _tabs.size(); ++i) {
+            auto &tab = _tabs[i];
+            model::Backend *backend = tab.backend;
+            if (!backend && tab.store == &_ctx.store()) backend = &_ctx.backend;
+            if (backend) targets.emplace_back(i, backend);
+        }
+        _pendingSearches = targets.size(); // may invoke callbacks synchronously
+        if (!_pendingSearches) {
             _searching = false;
             refreshResults();
             return;
         }
-        backend->search(query, [this, generation, tabIndex, alive](
-            std::vector<model::Backend::SearchHit> results) {
-            if (alive.expired() || generation != _searchGeneration || tabIndex != _tab)
-                return;
-            const auto &store = *_tabs[size_t(tabIndex)].store;
-            std::erase_if(results, [&](const auto &hit) {
-                return hit.conv >= store.conversationCount();
+        for (const auto &[origin, backend] : targets) {
+            backend->search(query, [this, generation, origin, alive](
+                std::vector<model::Backend::SearchHit> results) {
+                if (alive.expired() || generation != _searchGeneration) return;
+                const auto &store = *_tabs[origin].store;
+                for (auto &hit : results)
+                    if (hit.conv < store.conversationCount())
+                        _hits.push_back({origin, std::move(hit)});
+                std::stable_sort(_hits.begin(), _hits.end(), [](const auto &a, const auto &b) {
+                    return a.hit.ts > b.hit.ts;
+                });
+                --_pendingSearches;
+                _searching = _pendingSearches != 0;
+                refreshResults(); // show partial results while other workspaces respond
             });
-            _hits = std::move(results);
-            _searching = false;
-            refreshResults();
-        });
+        }
     });
 }
 
@@ -606,20 +622,32 @@ void QuickSwitcher::highlight(int index) {
 
 
 void QuickSwitcher::choose(int index) {
-    const size_t conversations = _results.size(), people = _people.size();
-    if (index < 0 || size_t(index) >= conversations + people + _hits.size()) return;
+    const size_t messages = _hits.size(), conversations = _results.size();
+    const size_t people = _people.size();
+    if (index < 0 || size_t(index) >= messages + conversations + people) return;
+    if (size_t(index) < messages) {
+        const MessageMatch match = _hits[size_t(index)];
+        const QuickSwitchTab &tab = _tabs[match.workspace];
+        const bool here = tab.store == &_ctx.store();
+        const auto open = _ctx.openMessage;
+        const auto in = onChooseMessageIn;
+        close();
+        if (here && open) open(match.hit.conv, match.hit.ts, match.hit.thread);
+        else if (!here && in) in(tab.key, match.hit.conv, match.hit.ts, match.hit.thread);
+        return;
+    }
     const QuickSwitchTab &tab = _tabs[size_t(_tab)];
     const std::string key = tab.key;
     const bool here = tab.store == &_ctx.store();
-    if (size_t(index) < conversations) {
-        const ConvRef c = _results[size_t(index)];
+    if (size_t(index) < messages + conversations) {
+        const ConvRef c = _results[size_t(index) - messages];
         const auto open = here ? _ctx.openConversation : std::function<void(ConvRef)>();
         const auto in = onChooseIn;
         close();
         if (open) open(c);
         else if (!here && in) in(key, c);
-    } else if (size_t(index) < conversations + people) {
-        const model::UserRef user = _people[size_t(index) - conversations];
+    } else {
+        const model::UserRef user = _people[size_t(index) - messages - conversations];
         const auto open = _ctx.openConversation;
         const auto in = onChoosePersonIn;
         model::Backend *backend = tab.backend ? tab.backend : &_ctx.backend;
@@ -629,13 +657,6 @@ void QuickSwitcher::choose(int index) {
                 if (conv != model::kNoConv && open) open(conv);
             });
         } else if (in) in(key, user);
-    } else {
-        const model::Backend::SearchHit hit = _hits[size_t(index) - conversations - people];
-        const auto open = _ctx.openMessage;
-        const auto in = onChooseMessageIn;
-        close();
-        if (here && open) open(hit.conv, hit.ts, hit.thread);
-        else if (!here && in) in(key, hit.conv, hit.ts, hit.thread);
     }
 }
 
