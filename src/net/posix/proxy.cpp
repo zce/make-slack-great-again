@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <poll.h>
 #include <string_view>
 
 namespace net::detail {
@@ -100,6 +101,8 @@ bool cidrMatches(std::string_view host, std::string_view pattern) {
     if (inet_pton(family, std::string(host).c_str(), ip) != 1 ||
         inet_pton(family, address.c_str(), network) != 1)
         return false;
+    if (bits.size() > 3)
+        return false;
     const int prefix = std::atoi(bits.c_str());
     if (prefix < 0 || prefix > int(bytes * 8))
         return false;
@@ -130,7 +133,7 @@ bool hostMatches(const Url &target, std::string_view item) {
     } else if (const size_t colon = rule.rfind(':'); colon != rule.npos &&
                rule.find(':') == colon) {
         const std::string port = rule.substr(colon + 1);
-        if (!port.empty() && std::all_of(port.begin(), port.end(), ::isdigit)) {
+        if (!port.empty() && std::all_of(port.begin(), port.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
             if (std::atoi(port.c_str()) != target.port)
                 return false;
             rule.resize(colon);
@@ -193,7 +196,7 @@ Proxy parseProxy(std::string_view raw) {
     }
     Url u;
     if (!u.parse(std::string("http://") + std::string(authority)) ||
-        u.host.empty() || u.port == 80 && authority.find(':') == authority.npos) {
+        u.host.empty() || (u.port == 80 && authority.find(':') == authority.npos)) {
         p.kind = Proxy::Kind::Invalid;
         p.error = "proxy: invalid host or port";
         return p;
@@ -221,14 +224,15 @@ Proxy gnomeProxy(const Url &target) {
         host = g.httpsHost; port = g.httpsPort;
     } else if (!g.httpHost.empty() && g.httpPort > 0) {
         host = g.httpHost; port = g.httpPort;
-    } else if (!g.socksHost.empty() && g.socksPort > 0) {
-        host = g.socksHost; port = g.socksPort;
+    }
+    bool socks = false;
+    if (host.empty() && !g.socksHost.empty() && g.socksPort > 0) {
+        host = g.socksHost;
+        port = g.socksPort;
+        socks = true;
     }
     if (host.empty())
         return {};
-    const bool socks = host == g.socksHost && port == g.socksPort &&
-                       (g.httpHost.empty() || g.httpPort <= 0) &&
-                       (!secure || g.httpsHost.empty() || g.httpsPort <= 0);
     Proxy p = parseProxy(std::string(socks ? "socks5://" : "http://") + host + ":" +
                          std::to_string(port));
     return p;
