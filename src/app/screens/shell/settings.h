@@ -113,6 +113,12 @@ struct Settings {
         std::vector<std::string> sections;
     };
     std::vector<SectionOrderPref> sidebarSectionOrders;
+    // Show unread conversations in a collapsed section (off by default).
+    // Keys use Sidebar::sectionKey, scoped to the signed-in workspace.
+    struct CollapsedUnreadPref {
+        std::string workspace, section;
+    };
+    std::vector<CollapsedUnreadPref> sidebarCollapsedUnreads;
     bool                         trayMonochrome = true; // the custom tray icon turned monochrome
 
     float       fontScale() const { return fontSize == 0 ? 0.9f : fontSize == 2 ? 1.15f : 1.f; }
