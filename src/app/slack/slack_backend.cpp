@@ -1116,6 +1116,8 @@ void SlackBackend::Read::carryLocal(
         fresh.localName = old.localName;
     if (fresh.members.empty())
         fresh.members = old.members;
+    if (!fresh.extShared)
+        fresh.extShared = old.extShared; // some roster/info responses omit this flag
     fresh.lastRead = std::max(fresh.lastRead, old.lastRead);
     fresh.latest   = std::max(fresh.latest, old.latest);
     if (fresh.canvasTitle.empty()) { // conversations.list omits properties
