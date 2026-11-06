@@ -48,7 +48,6 @@ float rowH() {
 
 void followTextRowHeight(View *row) {
     row->style().height(rowH());
-    row->onStyleChanged = [row] { row->style().height(rowH()); };
 }
 
 // A row's label and icon: the selected pill's ink, bright, or dim.
@@ -78,6 +77,11 @@ Avatar *smallAvatar(View *parent) {
 // Rows that change colour on hover (repainted bright).
 class HoverRow : public Clickable {
 public:
+    void styleChanged() override {
+        Clickable::styleChanged();
+        followTextRowHeight(this);
+        invalidateLayout();
+    }
     bool onEvent(Event &e) override {
         if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave) {
             refreshLook();
@@ -471,6 +475,11 @@ public:
 // (a tooltip).
 class SidebarRow : public Clickable {
 public:
+    void styleChanged() override {
+        Clickable::styleChanged();
+        followTextRowHeight(this);
+        invalidateLayout();
+    }
     bool onEvent(Event &e) override {
         if (e.type == EventType::ContextMenu && showMenu(e.windowPos))
             return true;
