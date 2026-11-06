@@ -515,7 +515,7 @@ public:
     void paint(gfx::Painter &p) override {
         const auto &pad = currentStyle().pad;
         if (pad.r > 0 || pad.b > 0)
-            p.fillRect(bounds(), color(C::Rail));
+            p.fillRect(bounds(), color(C::Sidebar));
         p.fillRoundRect({0, 0, width() - pad.r, height() - pad.b}, 12, color(C::Surface));
     }
     void layout() override {
