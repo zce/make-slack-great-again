@@ -1,0 +1,24 @@
+name: PR4 Translation Sync (one-shot)
+on:
+  push:
+    branches: [feat/activity-bar-profile]
+permissions:
+  contents: write
+jobs:
+  sync:
+    if: github.repository == 'zce/make-slack-great-again'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Regenerate and commit catalog
+        run: |
+          set -euo pipefail
+          python3 src/tools/i18n.py update
+          git rm .github/workflows/pr4-i18n-sync.yml
+          git add src/app/i18n/ja.po src/app/i18n/languages_generated.cpp
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(i18n): regenerate catalogs after UI refactor"
+          git push origin HEAD:feat/activity-bar-profile
