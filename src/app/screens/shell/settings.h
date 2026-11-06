@@ -106,6 +106,13 @@ struct Settings {
         std::string workspace, section, sort;
     };
     std::vector<SectionSortPref> sidebarSorts;
+    // Local section-header order per workspace (built-ins and custom
+    // sections). This does not change Slack's server-side section chain.
+    struct SectionOrderPref {
+        std::string workspace;
+        std::vector<std::string> sections;
+    };
+    std::vector<SectionOrderPref> sidebarSectionOrders;
     bool                         trayMonochrome = true; // the custom tray icon turned monochrome
 
     float       fontScale() const { return fontSize == 0 ? 0.9f : fontSize == 2 ? 1.15f : 1.f; }
