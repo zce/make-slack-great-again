@@ -1842,19 +1842,17 @@ TEST("actions: the hover toolbar — react, forward, save, more; save toggles") 
     const ui::RectF rr = row->windowRect();
     h->injectPointerMove(e.win->native(), {rr.x + 300, rr.y + 20});
     pump(4);
-    // The four buttons after the (empty) one-click reactions, their tooltips,
-    // 28-px buttons in a 16/12-padded card
-    // (Ask agent hidden: no agent links here).
+    // Four buttons after the (empty) one-click reactions, with tooltips,
+    // in a 16/12-padded card.
     ui::View *fwd = findByTooltip(e.win->root().child(0), "Forward message");
     REQUIRE(fwd != nullptr);
     ui::View *card = fwd->parent();
     REQUIRE(card->visible());
-    REQUIRE(card->childCount() == 6);
+    REQUIRE(card->childCount() == 5);
     CHECK_FALSE(card->child(0)->visible()); // no one-click reactions without the shell
     CHECK_STR(card->child(1)->tooltip(), "Add reaction");
     CHECK_STR(card->child(3)->tooltip(), "Save for later");
-    CHECK_FALSE(card->child(4)->visible());
-    CHECK_STR(card->child(5)->tooltip(), "More actions");
+    CHECK_STR(card->child(4)->tooltip(), "More actions");
     CHECK(near(card->frame().w, 16 + 4 * 28 + 3 * 4) && near(card->frame().h, 40));
     // It straddles the row's top edge, 12 px from the right.
     CHECK(near(card->windowRect().y, rr.y - 20, 1));

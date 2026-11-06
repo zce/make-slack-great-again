@@ -286,15 +286,15 @@ TEST("old import: every kind of old workspace comes back signed in") {
     CHECK_STR(ws.all()[2].key(), "slack:T0GRID");
     CHECK_STR(ws.active(), "slack:T0AAA");
     CHECK(ws.all()[2].muted);
-    CHECK_STR(ws.all()[3].displayName, "Grid Corp");
-    CHECK_STR(ws.all()[3].iconUrl, "https://avatars.slack-edge.com/grid.png");
+    CHECK_STR(ws.all()[2].displayName, "Grid Corp");
+    CHECK_STR(ws.all()[2].iconUrl, "https://avatars.slack-edge.com/grid.png");
     // Each with the credentials it had: the session's token, cookie and host
     // (the Grid workspace's own), the OAuth token with its refresh token.
     const slack::Credentials acme = slack::fromRecord(ws.all()[1]);
     CHECK_STR(acme.token, "xoxc-AAA-old");
     CHECK_STR(acme.cookie, "xoxd-COOKIE-acme");
     CHECK_STR(acme.workspaceUrl, "https://acme.slack.com/");
-    const slack::Credentials grid = slack::fromRecord(ws.all()[3]);
+    const slack::Credentials grid = slack::fromRecord(ws.all()[2]);
     CHECK_STR(grid.token, "xoxc-GRID-old");
     CHECK_STR(grid.cookie, "xoxd-COOKIE-grid");
     CHECK_STR(grid.workspaceUrl, "https://gridcorp-eng.enterprise.slack.com/");

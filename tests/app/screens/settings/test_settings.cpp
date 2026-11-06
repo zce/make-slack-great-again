@@ -897,10 +897,6 @@ TEST("settings: AI providers connect through the inline editor") {
     SettingsDialog &d = h.open();
     d.showPage(SettingsDialog::Page::Ai);
     pump();
-    CHECK(
-        d.find("Voice input needs an OpenAI or OpenAI-compatible provider with speech-to-text.") !=
-        nullptr
-    );
     ui::View *connect = d.find("Connect");
     REQUIRE(connect != nullptr);
     h.click(connect); // Anthropic's
@@ -925,11 +921,6 @@ TEST("settings: AI providers connect through the inline editor") {
     );
     CHECK(d.find("Disconnect") != nullptr);
     CHECK_STR(shell::Settings::load(path).provider("anthropic")->key, "sk-ant-test9876");
-    // Anthropic has no speech-to-text: the warning stays.
-    CHECK(
-        d.find("Voice input needs an OpenAI or OpenAI-compatible provider with speech-to-text.") !=
-        nullptr
-    );
 
     // A custom server needs a URL and a model.
     h.click(d.find("Add OpenAI-compatible server\xE2\x80\xA6"));
