@@ -1,7 +1,7 @@
 // The conversation sidebar:
 // uniform 30 px rows under a 6 px top inset — the "Activity", "Threads",
 // "Saved messages" and "Scheduled messages" entries, then the Starred / Channels /
-// Direct messages / Agents & apps sections (a click on a header collapses
+// Direct messages / Agents & apps / Externals sections (a click on a header collapses
 // it, hiding every row; hovering shows the chevron that says what a click
 // does, and on the right the header's "+" — Channels: "Add channels",
 // Direct messages: open one — and "⋮" More actions), "N more channels"
@@ -246,7 +246,7 @@ private:
     int                      _rebuilds        = 0;
     bool                     _revealOnRebuild = false;
     int                      _hiddenChannels  = 0;
-    bool                     _collapsed[5]    = {};         // starred, channels, DMs, apps, team
+    bool                     _collapsed[7]    = {}; // starred, channels, DMs, apps, team, [5] custom, externals
     std::unordered_map<std::string, bool> _collapsedCustom; // the user's sections, by id
     uint64_t _sectionsRev     = 0;       // Store::sectionsRevision at the last rebuild
     ConvRow *_dragRow         = nullptr; // a row being dragged
