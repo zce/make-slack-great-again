@@ -505,16 +505,26 @@ TEST("proxy: SOCKS5 tunnel uses remote DNS") {
     REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
     std::string destination;
     std::thread server([&] {
+        const auto exact = [&](void *buf, size_t size) {
+            auto *bytes = static_cast<char *>(buf);
+            while (size) {
+                const ssize_t n = ::read(pair[1], bytes, size);
+                if (n <= 0) return false;
+                bytes += n;
+                size -= size_t(n);
+            }
+            return true;
+        };
         unsigned char greeting[3];
-        if (::read(pair[1], greeting, sizeof greeting) == 3 &&
+        if (exact(greeting, sizeof greeting) &&
             greeting[0] == 5 && greeting[1] == 1 && greeting[2] == 0) {
             const unsigned char accept[] = {5, 0};
             (void)::write(pair[1], accept, sizeof accept);
             unsigned char header[5];
-            if (::read(pair[1], header, sizeof header) == 5 &&
+            if (exact(header, sizeof header) &&
                 header[0] == 5 && header[1] == 1 && header[3] == 3) {
                 std::string tail(header[4] + 2, '\0');
-                if (::read(pair[1], tail.data(), tail.size()) == ssize_t(tail.size()))
+                if (exact(tail.data(), tail.size()))
                     destination = tail.substr(0, header[4]);
             }
             const unsigned char reply[] = {5, 0, 0, 1, 127, 0, 0, 1, 0, 0};
