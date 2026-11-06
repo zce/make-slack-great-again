@@ -1286,6 +1286,31 @@ void Sidebar::setSort(const std::string &key, SectionSort sort) {
         onSortsChanged();
 }
 
+void Sidebar::setCollapsedUnreads(CollapsedUnreads enabled) {
+    if (_collapsedUnreads == enabled)
+        return;
+    _collapsedUnreads = std::move(enabled);
+    for (SectionHeader *h : _sections)
+        if (h->collapsed)
+            applyCollapse(h);
+}
+
+bool Sidebar::showUnreadWhenCollapsed(const std::string &key) const {
+    return _collapsedUnreads.contains(key);
+}
+
+void Sidebar::toggleCollapsedUnreads(const std::string &key) {
+    if (key.empty())
+        return;
+    if (!_collapsedUnreads.erase(key))
+        _collapsedUnreads.insert(key);
+    for (SectionHeader *h : _sections)
+        if (sectionKey(h->kind, h->sectionId) == key && h->collapsed)
+            applyCollapse(h);
+    if (onCollapsedUnreadsChanged)
+        onCollapsedUnreadsChanged();
+}
+
 void Sidebar::sectionMenu(SectionHeader *h, PointF at) {
     if (!_menus)
         return;
@@ -1296,7 +1321,9 @@ void Sidebar::sectionMenu(SectionHeader *h, PointF at) {
         h->kind == 5 ? h->sectionId : std::string(), sortOf(h), at,
         [this, key](SectionSort sort) { setSort(key, sort); },
         {position > 0, position + 1 < _sections.size()},
-        [this, key](int step) { moveSection(key, step); }
+        [this, key](int step) { moveSection(key, step); },
+        showUnreadWhenCollapsed(key),
+        [this, key] { toggleCollapsedUnreads(key); }
     );
 }
 
@@ -1343,10 +1370,12 @@ bool Sidebar::moveSection(const std::string &key, int step) {
     return true;
 }
 
-// Collapsed, a section lists nothing under its header.
+// A collapsed section may show its unread rows, but never its action rows.
 void Sidebar::applyCollapse(SectionHeader *h) {
+    const bool reveal = h->collapsed &&
+                        showUnreadWhenCollapsed(sectionKey(h->kind, h->sectionId));
     for (ConvRow *r : h->rows)
-        r->setVisible(!h->collapsed);
+        r->setVisible(!h->collapsed || (reveal && r->unread));
     for (View *v : h->extras)
         v->setVisible(!h->collapsed);
     h->update();
@@ -1511,6 +1540,10 @@ void Sidebar::refreshSections() {
         for (ConvRow *r : h->rows)
             any |= r->unread;
         h->setUnread(any);
+        // A new unread appears without expanding the section; clearing the
+        // last unread hides the row again. Counts refresh without a rebuild.
+        if (h->collapsed && showUnreadWhenCollapsed(sectionKey(h->kind, h->sectionId)))
+            applyCollapse(h);
     }
     refreshNav();
 }
@@ -1589,7 +1622,7 @@ void Sidebar::select(ConvRef conv) {
     // lists it (relevance, unreads-only, apps) and
     // expands its section. Rebuilt after the click that got here.
     ConvRow *r = rowFor(conv);
-    if (r && r->section->collapsed) {
+    if (r && r->section->collapsed && !r->visible()) {
         r->section->collapsed = false;
         applyCollapse(r->section);
     }
