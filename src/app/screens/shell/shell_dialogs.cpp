@@ -439,7 +439,7 @@ public:
         model::Ts                                ts,
         std::string                              onlyFile,
         std::function<void(const std::string &)> onError,
-        std::vector<ForwardWorkspace>            workspaces,
+        std::vector<ForwardWorkspace>            workspaces
     )
         : Dialog(onlyFile.empty() ? tr("Forward this message") : tr("Forward this file")),
           _conv(conv), _ts(ts), _onlyFile(std::move(onlyFile)), _onError(std::move(onError)),
