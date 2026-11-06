@@ -996,28 +996,50 @@ void Sidebar::rebuild() {
         }
         return h;
     };
+    // Build the section plan before creating views: a workspace-local order
+    // can rearrange system and custom sections without moving live UI nodes.
+    struct Entry {
+        int                         kind;
+        Icon                        icon;
+        std::string                 title;
+        const std::vector<ConvRef> *rows;
+        std::string                 id;
+        size_t                      customIndex = 0;
+    };
+    std::vector<Entry> entries;
     for (int s = 0; s < 4; ++s) {
-        if (s == 1) {
-            // User-defined sections are explicit placements; the automatic
-            // Externals section comes after them, before ordinary channels.
-            for (size_t i = 0; i < custom.size(); ++i) {
-                auto *h = section(5, Icon::List, secs[i].name, custom[i], secs[i].id);
-                if (!secs[i].emoji.empty())
-                    h->setEmoji(store.emojiFor(secs[i].emoji).unicode);
-                const auto was = _collapsedCustom.find(secs[i].id);
-                h->collapsed   = was != _collapsedCustom.end() && was->second;
-                applyCollapse(h);
-            }
-            if (!externals.empty()) {
-                auto *h = section(6, Icon::ExternalLink, tr("Externals"), externals);
-                applyCollapse(h);
-            }
+        if (s == 1)
+            for (size_t i = 0; i < custom.size(); ++i)
+                entries.push_back({5, Icon::List, secs[i].name, &custom[i], secs[i].id, i});
+        // Starred and Agents & apps are hidden while they have no rows.
+        if (!lists[s].empty() || (s != 0 && s != 3))
+            entries.push_back({s, defs[s].icon, defs[s].title, &lists[s], {}});
+        // Default placement: Channels, Externals, then Direct messages.
+        if (s == 1 && !externals.empty())
+            entries.push_back({6, Icon::ExternalLink, tr("Externals"), &externals, {}});
+    }
+    if (!_sectionOrder.empty()) {
+        std::unordered_map<std::string, size_t> ranks;
+        for (size_t i = 0; i < _sectionOrder.size(); ++i)
+            ranks.emplace(_sectionOrder[i], i);
+        const auto rank = [&](const Entry &e) {
+            const auto it = ranks.find(sectionKey(e.kind, e.id));
+            return it == ranks.end() ? _sectionOrder.size() : it->second;
+        };
+        std::stable_sort(entries.begin(), entries.end(), [&](const Entry &a, const Entry &b) {
+            return rank(a) < rank(b);
+        });
+    }
+    for (const Entry &e : entries) {
+        auto *h = section(e.kind, e.icon, e.title, *e.rows, e.id);
+        if (e.kind == 5) {
+            const auto &sec = secs[e.customIndex];
+            if (!sec.emoji.empty())
+                h->setEmoji(store.emojiFor(sec.emoji).unicode);
+            const auto was = _collapsedCustom.find(sec.id);
+            h->collapsed   = was != _collapsedCustom.end() && was->second;
         }
-        // No Starred section until starred, no Agents & apps without an app DM.
-        if (lists[s].empty() && (s == 0 || s == 3))
-            continue;
-        auto *h = section(s, defs[s].icon, defs[s].title, lists[s]);
-        if (s == 1 && _hiddenChannels > 0) {
+        if (e.kind == 1 && _hiddenChannels > 0) {
             auto *more = _items->add<ActionRow>(
                 i18n::arg(
                     tr("%1 more %2"),
@@ -1029,7 +1051,7 @@ void Sidebar::rebuild() {
             more->onClick = [this] { showAllChannels(); };
             h->extras.push_back(more);
         }
-        if (s == 1) {
+        if (e.kind == 1) {
             auto *add = _items->add<ActionRow>(tr("Add channels"), true);
             add->onClick = [this, add] { addChannelsMenu(add); };
             h->extras.push_back(add);
@@ -1267,11 +1289,41 @@ void Sidebar::sectionMenu(SectionHeader *h, PointF at) {
     if (!_menus)
         return;
     const std::string key = sectionKey(h->kind, h->sectionId);
+    const auto it = std::find(_sections.begin(), _sections.end(), h);
+    const size_t position = size_t(it - _sections.begin());
     _menus->showSection(
-        h->kind == 5 ? h->sectionId : std::string(), sortOf(h), at, [this, key](SectionSort sort) {
-            setSort(key, sort);
-        }
+        h->kind == 5 ? h->sectionId : std::string(), sortOf(h), at,
+        [this, key](SectionSort sort) { setSort(key, sort); },
+        {position > 0, position + 1 < _sections.size()},
+        [this, key](int step) { moveSection(key, step); }
     );
+}
+
+void Sidebar::setSectionOrder(std::vector<std::string> order) {
+    if (_sectionOrder == order)
+        return;
+    _sectionOrder = std::move(order);
+    rebuild();
+}
+
+bool Sidebar::moveSection(const std::string &key, int step) {
+    if (step != -1 && step != 1)
+        return false;
+    std::vector<std::string> order;
+    for (const SectionHeader *h : _sections)
+        order.push_back(sectionKey(h->kind, h->sectionId));
+    const auto it = std::find(order.begin(), order.end(), key);
+    if (it == order.end())
+        return false;
+    const size_t i = size_t(it - order.begin());
+    if ((step < 0 && i == 0) || (step > 0 && i + 1 == order.size()))
+        return false;
+    std::swap(order[i], order[size_t(int(i) + step)]);
+    _sectionOrder = std::move(order);
+    rebuildSoon(false); // the menu's clicked header may still be on the stack
+    if (onSectionOrderChanged)
+        onSectionOrderChanged();
+    return true;
 }
 
 // Collapsed, a section lists nothing under its header.
