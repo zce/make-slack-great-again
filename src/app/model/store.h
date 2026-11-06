@@ -241,11 +241,7 @@ public:
     // entry is bright while > 0). Fires Meta (kNoConv).
     int            unreadActivity() const { return _unreadActivity; }
     void           setUnreadActivity(int n);
-    // Agent sessions (Claude Code): every answer is meant for me, so each
-    // one counts as a mention (the red badge) — except a progress note
-    // (subtype "progress": a remark before tool calls, a tool card).
-    bool           answersAreMentions = false;
-    // Whether an unread message `m` counts as a mention (see above).
+    // Whether an unread message mentions the signed-in user.
     bool           mentions(const Message &m) const;
 
     // ── Composer drafts ─────────────────────────────────────────────────────

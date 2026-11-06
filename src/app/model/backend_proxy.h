@@ -41,56 +41,13 @@ public:
     void deleteAttachment(ConvRef c, Ts ts, int attachmentId, Done d) override;
     void downloadFile(const std::string &url, std::string toPath, Done done) override;
     void setReminder(ConvRef c, Ts ts, int64_t due) override;
-    bool isAgentSession(ConvRef c) const override;
-    bool canStopSession(ConvRef c) const override;
-    void stopSession(ConvRef c) override;
-    std::vector<AgentRole> agentRoles() const override;
-    std::string            saveAgentRole(const AgentRole &role, std::string *error) override;
-    void                   removeAgentRole(const std::string &id) override;
-    void                   restoreAgentRole(const std::string &id) override;
-    std::string            agentSessionBlocker(const std::string &dir) const override;
-    void                   startAgentSession(
-        const std::string                                &dir,
-        bool                                              skip,
-        const std::string                                &role,
-        std::function<void(ConvRef, const std::string &)> done
-    ) override;
-    std::string agentSessionFolder(ConvRef c) const override;
-    std::string agentSessionRole(ConvRef c) const override;
-    void        findAgentSessions(std::function<void(std::vector<FoundSession>)> done) override;
-    ConvRef     addFoundSession(const std::string &id) override;
     std::vector<Command> commands(ConvRef c) override;
     uint64_t             commandsRevision(ConvRef c) override;
     LocalResult          runLocalCommand(
         ConvRef c, Ts thread, const std::string &name, const std::string &args
     ) override;
-    std::vector<std::string> promptHistory(ConvRef c) override;
-    std::vector<std::string> folderPromptHistory(const std::string &dir) override;
-    bool                     threadAcceptsReplies(ConvRef c, Ts root) const override;
-    bool                     threadOpensAsSession(ConvRef c, Ts root) const override;
-    ConvRef                  openThreadAsSession(ConvRef c, Ts root) override;
-    void                     startAgentBranch(
-        const std::string       &session,
-        std::string              prompt,
-        std::vector<std::string> files,
-        std::vector<std::string> deniedTools,
-        AgentBranchDone          started,
-        AgentTurnFn              turn
-    ) override;
-    void continueAgentBranch(
-        const std::string       &branch,
-        std::string              prompt,
-        std::vector<std::string> files,
-        AgentTurnFn              turn
-    ) override;
-    void watchAgentBranch(const std::string &branch, AgentTurnFn turn) override;
-    void agentSessionMovedOn(
-        const std::string &session, const std::string &forkPoint, std::function<void(bool)> done
-    ) override;
-    void         setAgentBranchLabel(const std::string &branch, std::string label) override;
     bool         canDeleteMessage(ConvRef c, Ts ts) const override;
     void         pressButton(ConvRef c, Ts ts, const std::string &buttonId, Done d) override;
-    void         setZenMode(bool on) override;
     void         setLocalName(ConvRef c, std::string name) override;
     void         createSection(std::string name, std::string emoji, ConvRef first) override;
     void         updateSection(const std::string &id, std::string name, std::string emoji) override;
@@ -128,16 +85,6 @@ public:
     std::string promptSuggestion(ConvRef c) const override;
     void search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
     void loadMessage(ConvRef c, Ts ts, MessageDone done) override;
-    void
-    postAgentReply(ConvRef c, Ts root, std::string text, std::string blocks, PostDone d) override;
-    void editAgentReply(ConvRef c, Ts ts, std::string text, std::string blocks, Done d) override;
-    void deleteAgentReply(ConvRef c, Ts ts, Done d) override;
-    void postAgentFiles(
-        ConvRef c, Ts root, std::string text, std::vector<std::string> files, PostDone d
-    ) override;
-    void loadThreadReplies(ConvRef c, Ts root, Ts after, RepliesDone done) override;
-    void watchThread(ConvRef c, Ts root, Ts after, bool busy) override;
-    void unwatchThread(ConvRef c, Ts root) override;
     void loadThreadsView(std::string cursor, ThreadsViewDone done) override;
     void markThreadRead(ConvRef c, Ts root, Ts ts) override;
     void

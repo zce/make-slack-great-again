@@ -80,15 +80,6 @@ void BackendProxy::downloadFile(const std::string &url, std::string toPath, Done
 void BackendProxy::setReminder(ConvRef c, Ts ts, int64_t due) {
     _t->setReminder(c, ts, due);
 }
-bool BackendProxy::isAgentSession(ConvRef c) const {
-    return _t->isAgentSession(c);
-}
-bool BackendProxy::canStopSession(ConvRef c) const {
-    return _t->canStopSession(c);
-}
-void BackendProxy::stopSession(ConvRef c) {
-    _t->stopSession(c);
-}
 void BackendProxy::userTyping(ConvRef c, Ts thread) {
     _t->userTyping(c, thread);
 }
@@ -175,32 +166,6 @@ void BackendProxy::search(std::string query, std::function<void(std::vector<Sear
 void BackendProxy::loadMessage(ConvRef c, Ts ts, MessageDone done) {
     _t->loadMessage(c, ts, std::move(done));
 }
-void BackendProxy::postAgentReply(
-    ConvRef c, Ts root, std::string text, std::string blocks, PostDone d
-) {
-    _t->postAgentReply(c, root, std::move(text), std::move(blocks), std::move(d));
-}
-void BackendProxy::editAgentReply(ConvRef c, Ts ts, std::string text, std::string blocks, Done d) {
-    _t->editAgentReply(c, ts, std::move(text), std::move(blocks), std::move(d));
-}
-void BackendProxy::deleteAgentReply(ConvRef c, Ts ts, Done d) {
-    _t->deleteAgentReply(c, ts, std::move(d));
-}
-void BackendProxy::postAgentFiles(
-    ConvRef c, Ts root, std::string text, std::vector<std::string> files, PostDone d
-) {
-    _t->postAgentFiles(c, root, std::move(text), std::move(files), std::move(d));
-}
-void BackendProxy::loadThreadReplies(ConvRef c, Ts root, Ts after, RepliesDone done) {
-    _t->loadThreadReplies(c, root, after, std::move(done));
-}
-void BackendProxy::watchThread(ConvRef c, Ts root, Ts after, bool busy) {
-    _t->watchThread(c, root, after, busy);
-}
-void BackendProxy::unwatchThread(ConvRef c, Ts root) {
-    _t->unwatchThread(c, root);
-}
-
 void BackendProxy::loadThreadsView(std::string cursor, ThreadsViewDone done) {
     _t->loadThreadsView(std::move(cursor), std::move(done));
 }
@@ -225,41 +190,6 @@ namespace model {
 void BackendProxy::setActiveConversation(ConvRef c, Ts thread) {
     _t->setActiveConversation(c, thread);
 }
-std::vector<Backend::AgentRole> BackendProxy::agentRoles() const {
-    return _t->agentRoles();
-}
-std::string BackendProxy::saveAgentRole(const AgentRole &role, std::string *error) {
-    return _t->saveAgentRole(role, error);
-}
-void BackendProxy::removeAgentRole(const std::string &id) {
-    _t->removeAgentRole(id);
-}
-void BackendProxy::restoreAgentRole(const std::string &id) {
-    _t->restoreAgentRole(id);
-}
-std::string BackendProxy::agentSessionBlocker(const std::string &dir) const {
-    return _t->agentSessionBlocker(dir);
-}
-void BackendProxy::startAgentSession(
-    const std::string                                &dir,
-    bool                                              skip,
-    const std::string                                &role,
-    std::function<void(ConvRef, const std::string &)> done
-) {
-    _t->startAgentSession(dir, skip, role, std::move(done));
-}
-std::string BackendProxy::agentSessionFolder(ConvRef c) const {
-    return _t->agentSessionFolder(c);
-}
-std::string BackendProxy::agentSessionRole(ConvRef c) const {
-    return _t->agentSessionRole(c);
-}
-void BackendProxy::findAgentSessions(std::function<void(std::vector<FoundSession>)> done) {
-    _t->findAgentSessions(std::move(done));
-}
-ConvRef BackendProxy::addFoundSession(const std::string &id) {
-    return _t->addFoundSession(id);
-}
 std::vector<Backend::Command> BackendProxy::commands(ConvRef c) {
     return _t->commands(c);
 }
@@ -271,62 +201,11 @@ Backend::LocalResult BackendProxy::runLocalCommand(
 ) {
     return _t->runLocalCommand(c, thread, name, args);
 }
-std::vector<std::string> BackendProxy::promptHistory(ConvRef c) {
-    return _t->promptHistory(c);
-}
-std::vector<std::string> BackendProxy::folderPromptHistory(const std::string &dir) {
-    return _t->folderPromptHistory(dir);
-}
-bool BackendProxy::threadAcceptsReplies(ConvRef c, Ts root) const {
-    return _t->threadAcceptsReplies(c, root);
-}
-bool BackendProxy::threadOpensAsSession(ConvRef c, Ts root) const {
-    return _t->threadOpensAsSession(c, root);
-}
-ConvRef BackendProxy::openThreadAsSession(ConvRef c, Ts root) {
-    return _t->openThreadAsSession(c, root);
-}
-void BackendProxy::startAgentBranch(
-    const std::string       &session,
-    std::string              prompt,
-    std::vector<std::string> files,
-    std::vector<std::string> deniedTools,
-    AgentBranchDone          started,
-    AgentTurnFn              turn
-) {
-    _t->startAgentBranch(
-        session,
-        std::move(prompt),
-        std::move(files),
-        std::move(deniedTools),
-        std::move(started),
-        std::move(turn)
-    );
-}
-void BackendProxy::continueAgentBranch(
-    const std::string &branch, std::string prompt, std::vector<std::string> files, AgentTurnFn turn
-) {
-    _t->continueAgentBranch(branch, std::move(prompt), std::move(files), std::move(turn));
-}
-void BackendProxy::watchAgentBranch(const std::string &branch, AgentTurnFn turn) {
-    _t->watchAgentBranch(branch, std::move(turn));
-}
-void BackendProxy::setAgentBranchLabel(const std::string &branch, std::string label) {
-    _t->setAgentBranchLabel(branch, std::move(label));
-}
-void BackendProxy::agentSessionMovedOn(
-    const std::string &session, const std::string &forkPoint, std::function<void(bool)> done
-) {
-    _t->agentSessionMovedOn(session, forkPoint, std::move(done));
-}
 bool BackendProxy::canDeleteMessage(ConvRef c, Ts ts) const {
     return _t->canDeleteMessage(c, ts);
 }
 void BackendProxy::pressButton(ConvRef c, Ts ts, const std::string &buttonId, Done d) {
     _t->pressButton(c, ts, buttonId, std::move(d));
-}
-void BackendProxy::setZenMode(bool on) {
-    _t->setZenMode(on);
 }
 void BackendProxy::setLocalName(ConvRef c, std::string name) {
     _t->setLocalName(c, std::move(name));

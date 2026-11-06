@@ -90,12 +90,6 @@ constexpr int         kMaxThreadPages          = 400;
 // Per-thread state kept for the run (followed threads are also persisted):
 // past twice this many, the threads with the oldest roots go.
 constexpr size_t      kMaxFollowed = 200, kMaxThreadState = 500;
-// Watched threads (agent thread links): the poll interval, busy or quiet,
-// and the first polls after a start this far apart. Someone calling the
-// agent waits for at most a quiet poll, feed or not (a link lives only as
-// long as its session).
-constexpr int64_t     kWatchHotMs = 15'000, kWatchQuietMs = 60'000, kWatchStaggerMs = 3'000;
-constexpr const char *kRepliesLimit = "200";
 
 // A user id's prefix only (U…, W… on Enterprise Grid), not its full shape.
 bool hasUserIdPrefix(std::string_view id) {
@@ -380,28 +374,6 @@ struct SlackBackend::Read {
     ConvRef nextBackgroundTarget();
     bool    inject(ConvRef c, model::Message m, bool parentIsMe);
     void    carryLocal(model::Conversation &fresh, const model::Conversation &old) const;
-
-    // ── Watched threads (Backend::watchThread) ──────────────────────────────
-    struct Watch {
-        ConvRef  conv = kNoConv;
-        Ts       root = 0, seen = 0; // seen: reported up to here
-        Ts       lastReply = 0;      // the newest message known: how quiet it is
-        int64_t  due       = 0;      // now() of the next poll; 0: the first, not placed yet
-        uint32_t gen       = 0;      // tells a re-watch from the watch a poll was for
-        bool     busy = false, inFlight = false, pulled = false, failing = false;
-    };
-    std::vector<Watch> watches; // few: linear is fine
-    uint32_t           watchGen      = 0;
-    int64_t            nextFirstPoll = 0;     // the stagger of the first polls
-    bool               threadsUnread = false; // client.counts' threads.has_unreads
-    Watch             *findWatch(ConvRef c, Ts root);
-    int64_t            watchInterval(const Watch &w) const;
-    void               pollWatches();
-    void               pollWatch(Watch &w);
-    // A message of thread root seen elsewhere (the feed, a push, the open
-    // thread's poll): a watched thread's poll comes forward.
-    void               pullWatch(ConvRef c, Ts root, Ts ts);
-    void               readReplies(ConvRef c, Ts root, Ts after, Lane lane, RepliesDone done);
 
     // ── The workspace cache ─────────────────────────────────────────────────
     int64_t sweepAt = 0; // the last DM activity sweep (unix secs)
@@ -2497,9 +2469,6 @@ void SlackBackend::Read::tick() {
         lastThreads = t;
         pollThreadReplies();
     }
-    // (0d) Watched threads (agent thread links): the backstop polls.
-    if (!watches.empty())
-        pollWatches();
     // (2) The open chat; hidden, client.counts brings it forward when it
     // moves (applyActivity).
     const int64_t fgGap = !session ? 60'000 : visible ? 5'000 : kHiddenOpenPollGapMs;
@@ -2571,13 +2540,6 @@ void SlackBackend::Read::pollUnreadCounts() {
             // The Activity entry: the feed's unread items (activity_v2).
             if (session)
                 s.setUnreadActivity(mapjson::activityUnread(doc.root()));
-            // A followed thread has unread replies: maybe a watched one.
-            const bool unread = doc.root()["threads"]["has_unreads"].boolean();
-            if (unread && !threadsUnread)
-                for (Watch &w : watches)
-                    if (w.due)
-                        w.due = std::min(w.due, now());
-            threadsUnread = unread;
             return;
         }
         if (isMethodUnavailable(err))
@@ -2851,7 +2813,6 @@ bool SlackBackend::Read::feedThread(
     const std::string &key, ConvRef c, Ts root, Ts newest, Ts lastRead, bool priming, Ts &baseline
 ) {
     follow(key); // the feed IS the subscription list
-    pullWatch(c, root, newest);
     // The Threads entry: the feed's own
     // read cursor or mine, whichever is further; the first page
     // after a start restores it.
@@ -3236,203 +3197,11 @@ void SlackBackend::loadMessage(ConvRef conv, Ts ts, MessageDone done) {
     );
 }
 
-// ── Watched threads ─────────────────────────────────────────────────────────
-
-// conversations.replies from `after` (exclusive) on; the root comes back on
-// every page whatever `oldest` says, so the filter is ours too.
-void SlackBackend::Read::readReplies(ConvRef c, Ts root, Ts after, Lane lane, RepliesDone done) {
-    const std::string &id = b.convId(c);
-    if (id.empty() || !root) {
-        later(0, [done = std::move(done)] {
-            if (done)
-                done({}, "thread_not_found");
-        });
-        return;
-    }
-    std::string form = net::formEncode(
-        {{"channel", id},
-         {"ts", model::formatTs(root)},
-         {"limit", kRepliesLimit},
-         {"include_all_metadata", "true"}}
-    );
-    if (after)
-        form.append(str::concat({"&oldest=", model::formatTs(after)}));
-    auto acc = std::make_shared<std::vector<ThreadReply>>();
-    paginate(
-        "conversations.replies",
-        std::move(form),
-        "messages",
-        [this, root, after, acc](const json::Value &arr) {
-            for (const json::Value v : arr) {
-                ThreadReply r;
-                r.message = mapjson::toMessage(v, s);
-                if (r.message.ts <= after)
-                    continue;
-                r.message.threadTs = root;
-                r.agentReply       = v["metadata"]["event_type"].str() == Backend::kAgentReplyEvent;
-                acc->push_back(std::move(r));
-            }
-        },
-        [this, acc, done = std::move(done)](const std::string &err) {
-            if (err == "cancelled")
-                return;
-            if (!err.empty()) {
-                LOG_WARN("slack", "conversations.replies: %s", err.c_str());
-                if (done)
-                    done({}, err);
-                return;
-            }
-            std::vector<ThreadReply> &rs = *acc;
-            // Oldest first as the pages come: an insertion sort is a pass.
-            for (size_t i = 1; i < rs.size(); ++i)
-                for (size_t j = i; j > 0 && rs[j].message.ts < rs[j - 1].message.ts; --j)
-                    std::swap(rs[j], rs[j - 1]);
-            rs.erase(
-                std::unique(
-                    rs.begin(),
-                    rs.end(),
-                    [](const ThreadReply &x, const ThreadReply &y) {
-                        return x.message.ts == y.message.ts;
-                    }
-                ),
-                rs.end()
-            );
-            for (const ThreadReply &r : rs)
-                fetchUserIfNeeded(r.message.user);
-            if (done)
-                done(std::move(rs), {});
-        },
-        kMaxThreadPages,
-        lane
-    );
-}
-
-void SlackBackend::loadThreadReplies(ConvRef conv, Ts root, Ts after, RepliesDone done) {
-    _read->readReplies(conv, root, after, Read::Lane::Normal, std::move(done));
-}
-
-SlackBackend::Read::Watch *SlackBackend::Read::findWatch(ConvRef c, Ts root) {
-    for (Watch &w : watches)
-        if (w.conv == c && w.root == root)
-            return &w;
-    return nullptr;
-}
-
-// Busy, or a message in the last 10 min: 15 s; else 1 min. The feed's new
-// replies (session tokens, a thread I follow) pull a poll forward still.
-int64_t SlackBackend::Read::watchInterval(const Watch &w) const {
-    const int64_t quiet = base::nowSecs() - model::tsSecs(w.lastReply);
-    return w.busy || quiet < 600 ? kWatchHotMs : kWatchQuietMs;
-}
-
-// From the tick, so never before the connect settled; a watch's first poll
-// is placed kWatchStaggerMs after the previous first one, so the links
-// restored at a start trickle out instead of all at once.
-void SlackBackend::Read::pollWatches() {
-    const int64_t t = now();
-    for (Watch &w : watches) {
-        if (w.inFlight)
-            continue;
-        if (!w.due) {
-            w.due         = std::max(t, nextFirstPoll);
-            nextFirstPoll = w.due + kWatchStaggerMs;
-        }
-        if (w.due <= t)
-            pollWatch(w);
-    }
-}
-
-// The next poll is placed when this one goes out: a failure waits its turn.
-void SlackBackend::Read::pollWatch(Watch &w) {
-    w.inFlight          = true;
-    w.pulled            = false;
-    w.due               = now() + watchInterval(w);
-    const ConvRef  c    = w.conv;
-    const Ts       root = w.root;
-    const uint32_t gen  = w.gen;
-    readReplies(
-        c,
-        root,
-        w.seen,
-        Lane::Background,
-        [this, c, root, gen](std::vector<ThreadReply> rs, const std::string &err) {
-            Watch *w = findWatch(c, root);
-            if (!w || w->gen != gen)
-                return; // unwatched meanwhile
-            w->inFlight = false;
-            if (w->pulled) // news while this one was out
-                w->due = now();
-            if (!err.empty()) {
-                // A lost connection or a 429 was waited out already; dead
-                // credentials are onAuthLost's. The rest is the thread's
-                // own, said once per streak.
-                if (isTransportError(err) || isTransientSlackError(err) || isAuthError(err) ||
-                    err == "ratelimited" || w->failing)
-                    return;
-                w->failing = true;
-                if (auto fn = b.onThreadReplies)
-                    fn(c, root, {}, err);
-                return;
-            }
-            w->failing = false;
-            std::erase_if(rs, [seen = w->seen](const ThreadReply &r) {
-                return r.message.ts <= seen; // watchThread moved the cursor meanwhile
-            });
-            if (rs.empty())
-                return;
-            w->seen      = rs.back().message.ts;
-            w->lastReply = std::max(w->lastReply, w->seen);
-            w->due       = std::min(w->due, now() + watchInterval(*w)); // it just woke up
-            // A copy: the callback may unwatch (w goes) or set another.
-            if (auto fn = b.onThreadReplies)
-                fn(c, root, std::move(rs), {});
-        }
-    );
-}
-
-void SlackBackend::Read::pullWatch(ConvRef c, Ts root, Ts ts) {
-    Watch *w = findWatch(c, root);
-    if (!w || ts <= w->seen)
-        return;
-    if (w->inFlight)
-        w->pulled = true;
-    else if (w->due)
-        w->due = std::min(w->due, now());
-}
-
-void SlackBackend::watchThread(ConvRef conv, Ts root, Ts after, bool busy) {
-    Read &r = *_read;
-    if (conv >= _store.conversationCount() || !root)
-        return;
-    Read::Watch *w = r.findWatch(conv, root);
-    if (!w) {
-        r.watches.push_back({});
-        w            = &r.watches.back();
-        w->conv      = conv;
-        w->root      = root;
-        w->gen       = ++r.watchGen;
-        w->lastReply = root;
-    }
-    w->busy      = busy;
-    w->seen      = std::max(w->seen, after);
-    w->lastReply = std::max(w->lastReply, w->seen);
-    if (w->due && !w->inFlight) // busy now: no waiting out a quiet interval
-        w->due = std::min(w->due, r.now() + r.watchInterval(*w));
-}
-
-void SlackBackend::unwatchThread(ConvRef conv, Ts root) {
-    std::erase_if(_read->watches, [&](const Read::Watch &w) {
-        return w.conv == conv && w.root == root;
-    });
-}
-
 // A message that arrived: into the Store as a live message, then the badge
 // by these rules — every DM message is a red badge,
 // a muted conversation badges only mentions and followed-thread replies,
 // plain channel thread replies don't badge the channel.
 bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
-    if (m.isReply())
-        pullWatch(c, m.threadTs, m.ts);
     if (c >= s.conversationCount() || s.findMessage(c, m.ts))
         return false; // seen already (a history page, the send's own echo)
     const bool own  = s.me != kNoUser && m.user == s.me;

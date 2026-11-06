@@ -813,7 +813,7 @@ void Composer::formatAction(shortcuts::Id id) {
 // Up in an empty editor: edit my newest message here (the newest
 // that is mine and not a system line). Agent sessions have no edit.
 void Composer::editLast() {
-    if (_key.conv == model::kNoConv || _ctx.backend.isAgentSession(_key.conv))
+    if (_key.conv == model::kNoConv)
         return;
     const model::Store &st   = _ctx.store;
     const auto          mine = [&](const model::Message &m) {
@@ -1161,8 +1161,8 @@ bool Composer::send() {
 // ── Undo send ───────────────────────────────────────────────────────────────
 
 void Composer::offerUndo(const std::string &html, const std::vector<std::string> &files) {
-    // Only where messages can be deleted, never in agent sessions.
-    if (_ctx.backend.isAgentSession(_key.conv) || !window())
+    // Only where messages can be deleted.
+    if (!window())
         return;
     // The ghost: my newest pending message in this list.
     const auto *list = _key.thread ? _ctx.store().replies(_key.conv, _key.thread)

@@ -181,7 +181,6 @@ void Store::clear() {
     _unreadThreads     = 0;
     _unreadActivity    = 0;
     workspaceMuted     = false;
-    answersAreMentions = false;
     me                 = kNoUser;
     ++_textRev;
     textUnlisted();
@@ -794,8 +793,6 @@ bool Store::reactedByMe(const Reaction &r) const {
 }
 
 bool Store::mentions(const Message &m) const {
-    if (answersAreMentions)
-        return m.subtype() != "progress";
     return mentionsMe(m.text);
 }
 
