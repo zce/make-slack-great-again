@@ -1410,7 +1410,7 @@ void Shell::buildTitleBar(View *parent) {
         .items(Align::Center).noShrink();
     search->setLook({C::SidebarHover, C::SidebarSelected, C::SidebarSelected, C::None, 9});
     search->setRole(Role::Button);
-    search->setTooltip(shortcuts::tip(tr("Search all"), shortcuts::Id::QuickSwitch));
+    search->setTooltip(shortcuts::tip(tr("Search"), shortcuts::Id::QuickSwitch));
     search->add<IconView>(Icon::Search, 16, C::SidebarTextMuted);
     search->add<Label>(tr("Search"), Font::Control, C::SidebarText);
     search->add<View>()->style().flex(1);
