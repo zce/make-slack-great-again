@@ -1006,6 +1006,21 @@ Shell::Shell(
         storeSorts();
         saveSettingsSoon();
     };
+    _sidebar->onSectionOrderChanged = [this] {
+        std::erase_if(_settings.sidebarSectionOrders, [this](const Settings::SectionOrderPref &p) {
+            return p.workspace == _activeKey;
+        });
+        if (!_sidebar->sectionOrder().empty())
+            _settings.sidebarSectionOrders.push_back({_activeKey, _sidebar->sectionOrder()});
+        std::sort(
+            _settings.sidebarSectionOrders.begin(),
+            _settings.sidebarSectionOrders.end(),
+            [](const Settings::SectionOrderPref &a, const Settings::SectionOrderPref &b) {
+                return a.workspace < b.workspace;
+            }
+        );
+        saveSettingsSoon();
+    };
     _listHandle = body->add<ListHandle>(*_sidebar, [this](float width) {
 #ifndef __APPLE__
         if (_titleSidebar)
@@ -3849,6 +3864,13 @@ void Shell::loadSorts() {
         if (p.workspace == _activeKey)
             sorts[p.section] = SectionSort::decode(p.sort);
     _sidebar->setSorts(std::move(sorts));
+    std::vector<std::string> order;
+    for (const Settings::SectionOrderPref &p : _settings.sidebarSectionOrders)
+        if (p.workspace == _activeKey) {
+            order = p.sections;
+            break;
+        }
+    _sidebar->setSectionOrder(std::move(order));
 }
 
 void Shell::storeSorts() {
