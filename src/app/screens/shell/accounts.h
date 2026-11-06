@@ -7,6 +7,7 @@
 #pragma once
 
 #include "app/auth/workspaces.h"
+#include "app/mrkdwn/mrkdwn.h"
 #include "app/model/backend_proxy.h"
 #include "app/model/null_backend.h"
 #include "app/slack/credentials.h"
@@ -93,6 +94,8 @@ private:
     void     sessionDialog(bool appKeysLink);
     void     refreshRail(); // the store's workspaces to the shell
     void     activate(const std::string &key);
+    void tryOpenLink();
+    void clearLink();
     // The open workspace's last chat opens again, once its
     // Store lists it; false when it doesn't (yet).
     bool     restoreLast(Running &r);
@@ -143,6 +146,10 @@ private:
     std::vector<std::unique_ptr<Running>> _running;
     Running                              *_active = nullptr; // the one the screens show
     std::string                           _activeKey;
+    mrkdwn::MessageRef                    _link;
+    std::string                           _linkKey;
+    model::Store                         *_linkStore = nullptr;
+    model::Store::ObserverId              _linkObserver = 0;
     std::vector<std::string>              _pending; // not started yet (startNext)
     uint64_t                              _serial = 0, _staggerTimer = 0;
     std::unique_ptr<slack::OAuthFlow>     _oauth;
