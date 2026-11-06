@@ -99,6 +99,9 @@ std::string messagePermalink(const MessageRef &ref);
 // permalink behind it (an agent session's thread has none).
 std::string threadLink(std::string_view conv, std::string_view rootTs);
 MessageRef  parseThreadLink(std::string_view url);
+// External URL handler: msga://<team>.slack.com/archives/... or msga://thread/<conv>/<root>.
+// OAuth callbacks and unknown/unsafe hosts are not message links.
+MessageRef  parseAppLink(std::string_view url);
 
 // ── Layout view ─────────────────────────────────────────────────────────────
 enum class BlockKind : uint8_t {
