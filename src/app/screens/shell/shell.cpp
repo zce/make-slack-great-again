@@ -507,41 +507,56 @@ private:
     float _startX = 0, _startW = 0;
 };
 
-// Keep the content pane framed in every window state, including maximized
-// and fullscreen; the inset exposes the current sidebar theme behind it.
+// The content pane is rounded only in an ordinary window. The uncovered
+// right and bottom edges use the same palette gradient as the sidebar.
 class InsetPane final : public View {
 public:
     void paint(gfx::Painter &p) override {
         const auto &pad = currentStyle().pad;
-        if (pad.r > 0 || pad.b > 0)
-            p.fillRect(bounds(), color(C::Sidebar));
-        p.fillRoundRect({0, 0, width() - pad.r, height() - pad.b}, 12, color(C::Surface));
+        const RectF surface{0, 0, width() - pad.r, height() - pad.b};
+        if (pad.r > 0 || pad.b > 0) {
+            paintNavGradient(*this, p, C::Sidebar);
+            p.fillRoundRect(surface, kRadius, color(C::Surface));
+        } else {
+            p.fillRect(surface, color(C::Surface));
+        }
     }
-    // Mask children at each rounded corner; their rectangular backgrounds must
-    // not cover the inset pane's curved edge.
+    // Cover rectangular child backgrounds only at the curved corners.
     void paintOver(gfx::Painter &p) override {
         const auto &pad = currentStyle().pad;
-        if (!pad.r || !pad.b) return;
-        const float w = width() - pad.r, h = height() - pad.b, r = 12;
-        const RectF corners[] = {{0, 0, r, r}, {w-r, 0, r, r},
-                                 {0, h-r, r, r}, {w-r, h-r, r, r}};
-        for (const auto &corner : corners) {
+        if (pad.r <= 0 || pad.b <= 0)
+            return;
+        const float w = width() - pad.r, h = height() - pad.b;
+        const RectF surface{0, 0, w, h};
+        const RectF corners[] = {{0, 0, kRadius, kRadius},
+                                 {w - kRadius, 0, kRadius, kRadius},
+                                 {0, h - kRadius, kRadius, kRadius},
+                                 {w - kRadius, h - kRadius, kRadius, kRadius}};
+        for (const RectF &corner : corners) {
             p.save();
             p.clipRect(corner);
-            p.fillRect(corner, color(C::Sidebar));
-            p.fillRoundRect({0, 0, w, h}, r, color(C::Surface));
+            paintNavGradient(*this, p, C::Sidebar);
+            p.fillRoundRect(surface, kRadius, color(C::Surface));
             p.restore();
         }
     }
     void layout() override {
-        // Fullscreen uses the same inset and corner treatment as windowed mode.
+#ifdef __APPLE__
+        // Keep macOS's existing unified-title-bar framing unchanged.
         constexpr float want = 6;
+#else
+        const bool windowed =
+            window() && !window()->native().isMaximized() && !window()->native().isFullscreen();
+        const float want = windowed ? 6.f : 0.f;
+#endif
         if (currentStyle().pad.r != want || currentStyle().pad.b != want) {
             style().pad.r = want;
             style().pad.b = want;
         }
         View::layout();
     }
+private:
+    static constexpr float kRadius = 12;
 };
 
 // The splitter handle between the messages and the thread panel: the panel's soft shadow cast
@@ -911,6 +926,13 @@ Shell::Shell(
 
     auto *screen = win.root().add<View>();
     screen->style().column();
+#ifndef __APPLE__
+    // Visual-only window rounding: the native window stays rectangular.
+    // Clipping the entire shell keeps title, sidebar and main pane together.
+    _windowContent = screen;
+    screen->setClipChildren(true);
+    syncWindowCorners();
+#endif
     buildTitleBar(screen);
 #ifdef MSGA_SELF_UPDATE
     _updateBar            = screen->add<UpdateBar>();
@@ -1487,6 +1509,7 @@ void Shell::buildTitleBar(View *parent) {
         if (e.type == plat::EventType::StateChanged) {
             updateTitleButtons();
             syncFullScreenChrome();
+            syncWindowCorners();
             syncWindowVisible(); // minimised or back
         } else if (e.type == plat::EventType::FocusIn || e.type == plat::EventType::FocusOut)
             updateReading();
@@ -1497,6 +1520,20 @@ void Shell::buildTitleBar(View *parent) {
                 fitToScreen();
         }
     };
+}
+
+void Shell::syncWindowCorners() {
+#ifndef __APPLE__
+    if (!_windowContent)
+        return;
+    const bool windowed = !_win.native().isMaximized() && !_win.native().isFullscreen();
+    _windowContent->setBackground(C::Sidebar, windowed ? 12.f : 0.f);
+    // A WM state change can leave the logical size unchanged.
+    if (_mainPane)
+        _mainPane->invalidateLayout();
+    if (_signedOut)
+        _signedOut->invalidateLayout();
+#endif
 }
 
 // The native chrome (macOS's title-bar rim and
