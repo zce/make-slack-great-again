@@ -36,3 +36,40 @@ Planned follow-on work (not part of this infrastructure PR):
 2. Route external message permalinks to the existing message/thread jump logic with multi-workspace handling.
 3. Probe Slack Lists APIs under both session and OAuth credentials before implementing a native Lists UI.
 4. Iterate on visual customizations as independent, reviewable changes.
+
+## Slack deep links (Linux)
+
+The fork understands both the upstream MSGA message links and Slack's documented native
+deep links. Parsing URLs does **not** change the OS default handler:
+
+- `msga://<workspace>.slack.com/archives/<channel>/p<timestamp>?thread_ts=<root>&cid=<channel>`:
+  open a Slack message in the appropriate workspace and thread (when present).
+- `msga://thread/<channel>/<root-ts>`: open a thread in the currently selected Slack workspace.
+- `slack://open[?team=T...]`, `slack://channel?team=T...&id=C...`,
+  `slack://user?team=T...&id=U...`: match Slack's official native URI formats.
+  The same `open`, `channel`, and `user` paths also work under `msga://`.
+- `msga 'https://<workspace>.slack.com/archives/...'`: open an unmodified
+  official Slack permalink from the command line; the fork does **not** intercept all HTTPS links.
+
+`slack://app`, `slack://file` and `slack://share-file` are not implemented
+because the corresponding MSGA UI actions are not available yet.
+
+The generated desktop launcher advertises support for `slack://`, but the app
+registers and selects **only** `msga://` automatically. To explicitly choose MSGA
+as the `slack://` handler after running the fork binary once:
+
+```sh
+xdg-mime query default x-scheme-handler/slack
+xdg-mime default msga.desktop x-scheme-handler/slack
+xdg-mime query default x-scheme-handler/slack
+```
+
+Keep the original handler name from the first command to restore the default later.
+Closing the official/older MSGA process is necessary when testing a different build
+because the application is single-instance. The old and forked builds still share
+an application identity.
+
+The `msga://` message link and `slack://` routing may open the target workspace,
+channel or thread before its full history arrives; the existing message-list jump
+is bounded and may not find distant older messages. Do not claim universal
+message-position accuracy until verified against the real Slack history.
