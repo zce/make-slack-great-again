@@ -1,0 +1,82 @@
+name: Release
+
+# Each reviewed merge to master publishes a new fork build.
+# The upstream updater must NEVER be enabled in this fork: it downloads
+# official msga.app binaries, which would replace our custom version.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld cmake ninja-build pkg-config python3 \
+            libfreetype-dev libharfbuzz-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev wayland-protocols \
+            libxcb1-dev libxcb-xkb-dev libxcb-shm0-dev \
+            libxcb-randr0-dev libxcb-cursor-dev libxcb-xfixes0-dev \
+            libxcb-xinput-dev libdbus-1-dev
+      - name: Configure release
+        run: |
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DMSGA_BUILD_TESTS=OFF \
+            -DMSGA_DEMO=OFF \
+            -DMSGA_SELF_UPDATE=OFF \
+            -DMSGA_SIZE_MAP=OFF
+      - name: Build release binary
+        run: cmake --build build-release --target msga --parallel 4
+      - name: Package and checksum
+        run: |
+          mkdir -p dist
+          strip build-release/msga
+          cp build-release/msga dist/msga-linux-x86_64
+          (cd dist && sha256sum msga-linux-x86_64 > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: dist
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          upstream_version="$(sed -nE 's/^[[:space:]]*set\(MSGA_VERSION[[:space:]]+([0-9]+)\).*/\1/p' version.cmake | head -n1)"
+          test -n "$upstream_version"
+          tag="v${upstream_version}-zce.${GITHUB_RUN_NUMBER}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* \
+              --target "$GITHUB_SHA" \
+              --title "msga ${upstream_version} (zce build ${GITHUB_RUN_NUMBER})" \
+              --notes "Automated fork build from \`master\` (commit \`${GITHUB_SHA}\`). Linux x86_64 dynamic binary; upstream in-app updater disabled. See docs/FORK.md for dependencies and supported platforms."
+          fi
