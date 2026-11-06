@@ -453,8 +453,8 @@ TEST("global search: Ctrl+K includes message text, not only conversation names")
     search->field().setText("proposal b");
     for (int i = 0; i < 1000 && search->messageResults().empty(); ++i) pump(5);
     REQUIRE(!search->messageResults().empty());
-    CHECK(search->messageResults()[0].conv == h.conv("C0DESIGN"));
-    search->choose(int(search->results().size()));
+    CHECK(search->messageResults()[0].hit.conv == h.conv("C0DESIGN"));
+    search->choose(0); // message hits are first
     pump();
     CHECK(h.sh->current() == h.conv("C0DESIGN"));
 }
