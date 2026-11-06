@@ -1353,6 +1353,22 @@ public:
     std::function<void()>       onStyleChanged; // a theme or palette switch
 };
 
+// Search stays gently highlighted; hovering adds only one more wash from the
+// active palette instead of jumping to the opaque selected-channel colour.
+class TitleSearchTrigger final : public Clickable {
+public:
+    TitleSearchTrigger() {
+        setLook({C::SidebarHover, C::SidebarHover, C::SidebarHover, C::None, 9});
+        setHoverRepaint(true);
+    }
+
+    void paint(gfx::Painter &p) override {
+        Clickable::paint(p);
+        if (hovered())
+            p.fillRoundRect(bounds(), 9, color(C::SidebarHover));
+    }
+};
+
 void Shell::buildTitleBar(View *parent) {
     auto *strip = parent->add<TitleStrip>();
     _titleBar   = strip;
@@ -1405,10 +1421,9 @@ void Shell::buildTitleBar(View *parent) {
 
     // The conversation name now belongs to the main-pane portion of the title bar.
     _header = _titleBar->add<ConvHeader>(_ctx, _avatars);
-    auto *search = _titleBar->add<Clickable>();
+    auto *search = _titleBar->add<TitleSearchTrigger>();
     search->style().row().width(252).height(30).padding(12, 0).spacing(9)
         .items(Align::Center).noShrink();
-    search->setLook({C::SidebarHover, C::SidebarSelected, C::SidebarSelected, C::None, 9});
     search->setRole(Role::Button);
     search->setTooltip(shortcuts::tip(tr("Search"), shortcuts::Id::QuickSwitch));
     search->add<IconView>(Icon::Search, 16, C::SidebarTextMuted);
@@ -1419,21 +1434,10 @@ void Shell::buildTitleBar(View *parent) {
     _titleBar->add<View>()->style().width(24).noShrink();
 
     _titleActions = _titleBar->add<View>();
-    _titleActions->style().row().height(kTitleBarH).padding(0, 0, 28, 0)
-        .spacing(24).items(Align::Center).noShrink();
-    auto *help = _titleActions->add<Clickable>();
-    help->style().size(28, 28).items(Align::Center)
-        .justifyContent(Justify::Center).noShrink();
-    help->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 14});
-    help->setRole(Role::Button);
-    help->setTooltip(tr("Help"));
-    help->add<Label>("?", Font::BodyBold, C::SidebarTextMuted)->setHitTransparent(true);
-    help->onClick = [this] {
-        _ctx.app.platform().openUrl("https://github.com/zce/make-slack-great-again#readme");
-    };
-    auto *settings = _titleActions->add<GlyphButton>(
-        Icon::Settings2, 28, 18, C::SidebarTextMuted, tr("Settings"));
-    settings->onClick = [this] { openSettings(); };
+    // Only the existing profile/presence control is adopted here; its menu
+    // already exposes Settings. No duplicate toolbar entry or Help shortcut.
+    _titleActions->style().row().height(kTitleBarH).padding(0, 0, 16, 0)
+        .spacing(8).items(Align::Center).noShrink();
 #endif
     strip->onStyleChanged = [this] { syncChrome(); };
     syncChrome();

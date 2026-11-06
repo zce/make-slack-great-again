@@ -560,6 +560,15 @@ TEST("header: channel members and star, a DM's avatar, huddles only where the se
     Harness            h;
     shell::ConvHeader &hd = h.sh->header();
     CHECK_STR(hd.title()->text(), "#design");
+#ifndef __APPLE__
+    // The clickable pill surrounds the title while preserving its alignment.
+    const ui::RectF title = hd.title()->windowRect();
+    const ui::RectF pill = hd.title()->parent()->windowRect();
+    CHECK(pill.h >= 34);
+    CHECK(title.x - pill.x >= 7);
+    CHECK(pill.x + pill.w - title.x - title.w >= 9);
+    CHECK(std::abs(title.x - hd.windowRect().x - 16) < 1);
+#endif
 #ifdef __APPLE__
     CHECK(hd.members()->visible());
 #else

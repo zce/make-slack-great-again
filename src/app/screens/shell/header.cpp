@@ -306,12 +306,18 @@ ConvHeader::ConvHeader(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _av
 #else
     // The title bar owns this view on non-macOS. Keep the name and star
     // together on the left, and the huddle beside the global search.
-    style().row().height(48).padding(16, 0, 0, 0).spacing(4)
+    // The title's hit area starts 8 px before its text; keep the text
+    // aligned with the content pane's original 16 px inset.
+    style().row().height(48).padding(8, 0, 0, 0).spacing(4)
         .items(Align::Center).flex(1);
     View *heading = this, *actions = this;
 #endif
     _avatar = heading->add<HeaderAvatar>();
     _avatar->setVisible(false);
+#ifndef __APPLE__
+    // Preserve the DM avatar's original 16 px left inset.
+    _avatar->style().margins(8, 0, 0, 0);
+#endif
     _avatar->onClick = [this] {
         if (_avatar->isGroup() && _ctx.backend.capabilities().memberList)
             openMembers(_avatar->windowRect());
@@ -327,8 +333,11 @@ ConvHeader::ConvHeader(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _av
 #else
     // The channel title is the member-list entry, not a static label.
     auto *titleButton = heading->add<Clickable>();
-    titleButton->style().row().items(Align::Center).noShrink();
-    titleButton->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 6});
+    // A 34 px hover pill leaves room around the text on all four sides
+    // without shifting the title's alignment in the content pane.
+    titleButton->style().row().height(34).padding(8, 0, 10, 0)
+        .items(Align::Center).noShrink();
+    titleButton->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 7});
     titleButton->setTooltip(tr("View members"));
     _title = titleButton->add<Label>("", Font::HeaderTitle, C::SidebarText);
     _title->setMaxLines(1);
