@@ -488,12 +488,13 @@ public:
             _startW = _list.width();
             return true;
         case EventType::PointerMove:
-            if (window() && window()->capture() == this)
+            if (window() && window()->capture() == this) {
                 const float width =
                     std::clamp(_startW + e.windowPos.x - _startX, kListMinW, kListMaxW);
                 _list.style().width(width);
                 if (_onResize)
                     _onResize(width);
+            }
             return true;
         default:
             return false;
