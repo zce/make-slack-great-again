@@ -120,6 +120,11 @@ std::vector<TextEdit::Run> run(uint32_t a, uint32_t b, uint8_t f, std::string_vi
 
 } // namespace
 
+TEST("shell: Slack slash-command dispatcher remains connected") {
+    Harness h;
+    REQUIRE(bool(h.sh->composer().onCommand));
+}
+
 // ── mrkdwn serialiser ───────────────────────────────────────────────────────
 
 TEST("composer: runs serialise to mrkdwn the parser reads back") {
