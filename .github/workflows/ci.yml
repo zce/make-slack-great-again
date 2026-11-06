@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld cmake ninja-build pkg-config python3 \
+            libfreetype-dev libharfbuzz-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev wayland-protocols \
+            libxcb1-dev libxcb-xkb-dev libxcb-shm0-dev \
+            libxcb-randr0-dev libxcb-cursor-dev libxcb-xfixes0-dev \
+            libxcb-xinput-dev libxcb-xtest0-dev libdbus-1-dev
+      - name: Configure
+        run: |
+          cmake -S . -B build-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DMSGA_BUILD_TESTS=ON \
+            -DMSGA_DEMO=OFF \
+            -DMSGA_SELF_UPDATE=OFF
+      - name: Build
+        run: cmake --build build-ci --parallel 4
+      - name: Test
+        run: ctest --test-dir build-ci --output-on-failure --parallel 2
