@@ -6,9 +6,6 @@
 //   --demo <dir>          the fake workspace in <dir>/fixture.json (only in
 //                         builds configured with -DMSGA_DEMO=ON)
 //   --demo-tour <file>    with --demo: msga's scripted walkthrough (demo/tour.json)
-//   --claude-permission-hook <dir>
-//                         Claude Code's permission hook for the sessions msga
-//                         starts (app/claude/approvals.h): no window, no app
 //
 // Diagnostics (screenshots, measurements):
 //   --theme light|dark   override the saved theme for this run
