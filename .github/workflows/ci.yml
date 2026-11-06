@@ -49,7 +49,9 @@ jobs:
       - name: Test
         run: ctest --test-dir build-ci --output-on-failure --parallel 1
 
-      - name: Package pull request test build
+      # GitHub Actions artifacts are already downloaded as ZIP archives.
+      # Upload the executable directly to avoid a ZIP containing a .tar.gz.
+      - name: Prepare pull request test build
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
@@ -57,13 +59,15 @@ jobs:
           cp build-ci/msga dist/msga
           chmod +x dist/msga
           (cd dist && sha256sum msga > SHA256SUMS)
-          tar -C dist -czf dist/msga-linux-x86_64-pr${{ github.event.pull_request.number }}.tar.gz msga SHA256SUMS
       - name: Upload pull request test build
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: msga-linux-x86_64-pr${{ github.event.pull_request.number }}
-          path: dist/msga-linux-x86_64-pr${{ github.event.pull_request.number }}.tar.gz
+          path: |
+            dist/msga
+            dist/SHA256SUMS
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
 
