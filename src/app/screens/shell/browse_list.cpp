@@ -1,6 +1,6 @@
 // Shared virtualized picker used by Slack's channel and people dialogs.
 // Extracted from session_dialogs.cpp so Claude Code does not enter the build.
-#include "screens/shell/session_dialogs.h"
+#include "screens/shell/browse_list.h"
 
 #include "base/str.h"
 #include "base/utf8.h"
