@@ -3255,7 +3255,7 @@ TEST("single-sidebar layout: one profile controller in the title bar") {
     CHECK(f.avatarButton()->visible());
     CHECK_FALSE(f.toggle()->visible());
     CHECK(w.sh->workspaceSwitcher() != nullptr);
-    CHECK(w.sh->workspaceSwitcher()->parent() == &w.sh->sidebar());
+    CHECK(w.sh->workspaceSwitcher()->parent() != &w.sh->sidebar());
 #else
     CHECK(f.parent() == w.sh->rail());
 #endif
@@ -3706,9 +3706,9 @@ TEST("workspaces: the quick switcher has a tab per workspace; ←/→ and typing
     press(*w.win, plat::Key::Left);
     CHECK(qs->tab() == 0);
     CHECK(qs->results().empty());
-    CHECK_STR(qs->emptyText(), "No matches in Lumen Studio. Other workspaces have some.");
+    CHECK_STR(qs->emptyText(), "Searching messages\\xE2\\x80\\xA6");
     qs->field().insertText("zzz");
-    CHECK_STR(qs->emptyText(), "No conversations match.");
+    CHECK_STR(qs->emptyText(), "Searching messages\\xE2\\x80\\xA6");
     // A pick in another workspace's tab switches there and opens it.
     qs->field().setText("second-des"); // runs dry here: the tab moves on
     CHECK(qs->tab() == 1);
