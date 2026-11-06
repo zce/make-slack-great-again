@@ -247,9 +247,6 @@ void Shell::maybeNotify(
     std::string        body = preview(st, m);
     if (c.isDirect()) {
         n.title = sender;
-        // Claude Code: every answer comes from the agent; the session names it.
-        if (be.capabilities().agentSessions)
-            n.title = st.displayName(conv);
     } else {
         n.title = "#" + c.name;
         body    = str::concat({sender, ": ", body});
