@@ -1020,8 +1020,15 @@ Shell::Shell(
     };
     _thread->panel->list().onEdit = [this](ConvRef, Ts ts) { _thread->composer->beginEdit(ts); };
 #endif
-    // The thread composer's popups stay inside the panel.
+    // Slack's built-in and app slash commands must still run locally; this
+    // dispatch is independent of the removed Claude Code agent UI.
+    _composer->onCommand = [this](const std::string &name, const std::string &args) {
+        runCommand(_current, 0, name, args);
+    };
 #ifdef MSGA_HAVE_MESSAGES
+    _thread->composer->onCommand = [this](const std::string &name, const std::string &args) {
+        runCommand(_thread->composer->conv(), _thread->composer->thread(), name, args);
+    };
     _thread->composer->setPopupArea(_thread->panel);
 #endif
 
@@ -1213,6 +1220,18 @@ std::string Shell::notifiedFileText() {
 uint64_t Shell::nextNotifyId() {
     // Saved along with the entry it goes to (postNotification), or at quit.
     return _nextNotifyId++;
+}
+
+// Routes Slack's /dnd, /status, /mute and app commands through the backend
+// rather than accidentally posting them as ordinary chat messages.
+void Shell::runCommand(ConvRef conv, Ts thread, const std::string &name, const std::string &args) {
+    if (conv == kNoConv)
+        return;
+    const auto result = _ctx.backend.runLocalCommand(conv, thread, name, args);
+    if (!result.error.empty())
+        showError(result.error);
+    if (result.open != kNoConv)
+        open(result.open);
 }
 
 // A conversation nobody can post to from here
