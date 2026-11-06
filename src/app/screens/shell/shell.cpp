@@ -929,6 +929,29 @@ Shell::Shell(
 #endif
     });
     buildMain(body);
+#ifndef __APPLE__
+    // The workspace selector replaces the old vertical rail. The entire
+    // switcher remains in the sidebar's footer, separate from the profile.
+    auto *switcher = _sidebar->add<Clickable>();
+    _workspaceSwitch = switcher;
+    switcher->style().row().height(52).margins(8, 0, 8, 8)
+        .padding(8, 4).spacing(8).items(Align::Center).noShrink();
+    switcher->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 8});
+    switcher->setBorder(C::SidebarHover);
+    switcher->setRole(Role::Button);
+    switcher->setTooltip(tr("Switch workspace"));
+    _workspaceAvatar = switcher->add<Avatar>();
+    _workspaceAvatar->style().size(32, 32).noShrink();
+    _workspaceAvatar->setRadius(7);
+    _workspaceAvatar->setPlaceholder(C::Accent);
+    _workspaceAvatar->setHitTransparent(true);
+    switcher->add<IconView>(Icon::ChevronDown, 16, C::SidebarTextMuted);
+    switcher->add<View>()->style().flex(1);
+    switcher->onClick = [this, switcher] {
+        const RectF r = switcher->windowRect();
+        showWorkspacePicker({r.x + 8, r.y});
+    };
+#endif
     // With no workspace signed in (setSignedIn(false)) this takes the
     // sidebar's and the main pane's place.
     _signedOut = body->add<InsetPane>();
@@ -1389,12 +1412,23 @@ void Shell::buildTitleBar(View *parent) {
     search->add<IconView>(Icon::Search, 16, C::SidebarTextMuted);
     search->add<Label>(tr("Search"), Font::Control, C::SidebarText);
     search->add<View>()->style().flex(1);
+    search->add<IconView>(Icon::Plus, 14, C::SidebarTextMuted);
     search->onClick = [this] { showQuickSwitcher(); };
     _titleBar->add<View>()->style().flex(1);
 
     _titleActions = _titleBar->add<View>();
     _titleActions->style().row().height(kTitleBarH).padding(0, 0, 6, 0)
         .spacing(8).items(Align::Center).noShrink();
+    auto *help = _titleActions->add<Clickable>();
+    help->style().size(28, 28).items(Align::Center)
+        .justifyContent(Justify::Center).noShrink();
+    help->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 14});
+    help->setRole(Role::Button);
+    help->setTooltip(tr("Help"));
+    help->add<Label>("?", Font::BodyBold, C::SidebarTextMuted)->setHitTransparent(true);
+    help->onClick = [this] {
+        _ctx.app.platform().openUrl("https://github.com/zce/make-slack-great-again#readme");
+    };
     auto *settings = _titleActions->add<GlyphButton>(
         Icon::Settings2, 28, 18, C::SidebarTextMuted, tr("Settings"));
     settings->onClick = [this] { openSettings(); };
