@@ -759,6 +759,9 @@ TEST("settings: notification level, and the master switch greys out the rest") {
     CHECK(h.settings.notifyLevel == 1);
     CHECK(h.sh->settingsDialog() == nullptr);
 
+    // Only notification routing matters here. Avoid leaving asynchronous
+    // chime playback for the following sound test's fake pw-play to record.
+    h.settings.notifySound = false;
     // Level 1: a plain channel message stays quiet, a mention notifies.
     h.sh->setLive(true);
     const ConvRef eng = h.store.findConversation("C0ENG");
