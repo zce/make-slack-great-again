@@ -763,7 +763,8 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
     _scroll->setThinThumb(C::SidebarScrollbar);
     _scroll->style().flex(1);
     _items = _scroll->content();
-    _items->style().padding(0, kTopPad, 0, 0).spacing(0);
+    // Keep the last row off the viewport edge when scrolled to the bottom.
+    _items->style().padding(0, kTopPad, 0, 12).spacing(0);
     _footer = add<SidebarFooter>(*this, ctx, avatars);
 
     _observer = ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
