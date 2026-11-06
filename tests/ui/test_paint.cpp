@@ -142,8 +142,19 @@ struct TextRows : ui::VirtualList::Adapter {
 };
 } // namespace
 
-TEST("theme: absolute font sizes do not inherit the Body token adjustment") {
-    const float preference = ui::font(ui::Font::Body).size / 16.5f;
+TEST("theme: font roles retain a compact hierarchy across display scales") {
+    const auto *a = ui::app();
+    const float preference = a
+        ? float((a->settings().textScale > 0 ? a->settings().textScale : 1.0)
+                * a->userTextScale())
+        : 1.f;
+    // These are logical sizes; the window's DPR applies when rasterizing.
+    CHECK(std::abs(ui::font(ui::Font::Body).size - 15.f * preference) < 0.001f);
+    CHECK(std::abs(ui::font(ui::Font::HeaderTitle).size - 18.f * preference) < 0.001f);
+    CHECK(std::abs(ui::font(ui::Font::Control).size - 13.f * preference) < 0.001f);
+    CHECK(std::abs(ui::font(ui::Font::Section).size - 12.3f * preference) < 0.001f);
+    // pxFont is an absolute logical size; its value must not grow when the
+    // Body design token is adjusted independently.
     const auto actual = ui::pxFont(14.f, text::Weight::Regular, ui::color(ui::C::Text));
     CHECK(std::abs(actual.size - 14.f * preference) < 0.001f);
 }

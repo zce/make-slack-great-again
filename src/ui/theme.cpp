@@ -239,29 +239,29 @@ struct FontRole {
     bool         mono;
 };
 constexpr FontRole kFonts[] = {
-    {13, text::Weight::Regular, false},     // Small
-    {13, text::Weight::Bold, false},        // SmallBold
-    {16.5f, text::Weight::Regular, false},     // Body
-    {16.5f, text::Weight::Bold, false},        // BodyBold
+    {12, text::Weight::Regular, false},     // Small
+    {12, text::Weight::Bold, false},        // SmallBold
+    {15, text::Weight::Regular, false},     // Body
+    {15, text::Weight::Bold, false},        // BodyBold
     {18, text::Weight::Bold, false},        // Title
-    {14, text::Weight::Regular, true},      // Mono
-    {12, text::Weight::Regular, false},     // Caption
-    {14.5f, text::Weight::Regular, false},     // Control
-    {14.5f, text::Weight::Semibold, false},    // ControlBold
-    {15.5f, text::Weight::Semibold, false},    // Heading
-    {16.5f, text::Weight::Semibold, false},    // DialogTitle
-    {15.5f, text::Weight::Regular, false},     // Field
-    {16.5f, text::Weight::Semibold, false},    // BodySemibold
-    {13.5f, text::Weight::Semibold, false}, // Section
-    {13.5f, text::Weight::Bold, false},     // SectionBold
+    {13, text::Weight::Regular, true},      // Mono
+    {11, text::Weight::Regular, false},     // Caption
+    {13, text::Weight::Regular, false},     // Control
+    {13, text::Weight::Semibold, false},    // ControlBold
+    {14, text::Weight::Semibold, false},    // Heading
+    {15, text::Weight::Semibold, false},    // DialogTitle
+    {14, text::Weight::Regular, false},     // Field
+    {15, text::Weight::Semibold, false},    // BodySemibold
+    {12.3f, text::Weight::Semibold, false}, // Section
+    {12.3f, text::Weight::Bold, false},     // SectionBold
     {11.7f, text::Weight::Bold, false},     // CountBadge
-    {14.5f, text::Weight::Regular, false},  // YouLabel
+    {13.2f, text::Weight::Regular, false},  // YouLabel
     {10.1f, text::Weight::Bold, false},     // TileBold
-    {20, text::Weight::Semibold, false},    // HeaderTitle
+    {18, text::Weight::Semibold, false},    // HeaderTitle
     {16, text::Weight::Semibold, false},    // UnifiedTitle
-    {14, text::Weight::Bold, false},        // TabBold
+    {13, text::Weight::Bold, false},        // TabBold
     {10, text::Weight::Regular, false},     // Tiny
-    {12, text::Weight::Semibold, false},    // PlateName
+    {11, text::Weight::Semibold, false},    // PlateName
     {12, text::Weight::Semibold, false},    // SmallSemibold
     {28, text::Weight::Bold, false},        // CanvasTitle
 };
@@ -567,7 +567,7 @@ text::Style font(Font f, C c) {
 text::Style pxFont(float px, text::Weight w, Color c) {
     text::Style s = font(Font::Body);
     // px is an absolute logical font size. Only inherit OS/app text preferences,
-    // not changes to the Body typography token (currently 16.5).
+    // not changes to the Body typography token.
     s.size        = s.size * px / kFonts[size_t(Font::Body)].size;
     s.weight      = w;
     s.color       = c;
