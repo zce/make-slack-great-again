@@ -872,6 +872,48 @@ TEST("slack features: custom sidebar sections — the list, moves, create, a ref
     CHECK(e.errors.back().find("section_not_found") != std::string::npos);
 }
 
+TEST("slack features: external sharing is not ordinary Grid sharing") {
+    if (!haveServer())
+        return;
+    Env e(R"({"users.conversations": {"ok": true, "channels": [
+        {"id": "C1", "name": "general", "is_member": true, "is_shared": true,
+         "is_ext_shared": true},
+        {"id": "C2", "name": "internal-grid", "is_member": true, "is_shared": true,
+         "is_org_shared": true, "is_ext_shared": false},
+        {"id": "D1", "is_im": true, "user": "UMIRA", "is_ext_shared": true}],
+        "response_metadata": {"next_cursor": ""}}})");
+    REQUIRE(e.connect());
+    REQUIRE(e.conv("C1") != kNoConv && e.conv("C2") != kNoConv && e.conv("D1") != kNoConv);
+    CHECK(e.store.conversation(e.conv("C1")).extShared.value_or(false));
+    CHECK_FALSE(e.store.conversation(e.conv("C2")).extShared.value_or(true));
+    CHECK(e.store.conversation(e.conv("D1")).extShared.value_or(false));
+
+    // A partial roster without the flag must not erase previously known
+    // sharing state. An explicit false must, however, move the row back.
+    set(R"({"users.conversations": {"ok": true, "channels": [
+        {"id": "C1", "name": "general", "is_member": true},
+        {"id": "D1", "is_im": true, "user": "UMIRA"}],
+        "response_metadata": {"next_cursor": ""}}})");
+    const int calls = count("users.conversations");
+    e.be->reloadConversations();
+    REQUIRE(pumpUntil([&] { return count("users.conversations") > calls; }));
+    pumpFor(100);
+    CHECK(e.store.conversation(e.conv("C1")).extShared.value_or(false));
+    CHECK(e.store.conversation(e.conv("D1")).extShared.value_or(false));
+
+    set(R"({"users.conversations": {"ok": true, "channels": [
+        {"id": "C1", "name": "general", "is_member": true, "is_ext_shared": false},
+        {"id": "D1", "is_im": true, "user": "UMIRA", "is_ext_shared": false}],
+        "response_metadata": {"next_cursor": ""}}})");
+    const int calls2 = count("users.conversations");
+    e.be->reloadConversations();
+    REQUIRE(pumpUntil([&] {
+        return count("users.conversations") > calls2 &&
+               !e.store.conversation(e.conv("C1")).extShared.value_or(true);
+    }));
+    CHECK_FALSE(e.store.conversation(e.conv("D1")).extShared.value_or(true));
+}
+
 TEST("slack features: an OAuth token has no custom sections") {
     if (!haveServer())
         return;
