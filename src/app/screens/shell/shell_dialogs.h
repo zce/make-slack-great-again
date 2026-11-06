@@ -35,21 +35,7 @@ struct ForwardWorkspace {
     model::Backend       *backend = nullptr;
     std::function<bool()> alive; // still running (the send may come after a download)
 };
-// An agent workspace's teammate picked as the target: workspace `key` ("" = the open one) shows the
-// teammate's page with `text` (mrkdwn) and the files in its composer, left to the user to pick a
-// folder and send.
-using PrefillTeammate = std::function<void(
-    const std::string       &key,
-    const std::string       &role,
-    std::string              text,
-    std::vector<std::string> paths
-)>;
-// onError(message): a file couldn't be fetched, a session couldn't start (the
-// shell's error banner). With two or more `workspaces` (one of them the open
-// Store's) a picker above the conversation selector chooses where it goes,
-// starting on the open one; else it stays in the open workspace. Without
-// prefillTeammate a teammate can't be picked successfully ("Couldn't open the
-// chat.").
+// onError(message): a file couldn't be fetched. With multiple workspaces, a picker chooses the destination.
 ui::Popup *showForwardDialog(
     screens::Context                        &ctx,
     ui::Window                              &w,
@@ -57,8 +43,7 @@ ui::Popup *showForwardDialog(
     model::Ts                                ts,
     const std::string                       &onlyFile,
     std::function<void(const std::string &)> onError,
-    std::vector<ForwardWorkspace>            workspaces      = {},
-    PrefillTeammate                          prefillTeammate = {}
+    std::vector<ForwardWorkspace>            workspaces = {}
 );
 // The forwarded text for another workspace (portable mrkdwn): `mrkdwn`
 // from `source` with its workspace-local tokens turned into the words they
