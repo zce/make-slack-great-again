@@ -6,7 +6,7 @@
 #include "gfx/icons_generated.h"
 #include "app/screens/common/message_rules.h"
 #include "screens/shell/header.h"
-#include "screens/shell/message_search.h"
+#include "screens/shell/quick_switcher.h"
 
 using namespace ui;
 using i18n::arg;

@@ -3,7 +3,7 @@
 #include "base/i18n.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
-#include "screens/shell/message_search.h"
+#include "screens/shell/quick_switcher.h"
 
 #include <algorithm>
 

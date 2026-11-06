@@ -390,8 +390,7 @@ ConvHeader::ConvHeader(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _av
     };
     _search = search;
 #ifndef __APPLE__
-    // Ctrl+F is still available, but the header no longer duplicates the
-    // title bar's global search control.
+    // Search is in the title bar; both shortcuts open its popup.
     search->setVisible(false);
 #endif
 }

@@ -1,4 +1,4 @@
-// Ctrl/Cmd+K: message-first search across all connected Slack workspaces.
+// Ctrl/Cmd+K and Ctrl/Cmd+F share the global message-first search popup.
 #pragma once
 
 #include "screens/common/context.h"
@@ -16,6 +16,9 @@
 #include <vector>
 
 namespace shell {
+
+std::string searchConvLabel(const model::Store &store, model::ConvRef conv);
+std::string searchPreview(const model::Store &store, std::string_view mrkdwn);
 
 // Every conversation you are a member of except
 // DMs whose peer is deactivated or still unresolved (a raw user id), most
@@ -121,6 +124,7 @@ private:
     uint32_t                    _searchGeneration = 0;
     plat::TimerId               _searchTimer = 0;
     bool                        _searching = false;
+    bool                        _preserveScroll = false;
     std::shared_ptr<int>        _alive = std::make_shared<int>(0);
     std::vector<bool>           _dimmed;
     ui::TextEdit               *_field   = nullptr;

@@ -13,7 +13,7 @@
 #include "screens/shell/context_menus.h"
 #include "screens/shell/header.h"
 #include "screens/shell/huddle_banner.h"
-#include "screens/shell/message_search.h"
+
 #include "screens/shell/recent_folders.h"
 #include "screens/shell/session_dialogs.h"
 #include "screens/shell/shell.h"

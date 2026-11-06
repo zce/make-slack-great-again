@@ -4,7 +4,7 @@
 #include "base/str.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
-#include "screens/shell/message_search.h"
+#include "screens/shell/quick_switcher.h"
 
 using namespace ui;
 using i18n::arg;

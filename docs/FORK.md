@@ -41,13 +41,18 @@ Planned follow-on work (not part of this infrastructure PR):
 
 ## Search entry points
 
-The title-bar Search control and `Ctrl+K` (`Cmd+K` on macOS) open one
-palette for message-text matches, channel/DM navigation and people. Message
-hits appear first, newest first, across all connected Slack workspaces, and
-jump to the selected message. Workspace tabs still scope conversation and
-people quick navigation, but no longer limit message search.
-`Ctrl+F` remains the dedicated message search overlay. The palette does
-**not** claim full Slack file-content search.
+The title-bar Search control, `Ctrl+K` and `Ctrl+F` (use `Cmd` on
+macOS) open the same message-first popup. There is no separate message-area
+search overlay. The list groups message-text matches, channel/DM navigation
+and people; message hits show the conversation, timestamp and preview.
+Results come from Slack `search.messages` across all connected workspaces
+and jump directly to the selected message (including thread replies).
+Workspace tabs scope conversation/people quick navigation only.
+
+This is a compact search-results preview, not a paginated Slack search page:
+the existing backend requests the newest 20 message hits per workspace.
+Slack's message-search operators are passed through to the API, but this
+does **not** include full Slack file-content search.
 
 On Linux and Windows, the workspace switcher, conversation heading,
 star and huddle actions belong to the integrated title bar. The old

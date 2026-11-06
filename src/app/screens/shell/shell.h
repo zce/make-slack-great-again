@@ -42,7 +42,6 @@ class ThreadsPage;
 class ConvTabs;
 class HuddleBanner;
 class Menus;
-class MessageSearch;
 class ProfileCards;
 class QuickSwitcher;
 class ThreadArea;
@@ -165,10 +164,6 @@ public:
     bool           navigateHistory(bool back);
     // CloseFrontmost: the top dialog, else Settings, else the window.
     void           closeFrontmost();
-    // SearchMessages and the header's search button: toggle the search
-    // overlay over the message area.
-    void           openSearch();
-    MessageSearch *messageSearch() const { return _search; }
     QuickSwitcher *quickSwitcher() const { return _switcher; }
     void           showCanvas(bool on); // the header's tabs
     void           lookUpCanvas(model::ConvRef conv);
@@ -459,7 +454,6 @@ private:
     ui::View                     *_splitter = nullptr;
     ThreadArea                   *_thread   = nullptr;
     QuickSwitcher                *_switcher = nullptr;
-    MessageSearch                *_search   = nullptr;
     std::unique_ptr<Menus>        _menus;
     std::unique_ptr<ProfileCards> _profiles;
 

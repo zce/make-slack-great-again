@@ -45,9 +45,7 @@ public:
     bool           starred() const;
     int            avatarPresence() const; // tests: a DM's Avatar::Presence, else -1
 
-    // SEARCH HOOK: the search button (toggling the message search). Shell
-    // routes it to Shell::openSearch, where the message
-    // search lands; the header itself does nothing more.
+    // SEARCH HOOK: open the same global search popup as the title bar.
     std::function<void()> onSearch;
     // The member list: shown under `anchor` (window rect).
     void                  openMembers(ui::RectF anchor);

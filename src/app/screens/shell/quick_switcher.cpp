@@ -6,7 +6,8 @@
 #include "gfx/icons_generated.h"
 #include "screens/common/avatar_initial.h"
 #include "screens/shell/shortcuts.h"
-#include "screens/shell/message_search.h"
+#include "app/screens/common/message_text.h"
+#include "base/time.h"
 #include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar.h"
 
@@ -22,7 +23,8 @@ namespace shell {
 
 namespace {
 
-constexpr float kListH = 300; // the list's minimum height
+constexpr float kListH = 360; // compact, scrollable search results
+constexpr size_t kPreviewChars = 180;
 
 // Issue #60: fuzzy, not substring ("xdg" lands on #xd-general). None
 // for an id we can't name yet: not something to offer.
@@ -225,6 +227,24 @@ std::vector<ConvRef> quickSwitchFilter(
     return quickSwitchFilter(query, order, quickSwitchNames(store, order));
 }
 
+// Search text formatting shared by the popup and its tests.
+std::string searchConvLabel(const model::Store &store, ConvRef conv) {
+    const std::string name = conv < store.conversationCount() ? store.displayName(conv) : "";
+    if (name.empty())
+        return tr("Unknown channel");
+    return store.conversation(conv).isDirect() ? name : str::concat({"#", name});
+}
+
+std::string searchPreview(const model::Store &store, std::string_view text) {
+    // The rendered text with mentions resolved (the
+    // parser's label is kept for anyone unknown).
+    std::string out = screens::plainText(store, text);
+    // The first 120 characters, newlines as spaces.
+    out.resize(utf8::prefixBytes(out, kPreviewChars));
+    std::replace(out.begin(), out.end(), '\n', ' ');
+    return out;
+}
+
 // The list rows, virtual (a large workspace has thousands of channels):
 // a DM's photo, a group DM's initial disc, a
 // channel's # or lock, then the name.
@@ -236,7 +256,7 @@ public:
     public:
         Row() {
             setLook({C::None, C::Hover, C::Pressed, C::Selection, 6});
-            style().row().height(32).padding(10, 0).spacing(10).items(Align::Center);
+            style().row().height(36).padding(10, 4).spacing(10).items(Align::Center);
             avatar = add<Avatar>();
             avatar->style().size(20, 20);
             avatar->setRadius(5);
@@ -244,6 +264,8 @@ public:
             icon->style().size(20, 20);
             auto *body = add<View>();
             body->style().column().flex(1).spacing(2);
+            category = body->add<Label>("", Font::Small, C::TextMuted);
+            category->setVisible(false);
             name = body->add<Label>("", Font::Body);
             name->setMaxLines(1);
             snippet = body->add<Label>("", Font::Small, C::TextMuted);
@@ -252,7 +274,8 @@ public:
         }
         Avatar   *avatar  = nullptr;
         IconView *icon    = nullptr;
-        Label    *name    = nullptr;
+        Label    *category = nullptr;
+        Label    *name     = nullptr;
         Label    *snippet = nullptr;
         int       index   = -1;
     };
@@ -274,8 +297,16 @@ public:
         const model::Store &st = *_q._tabs[size_t(_q._tab)].store;
         r.index = i;
         const bool isMessage = index < messages;
+        const bool firstMessage = isMessage && index == 0;
+        const bool firstConversation = index == messages && conversations > 0;
+        const bool firstPerson = index == messages + conversations;
+        const bool showCategory = firstMessage || firstConversation || firstPerson;
+        r.category->setVisible(showCategory);
+        if (showCategory)
+            r.category->setText(firstMessage ? tr("Messages")
+                                : firstConversation ? tr("Conversations") : tr("People"));
         r.snippet->setVisible(isMessage);
-        r.style().height(isMessage ? 64 : 32);
+        r.style().height(isMessage ? (showCategory ? 92 : 72) : (showCategory ? 56 : 36));
         if (isMessage) {
             const auto &match = _q._hits[index];
             const auto &tab = _q._tabs[match.workspace];
@@ -285,6 +316,7 @@ public:
             std::string heading = searchConvLabel(*tab.store, match.hit.conv);
             if (_q._tabs.size() > 1 && !tab.name.empty())
                 heading += " \xC2\xB7 " + tab.name;
+            heading += " \xC2\xB7 " + base::formatDateTime(model::tsSecs(match.hit.ts));
             r.name->setText(std::move(heading));
             r.snippet->setText(searchPreview(*tab.store, match.hit.text));
         } else if (index < messages + conversations) {
@@ -312,7 +344,11 @@ public:
         r.setChecked(i == _q._current);
     }
     float estimateHeight(int i) const override {
-        return size_t(i) < _q._hits.size() ? 64 : 32;
+        const size_t messages = _q._hits.size(), conversations = _q._results.size();
+        const bool message = size_t(i) < messages;
+        const bool header = i == 0 || size_t(i) == messages ||
+                            size_t(i) == messages + conversations;
+        return message ? (header ? 92 : 72) : (header ? 56 : 36);
     }
 
 private:
@@ -339,7 +375,7 @@ QuickSwitcher::QuickSwitcher(
         _tab  = 0;
     }
     const bool multi = _tabs.size() > 1;
-    style().width(520).padding(10).spacing(8);
+    style().width(620).padding(10).spacing(8);
     // The tabs first — the card's header when there is a choice to make.
     if (multi) {
         _strip = add<View>();
@@ -357,7 +393,7 @@ QuickSwitcher::QuickSwitcher(
         _tabName->style().flex(1).margins(4, 0, 0, 0);
     }
     _field = add<TextEdit>();
-    _field->setPlaceholder(tr("Search"));
+    _field->setPlaceholder(tr("Search messages, channels or people\xE2\x80\xA6"));
     _field->setMaxLines(1);
     _field->setBackground(C::InputBg, 6);
     _field->setBorder(C::InputBorderFocus);
@@ -544,14 +580,17 @@ void QuickSwitcher::refilter(Scored *scored) {
         }
     }
     _current = 0;
+    _preserveScroll = false;
     refreshResults();
 }
 
 void QuickSwitcher::refreshResults() {
     const int total = int(_results.size() + _people.size() + _hits.size());
     if (_current >= total) _current = 0;
+    // Later workspace responses should not snap an already-scrolled list to top.
+    const float oldOffset = _preserveScroll ? _list->scrollOffset() : 0;
     _list->reset();
-    _list->scrollTo(0);
+    _list->scrollTo(oldOffset);
     _list->setVisible(total > 0);
     _empty->setVisible(total == 0);
     if (total == 0) {
@@ -570,6 +609,7 @@ void QuickSwitcher::queueSearch() {
     _pendingSearches = 0;
     const std::string query(str::trim(_field->text()));
     _searching = !query.empty();
+    _preserveScroll = false;
     refreshResults();
     if (query.empty()) return;
 
@@ -605,7 +645,8 @@ void QuickSwitcher::queueSearch() {
                 });
                 --_pendingSearches;
                 _searching = _pendingSearches != 0;
-                refreshResults(); // show partial results while other workspaces respond
+                _preserveScroll = true;
+                refreshResults(); // show partial results without snapping to top
             });
         }
     });

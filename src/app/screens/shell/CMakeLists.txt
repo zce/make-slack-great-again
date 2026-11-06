@@ -21,7 +21,6 @@ add_library(msga_screens_shell STATIC
     profile_card.cpp
     shell_dialogs.cpp
     signin_dialogs.cpp
-    message_search.cpp
     quick_switcher.cpp
     shortcuts.cpp
     shell.cpp

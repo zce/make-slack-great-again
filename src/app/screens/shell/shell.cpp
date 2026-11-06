@@ -22,7 +22,6 @@
 #include "screens/shell/context_menus.h"
 #include "screens/shell/header.h"
 #include "screens/shell/huddle_banner.h"
-#include "screens/shell/message_search.h"
 #include "screens/shell/nav_chrome.h"
 #include "screens/shell/profile_card.h"
 #include "screens/shell/shell_dialogs.h"
@@ -1141,7 +1140,7 @@ Shell::Shell(
     shortcuts::install(win, Id::NavForward, [this] { navigateHistory(false); });
     shortcuts::install(win, Id::CloseFrontmost, [this] { closeFrontmost(); });
     shortcuts::install(win, Id::CloseThread, [this] { closeThreadOnEscape(); });
-    shortcuts::install(win, Id::SearchMessages, [this] { openSearch(); });
+    shortcuts::install(win, Id::SearchMessages, [this] { showQuickSwitcher(); });
     shortcuts::install(win, Id::QuickSwitch, [this] { showQuickSwitcher(); });
     win.keyFilter = [this](const Event &e) {
         noteActivity();
@@ -1712,7 +1711,7 @@ void Shell::buildMain(View *parent) {
     // The header is the unified title bar's.
     _header = _titleBar->add<ConvHeader>(_ctx, _avatars);
 #endif
-    _header->onSearch     = [this] { openSearch(); };
+    _header->onSearch     = [this] { showQuickSwitcher(); };
     _tabs                 = _mainPane->add<ConvTabs>();
 #ifndef __APPLE__
     // A dedicated right-aligned action area within the existing tabs strip.
@@ -1808,14 +1807,6 @@ void Shell::buildMain(View *parent) {
     _typing     = area->add<TypingIndicator>(_ctx);
     _composer   = area->add<Composer>(_ctx, _drafts);
     _composer->setEnabled(false); // until a conversation is open
-    _search           = areaHost->add<MessageSearch>(_ctx);
-    // A result: the conversation opened the usual way, then the
-    // jump (it waits for the first page if that is still loading).
-    _search->onResult = [this](ConvRef conv, Ts ts) { jumpToMessage(conv, ts, 0); };
-    _search->onHidden = [this] {
-        if (_current != kNoConv)
-            _composer->edit().focus();
-    };
 
     _splitter = body->add<Splitter>([this, body, from = 0.f](float dx, bool pressed) mutable {
         // The splitter: within the range ThreadBody lays the panel out in;
@@ -1849,10 +1840,7 @@ void Shell::buildMain(View *parent) {
         _thread->setCovering(on);
         if (!on)
             return;
-        // The messages went: their search with them, and a focus held there
-        // (hiding them dropped it) moves to the thread's composer instead of
-        // nowhere. A focus elsewhere (a dialog, the sidebar) stays put.
-        _search->hideNow();
+        // When the message pane is covered, move focus to the thread composer.
         Composer *c = _thread->composer;
         if (!_win.focusView() && c->visible() && c->enabled())
             c->edit().focus();
@@ -2068,7 +2056,6 @@ void Shell::open(ConvRef conv) {
     if (!_signedIn || conv == kNoConv || conv >= _ctx.store().conversationCount())
         return;
     leavePages();
-    _search->hideNow();
     showMessageArea();
     if (conv != _current && threadOpen())
         closeThread(); // a leave path: the thread composer stashes its draft
@@ -2117,7 +2104,6 @@ void Shell::leaveWorkspace() {
         _savedPage->clear();
     if (_scheduledPage)
         _scheduledPage->clear();
-    _search->reset(); // another workspace: the query and results go
     if (threadOpen())
         closeThread(); // a leave path: the thread composer stashes its draft
     if (_thread)
@@ -2275,15 +2261,8 @@ void Shell::closeFrontmost() {
         _win.onCloseRequested();
 }
 
-void Shell::openSearch() {
-    if (!_signedIn)
-        return;
-    showMessageArea(); // the search sits over the messages
-    _search->toggle();
-}
-
 // The messages back beside a full-width thread panel: for whatever needs them
-// on screen (a conversation opened, the search, the canvas tab, a jump). A
+// on screen (a conversation opened, the canvas tab, a jump). A
 // window too narrow for both shows them only with the thread closed.
 void Shell::showMessageArea() {
     if (!_thread)
@@ -2475,7 +2454,6 @@ void Shell::showPage(Page p) {
 }
 
 void Shell::leaveConversationChrome(bool keepComposer) {
-    _search->hideNow();
     if (threadOpen())
         closeThread();
     _composer->setTarget(kNoConv, 0); // stashes the conversation's draft
@@ -3781,7 +3759,7 @@ void Shell::showQuickSwitcher() {
         }
     };
     const SizeF ws = _win.size();
-    p->setAnchor({(ws.w - 520) / 2, 90, 520, 0}, Popup::Place::Below);
+    p->setAnchor({(ws.w - 620) / 2, 90, 620, 0}, Popup::Place::Below);
     p->onClosed = [this, raw] {
         if (_switcher == raw)
             _switcher = nullptr;

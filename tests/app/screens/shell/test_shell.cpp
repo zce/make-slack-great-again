@@ -3465,7 +3465,7 @@ TEST("thread panel: dragged well past its widest it takes the whole room, and dr
     CHECK(messages->visible());
 }
 
-TEST("thread panel: at full width, whatever needs the messages brings them back") {
+TEST("thread panel: global search preserves full-width layout; navigation reveals messages") {
     Harness       h;
     plat::Window &w      = h.win->native();
     const ConvRef design = h.conv("C0DESIGN");
@@ -3501,21 +3501,15 @@ TEST("thread panel: at full width, whatever needs the messages brings them back"
     REQUIRE(full());
     ui::View *f = h.win->focusView();
     CHECK(f && area->isAncestorOf(f));
-    // The search opens over the messages, shown and focused.
-    h.sh->openSearch();
+    // Global search floats above the thread instead of uncovering the message area.
+    h.sh->showQuickSwitcher();
     pump();
-    CHECK(messages->visible());
+    CHECK_FALSE(messages->visible());
     f = h.win->focusView();
-    CHECK(f && messages->isAncestorOf(f) && !h.sh->composer().isAncestorOf(f));
-    // Going full again closes that search: the next one opens rather than closes.
-    REQUIRE(full());
-    h.sh->openSearch();
+    CHECK(f && h.sh->quickSwitcher()->isAncestorOf(f));
+    h.win->closePopup(h.sh->quickSwitcher());
     pump();
-    CHECK(messages->visible());
-    f = h.win->focusView();
-    CHECK(f && messages->isAncestorOf(f) && !h.sh->composer().isAncestorOf(f));
-    // The header's tabs, the same conversation picked again, a jump in it.
-    REQUIRE(full());
+    // The canvas tab, same conversation and a jump can still reveal the messages.
     h.sh->showCanvas(false);
     pump();
     CHECK(messages->visible());
@@ -3585,10 +3579,12 @@ TEST("thread panel: a window too narrow for both covers the messages, a wider on
     w.setSize({640, 600});
     pump();
     REQUIRE(!messages->visible());
-    h.sh->openSearch();
+    h.sh->showQuickSwitcher();
     pump();
-    CHECK(messages->visible());
-    CHECK_FALSE(h.sh->threadOpen());
+    CHECK_FALSE(messages->visible());
+    CHECK(h.sh->threadOpen()); // search must not close the thread or resize it
+    h.win->closePopup(h.sh->quickSwitcher());
+    pump();
 }
 
 TEST("thread panel: Esc closes it once the focused view has no use for the key") {

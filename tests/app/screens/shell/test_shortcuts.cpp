@@ -11,7 +11,6 @@
 #include "screens/common/message_text.h"
 #include "screens/shell/composer.h"
 #include "screens/shell/header.h"
-#include "screens/shell/message_search.h"
 #include "screens/shell/quick_switcher.h"
 #include "screens/shell/shell.h"
 #include "screens/shell/shortcuts.h"
@@ -129,7 +128,6 @@ TEST("shortcuts: one row per action, the help panel's rows in order") {
     const char *help[] = {
         "Open settings",
         "Search",
-        "Search messages",
         "Send message",
         "New line in message",
         "Edit last message",
@@ -254,93 +252,32 @@ TEST("shortcuts: Ctrl+, opens Settings, Ctrl+W closes it, then the window") {
     CHECK(h.closeRequests == 1); // nothing open: the window's close (hide to tray)
 }
 
-TEST("shortcuts: Ctrl+F toggles the message search over the chat, the composer left alone") {
+TEST("shortcuts: Ctrl+F uses the same message-first popup as Ctrl+K") {
     Harness h;
+    const ConvRef design = h.conv("C0DESIGN");
     h.edit().insertText("draft");
     h.chord(kCtrl, K::F);
-    shell::MessageSearch *s = h.sh->messageSearch();
-    REQUIRE(s != nullptr);
-    CHECK(s->shown());
-    CHECK(h.win->topPopup() == nullptr); // an overlay in the window, not a popup
-    CHECK(s->field().focused());
-    CHECK_STR(h.edit().text(), "draft");
-    CHECK(h.closeRequests == 0);
-    CHECK_FALSE(s->list()->visible()); // no results before a search
-    h.chord(kCtrl, K::F);              // Ctrl+F again hides it at once
-    CHECK_FALSE(s->visible());
-    CHECK(h.edit().focused());
-    // The header's search button is the same toggle.
-    h.sh->header().search()->onClick();
-    pump();
-    CHECK(s->shown());
-    h.sh->header().search()->onClick();
-    CHECK_FALSE(s->visible());
-}
+    auto *search = h.sh->quickSwitcher();
+    REQUIRE(search != nullptr);
+    CHECK(h.win->topPopup() == search);
+    CHECK(search->field().focused());
+    CHECK_STR(h.edit().text(), "draft"); // never modify the composer draft
 
-TEST("search: Enter searches, the arrows pick a result, Enter opens it and closes; Esc fades out") {
-    Harness       h;
-    const ConvRef design = h.conv("C0DESIGN"), mira = h.conv("D0MIRA");
-    h.sh->open(mira);
-    pump();
-    h.chord(kCtrl, K::F);
-    shell::MessageSearch *s = h.sh->messageSearch();
-    REQUIRE(s->shown());
-    s->field().setText("  proposal b ");
-    h.key(K::Enter);
-    CHECK(s->list()->visible());
-    // The key's pump may already have brought the results ("Searching…" is
-    // checked below, straight after a direct runSearch).
-    for (int i = 0; i < 1000 && s->statusText() == "Searching\xE2\x80\xA6"; ++i)
+    h.chord(kCtrl, K::K); // no nested search popup
+    CHECK(h.sh->quickSwitcher() == search);
+    search->field().setText("proposal b");
+    for (int i = 0; i < 1000 && search->messageResults().empty(); ++i)
         pump(5);
-    REQUIRE(!s->results().empty());
-    CHECK(s->results()[0].conv == design);
-    CHECK(s->selected() == -1);
-    h.key(K::Up); // from nothing selected, Up takes the last one
-    CHECK(s->selected() == int(s->results().size()) - 1);
-    h.key(K::Down); // clamped, not wrapping
-    CHECK(s->selected() == int(s->results().size()) - 1);
-    for (size_t i = 0; i < s->results().size(); ++i)
-        h.key(K::Up);
-    CHECK(s->selected() == 0);
-    h.key(K::Enter);
+    REQUIRE(!search->messageResults().empty());
+    CHECK(search->messageResults()[0].hit.conv == design);
+    search->choose(0);
+    pump();
     CHECK(h.sh->current() == design);
-    CHECK_FALSE(s->visible()); // opening another conversation hides it
-    // Nothing matches: the status line.
-    h.chord(kCtrl, K::F);
-    REQUIRE(s->shown());
-    CHECK_STR(s->field().text(), "  proposal b "); // kept, and selected
-    CHECK(s->selected() == 0);                     // so is the pick: Enter would open it again
-    s->runSearch("no such words anywhere");
-    CHECK_STR(s->statusText(), "Searching\xE2\x80\xA6"); // until the backend answers
-    for (int i = 0; i < 1000 && s->statusText() == "Searching\xE2\x80\xA6"; ++i)
-        pump(5);
-    CHECK_STR(s->statusText(), "No results found.");
-    CHECK(s->results().empty());
-    h.key(K::Escape);
-    CHECK_FALSE(s->shown()); // fading out
-    for (int i = 0; i < 1000 && s->visible(); ++i)
-        pump(5);
-    CHECK_FALSE(s->visible());
-    CHECK(h.edit().focused());
-}
-
-TEST("search: a user resolving later renames the rows in place; the pick stays") {
-    Harness h;
-    h.chord(kCtrl, K::F);
-    shell::MessageSearch *s = h.sh->messageSearch();
-    REQUIRE(s->shown());
-    s->runSearch("proposal b");
-    for (int i = 0; i < 1000 && s->statusText() == "Searching\xE2\x80\xA6"; ++i)
-        pump(5);
-    REQUIRE(!s->results().empty());
-    h.key(K::Up);
-    const int sel = s->selected();
-    REQUIRE(sel >= 0);
-    h.store.usersChanged();
-    h.store.usersChanged(); // a burst: one pass over the rows
+    CHECK(h.sh->quickSwitcher() == nullptr);
+    // The legacy channel-header search button is an alias as well.
+    h.sh->header().search()->onClick();
     pump();
-    CHECK(s->selected() == sel);
-    CHECK(s->results().size() > 0);
+    CHECK(h.sh->quickSwitcher() != nullptr);
 }
 
 TEST("search: a result's labels") {
@@ -354,7 +291,7 @@ TEST("search: a result's labels") {
         shell::searchPreview(st, "ping <@U0MIRA>\nand <@U9NOBODY> *now*"),
         "ping @" + mira + " and @U9NOBODY now"
     );
-    CHECK(utf8::countCodePoints(shell::searchPreview(st, std::string(300, 'x'))) == 120);
+    CHECK(utf8::countCodePoints(shell::searchPreview(st, std::string(300, 'x'))) == 180);
 }
 
 TEST("search: previews and notifications resolve mentions the same way") {
