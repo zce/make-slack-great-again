@@ -685,7 +685,11 @@ void QuickSwitcher::queueSearch() {
                 _searching = _pendingSearches != 0;
                 _preserveScroll = true;
                 refreshResults();
-                if (keepViewport) {
+                if (_keyboardSelection) {
+                    // A manually selected result must stay in view as well as
+                    // retain its identity after another workspace responds.
+                    _list->scrollToItem(_current, VirtualList::ItemAlign::Nearest, false);
+                } else if (keepViewport) {
                     int newIndex = previousAnchor.index + added;
                     if (visible) {
                         const int relocated = findMessage(*visible);
