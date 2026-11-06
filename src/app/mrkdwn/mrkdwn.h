@@ -99,6 +99,19 @@ std::string messagePermalink(const MessageRef &ref);
 // permalink behind it (an agent session's thread has none).
 std::string threadLink(std::string_view conv, std::string_view rootTs);
 MessageRef  parseThreadLink(std::string_view url);
+// External URL handler: msga://<team>.slack.com/archives/... or msga://thread/<conv>/<root>.
+// OAuth callbacks and unknown/unsafe hosts are not message links.
+MessageRef  parseAppLink(std::string_view url);
+
+// Slack's documented native deep links, also accepted under msga://.
+// App/file actions require UI that MSGA does not currently provide.
+enum class NativeLinkKind { Invalid, Open, Channel, User };
+struct NativeLink {
+    NativeLinkKind kind = NativeLinkKind::Invalid;
+    std::string team, id;
+    bool valid() const { return kind != NativeLinkKind::Invalid; }
+};
+NativeLink parseNativeLink(std::string_view url);
 
 // ── Layout view ─────────────────────────────────────────────────────────────
 enum class BlockKind : uint8_t {

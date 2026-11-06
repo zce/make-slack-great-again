@@ -48,3 +48,48 @@ jobs:
         run: ctest --test-dir build-ci --output-on-failure --parallel 1 -R '^(text_ink_lean|ui_popup|messages_actions|shell_ui_tests|settings_tests)$'
       - name: Test
         run: ctest --test-dir build-ci --output-on-failure --parallel 2
+
+      - name: Package pull request test build
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp build-ci/msga dist/msga
+          chmod +x dist/msga
+          (cd dist && sha256sum msga > SHA256SUMS)
+          tar -C dist -czf dist/msga-linux-x86_64-pr${{ github.event.pull_request.number }}.tar.gz msga SHA256SUMS
+      - name: Upload pull request test build
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: msga-linux-x86_64-pr${{ github.event.pull_request.number }}
+          path: dist/msga-linux-x86_64-pr${{ github.event.pull_request.number }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  preview-release:
+    needs: linux
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: msga-linux-x86_64-pr${{ github.event.pull_request.number }}
+          path: dist
+      - name: Publish test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          short="${HEAD_SHA:0:12}"
+          tag="test-pr${PR_NUMBER}-${short}"
+          gh release create "$tag" dist/*.tar.gz \
+            --target "$HEAD_SHA" \
+            --title "MSGA PR #${PR_NUMBER} test build (${short})" \
+            --notes "Unmerged test build for PR #${PR_NUMBER}. Linux x86_64 (Ubuntu 24.04 dynamic binary). SHA256SUMS is inside the archive. Not a stable production release." \
+            --prerelease

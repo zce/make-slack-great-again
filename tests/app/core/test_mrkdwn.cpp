@@ -668,3 +668,71 @@ TEST("mrkdwn: openers without a closer on their line are scanned once") {
     CHECK(r.text.size() == line.size());
     CHECK(r.entities.empty());
 }
+
+TEST("mrkdwn: external msga message URLs") {
+    auto reply = mrkdwn::parseAppLink(
+        "msga://magicdoor-software.slack.com/archives/C0ABA5P80QY/"
+        "p1793583443622599?thread_ts=1792607345.839729&cid=C0ABA5P80QY"
+    );
+    REQUIRE(reply.valid());
+    CHECK_STR(reply.host, "magicdoor-software.slack.com");
+    CHECK_STR(reply.conv, "C0ABA5P80QY");
+    CHECK_STR(reply.ts, "1793583443.622599");
+    CHECK_STR(reply.threadTs, "1792607345.839729");
+
+    auto thread = mrkdwn::parseAppLink("msga://thread/C0ABA5P80QY/1792607345.839729");
+    REQUIRE(thread.valid());
+    CHECK_STR(thread.conv, "C0ABA5P80QY");
+    CHECK_STR(thread.ts, "1792607345.839729");
+    CHECK_STR(thread.threadTs, thread.ts);
+    CHECK(thread.host.empty());
+
+    CHECK_FALSE(mrkdwn::parseAppLink("msga://oauth/callback?code=abc").valid());
+    CHECK_FALSE(mrkdwn::parseAppLink("msga://evil.example/archives/C1/p1793583443622599").valid());
+    CHECK_FALSE(mrkdwn::parseAppLink("msga://team.slack.com/archives/no/p1793583443622599").valid());
+    CHECK_FALSE(mrkdwn::parseAppLink("https://team.slack.com/archives/C1/p1793583443622599").valid());
+}
+
+TEST("mrkdwn: official Slack native links") {
+    using mrkdwn::NativeLinkKind;
+
+    const auto open = mrkdwn::parseNativeLink("slack://open");
+    REQUIRE(open.valid());
+    CHECK(open.kind == NativeLinkKind::Open);
+    CHECK(open.team.empty());
+
+    const auto team = mrkdwn::parseNativeLink("slack://open?team=T123ABC456");
+    REQUIRE(team.valid());
+    CHECK(team.kind == NativeLinkKind::Open);
+    CHECK_STR(team.team, "T123ABC456");
+
+    const auto channel = mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0ABA5P80QY"
+    );
+    REQUIRE(channel.valid());
+    CHECK(channel.kind == NativeLinkKind::Channel);
+    CHECK_STR(channel.team, "T123ABC456");
+    CHECK_STR(channel.id, "C0ABA5P80QY");
+
+    const auto alias = mrkdwn::parseNativeLink(
+        "msga://channel?team=%54123ABC456&id=C0ABA5P80QY"
+    );
+    REQUIRE(alias.valid());
+    CHECK(alias.kind == NativeLinkKind::Channel);
+    CHECK_STR(alias.team, channel.team);
+    CHECK_STR(alias.id, channel.id);
+
+    const auto user = mrkdwn::parseNativeLink("slack://user?team=T123ABC456&id=U12345");
+    REQUIRE(user.valid());
+    CHECK(user.kind == NativeLinkKind::User);
+    CHECK_STR(user.id, "U12345");
+
+    CHECK_FALSE(mrkdwn::parseNativeLink("slack://channel?id=C12345").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("slack://user?team=T12345&id=C12345").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("slack://channel?team=T12345&id=invalid").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("slack://open?team=").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("slack://open?team=T1&team=T2").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("slack://file?team=T1&id=F1").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("msga://oauth/callback?code=abc").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("https://slack.com").valid());
+}

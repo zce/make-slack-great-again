@@ -878,6 +878,87 @@ MessageRef parseThreadLink(std::string_view url) {
     return ref;
 }
 
+MessageRef parseAppLink(std::string_view url) {
+    constexpr std::string_view prefix = "msga://";
+    if (!startsWith(url, prefix))
+        return {};
+    if (startsWith(url, "msga://thread/"))
+        return parseThreadLink(url);
+    // Reuse Slack's existing strict permalink parser (including its host,
+    // conversation ID and timestamp validation), not a second URL grammar.
+    return parseMessageLink(str::concat({"https://", url.substr(prefix.size())}));
+}
+
+NativeLink parseNativeLink(std::string_view url) {
+    // Slack documents slack://open, slack://channel and slack://user.
+    // Accept the same grammar under msga:// without hijacking slack://.
+    if (str::startsWith(url, "slack://"))
+        url.remove_prefix(sizeof("slack://") - 1);
+    else if (str::startsWith(url, "msga://"))
+        url.remove_prefix(sizeof("msga://") - 1);
+    else
+        return {};
+
+    const size_t question = url.find('?');
+    const std::string_view path = url.substr(0, question);
+    const std::string_view query =
+        question == std::string_view::npos ? std::string_view() : url.substr(question + 1);
+    NativeLink out;
+    if (path == "open")
+        out.kind = NativeLinkKind::Open;
+    else if (path == "channel")
+        out.kind = NativeLinkKind::Channel;
+    else if (path == "user")
+        out.kind = NativeLinkKind::User;
+    else
+        return {};
+
+    // URL-encoded IDs are accepted, but duplicates and malformed IDs are not.
+    bool haveTeam = false, haveId = false;
+    for (size_t pos = 0; pos < query.size();) {
+        const size_t amp = query.find('&', pos);
+        const std::string_view item = query.substr(
+            pos, amp == std::string_view::npos ? amp : amp - pos
+        );
+        const size_t eq = item.find('=');
+        if (eq != std::string_view::npos) {
+            const std::string_view key = item.substr(0, eq);
+            if (key == "team" || key == "id") {
+                const std::string val = str::percentDecode(item.substr(eq + 1));
+                if (key == "team") {
+                    if (haveTeam) return {};
+                    out.team = val;
+                    haveTeam = true;
+                } else {
+                    if (haveId) return {};
+                    out.id = val;
+                    haveId = true;
+                }
+            }
+        }
+        if (amp == std::string_view::npos)
+            break;
+        pos = amp + 1;
+    }
+    const auto isId = [](std::string_view id, std::string_view prefixes) {
+        if (id.size() < 2 || prefixes.find(id[0]) == std::string_view::npos)
+            return false;
+        for (char c : id)
+            if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')))
+                return false;
+        return true;
+    };
+    if (haveTeam && !isId(out.team, "TE"))
+        return {};
+    if (out.kind == NativeLinkKind::Open)
+        return haveId ? NativeLink{} : out;
+    if (out.team.empty())
+        return {};
+    if (out.kind == NativeLinkKind::Channel)
+        return isId(out.id, "CGD") ? out : NativeLink{};
+    return isId(out.id, "UW") ? out : NativeLink{};
+}
+
 std::string refToToken(const MessageRef &ref) {
     return str::concat({ref.host, "/", ref.conv, "/", ref.ts, "/", ref.threadTs, "/", ref.author});
 }

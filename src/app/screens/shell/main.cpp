@@ -233,7 +233,8 @@ int main(int argc, char **argv) {
             browseAll = true;
         else if (a == "--soak")
             soakRounds = std::atoi(next().c_str());
-        else if (str::startsWith(a, "msga://"))
+        else if (str::startsWith(a, "msga://") || str::startsWith(a, "slack://") ||
+                 str::startsWith(a, "https://"))
             urls.push_back(a);
         // Anything else is ignored.
     }
@@ -443,7 +444,8 @@ int main(int argc, char **argv) {
     // A restart (an applied update, new Slack app keys) runs with the same
     // arguments, minus a one-off OAuth callback URL or notification click.
     for (const std::string &a : args)
-        if (!str::startsWith(a, "msga://") && !str::startsWith(a, kNotificationClickArg))
+        if (!str::startsWith(a, "msga://") && !str::startsWith(a, "slack://") &&
+            !str::startsWith(a, "https://") && !str::startsWith(a, kNotificationClickArg))
             sh.restartArgs.push_back(a);
 #ifdef MSGA_SELF_UPDATE
     if (!demoMode)
@@ -492,12 +494,11 @@ int main(int argc, char **argv) {
 
     std::optional<shell::Accounts> accounts;
     app->onEvent = [&](const plat::Event &e) {
-        // msga:// URLs (the OAuth callback): opened by the OS, or handed over
-        // by a second launch — which also comes as InstanceActivated with the
-        // same URL among its args, so only OpenUrls counts.
+        // Registered scheme URLs (notably msga://): OpenUrls is authoritative,
+        // so do not process the same URI again in InstanceActivated.
         if (accounts && e.type == plat::EventType::OpenUrls)
             for (const std::string &s : e.strings)
-                if (str::startsWith(s, "msga://"))
+                if (str::startsWith(s, "msga://") || str::startsWith(s, "slack://"))
                     accounts->handleUrl(s);
         if (accounts && e.type == plat::EventType::NetworkChanged)
             accounts->networkChanged(e.online);
@@ -510,6 +511,11 @@ int main(int argc, char **argv) {
                 std::string action;
                 if (parseNotificationClick(s, &id, &action))
                     sh.activateNotification(id, action, e.activationToken);
+                // slack:// deliberately is not globally registered: opt-in
+                // Linux handlers pass it as a plain second-instance argument.
+                else if (accounts && (str::startsWith(s, "slack://") ||
+                                      str::startsWith(s, "https://")))
+                    accounts->handleUrl(s);
             }
     };
 
