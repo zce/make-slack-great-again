@@ -17,6 +17,9 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-24.04
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
@@ -29,7 +32,8 @@ jobs:
             libwayland-dev wayland-protocols \
             libxcb1-dev libxcb-xkb-dev libxcb-shm0-dev \
             libxcb-randr0-dev libxcb-cursor-dev libxcb-xfixes0-dev \
-            libxcb-xinput-dev libxcb-xtest0-dev libdbus-1-dev
+            libxcb-xinput-dev libxcb-xtest0-dev libdbus-1-dev \
+            fonts-inter fonts-noto-color-emoji
       - name: Configure
         run: |
           cmake -S . -B build-ci -G Ninja \
@@ -39,5 +43,8 @@ jobs:
             -DMSGA_SELF_UPDATE=OFF
       - name: Build
         run: cmake --build build-ci --parallel 4
+      - name: Verify UI and font-sensitive tests
+        run: ctest --test-dir build-ci --output-on-failure --parallel 1 --tests-regex '^(text_ink_lean|ui_popup|messages_actions|shell_ui_tests)
+
       - name: Test
         run: ctest --test-dir build-ci --output-on-failure --parallel 2
