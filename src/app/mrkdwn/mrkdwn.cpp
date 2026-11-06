@@ -948,7 +948,7 @@ NativeLink parseNativeLink(std::string_view url) {
                 return false;
         return true;
     };
-    if (!out.team.empty() && !isId(out.team, "TE"))
+    if (haveTeam && !isId(out.team, "TE"))
         return {};
     if (out.kind == NativeLinkKind::Open)
         return haveId ? NativeLink{} : out;
