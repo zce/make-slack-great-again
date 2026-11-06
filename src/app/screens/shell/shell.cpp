@@ -2233,7 +2233,6 @@ void Shell::showPage(Page p) {
     OverviewPage *page = pageView(p);
     if (!page || !_signedIn || !pageAvailable(p))
         return;
-    leaveTeammate();
     for (Page o : {Page::Activity, Page::Threads, Page::Saved, Page::Scheduled})
         if (o != p)
             leavePage(o);

@@ -313,43 +313,43 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
         if (Running *x = bySerial(serial); x && x == _active)
             _shell.showError(message);
     };
-    const std::string cached = iconCachePath(pa, rec->iconUrl);        const std::string cached = iconCachePath(pa, rec->iconUrl);
-        st.workspaceIcon         = !cached.empty() && file::exists(cached) ? cached : std::string();
-        auto backend =
-            std::make_unique<slack::SlackBackend>(st, pa, _client, slack::fromRecord(*rec));
-        // Dead credentials found by any later call: the same as at connect().
-        backend->onAuthLost = [this, serial](const std::string &error) { authLost(serial, error); };
-        // A refresh rotated the token: this workspace's record keeps the new one.
-        backend->onCredentialsChanged = [this, key](const slack::Credentials &c) {
-            if (const auth::WorkspaceRecord *x = _store.find(key)) {
-                auth::WorkspaceRecord rec = *x;
-                rec.auth                  = slack::toRecord(c).auth;
-                _store.save(std::move(rec));
-            }
-        };
-        backend->setAppConfig(
-            slack::appConfig(
-                _settings.slackClientId, _settings.slackClientSecret, _settings.slackAppToken
-            )
-        );
-        // Like the error banner, it shows for the active workspace only.
-        backend->onParallelUsage = [this, serial] {
-            if (Running *x = bySerial(serial); x && x == _active)
-                _shell.showParallelUsage();
-        };
-        backend->onError       = onError;
-        backend->onReminderDue = [this, serial](model::ConvRef conv, model::Ts ts) {
-            if (Running *x = bySerial(serial))
-                _shell.notifyReminderDue(x->key, x->store, conv, ts);
-        };
-        // Every OAuth workspace on these app keys shares the one socket.
-        if (!backend->credentials().sessionAuth())
-            backend->setRealtime(socketMode());
-        backend->setPresenceMode(model::Backend::PresenceMode(_settings.presence));
-        backend->setNamesMode(model::Backend::NamesMode(_settings.names));
-        backend->setWindowVisible(_shell.windowVisible()); // started while hidden: polls slowly
-        r->slack   = backend.get();
-        r->backend = std::move(backend);
+    const std::string cached = iconCachePath(pa, rec->iconUrl);
+    st.workspaceIcon         = !cached.empty() && file::exists(cached) ? cached : std::string();
+    auto backend =
+        std::make_unique<slack::SlackBackend>(st, pa, _client, slack::fromRecord(*rec));
+    // Dead credentials found by any later call: the same as at connect().
+    backend->onAuthLost = [this, serial](const std::string &error) { authLost(serial, error); };
+    // A refresh rotated the token: this workspace's record keeps the new one.
+    backend->onCredentialsChanged = [this, key](const slack::Credentials &c) {
+        if (const auth::WorkspaceRecord *x = _store.find(key)) {
+            auth::WorkspaceRecord rec = *x;
+            rec.auth                  = slack::toRecord(c).auth;
+            _store.save(std::move(rec));
+        }
+    };
+    backend->setAppConfig(
+        slack::appConfig(
+            _settings.slackClientId, _settings.slackClientSecret, _settings.slackAppToken
+        )
+    );
+    // Like the error banner, it shows for the active workspace only.
+    backend->onParallelUsage = [this, serial] {
+        if (Running *x = bySerial(serial); x && x == _active)
+            _shell.showParallelUsage();
+    };
+    backend->onError       = onError;
+    backend->onReminderDue = [this, serial](model::ConvRef conv, model::Ts ts) {
+        if (Running *x = bySerial(serial))
+            _shell.notifyReminderDue(x->key, x->store, conv, ts);
+    };
+    // Every OAuth workspace on these app keys shares the one socket.
+    if (!backend->credentials().sessionAuth())
+        backend->setRealtime(socketMode());
+    backend->setPresenceMode(model::Backend::PresenceMode(_settings.presence));
+    backend->setNamesMode(model::Backend::NamesMode(_settings.names));
+    backend->setWindowVisible(_shell.windowVisible()); // started while hidden: polls slowly
+    r->slack   = backend.get();
+    r->backend = std::move(backend);
     Running *raw = r.get();
     _running.push_back(std::move(r));
     imageAuth(); // a workspace signing in is the usual cure for a failed picture

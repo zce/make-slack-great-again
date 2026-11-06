@@ -736,63 +736,15 @@ TEST("tray icon dialog: closed while its picture decodes, nothing answers into i
     pump();
 }
 
-// ── Claude Code: a teammate's "Message" ─────────────────────────────────────
+// A Slack profile card's "Message" opens a regular DM, not an agent session.
 
-namespace {
-
-struct TeamFake : fake::FakeBackend {
-    using fake::FakeBackend::FakeBackend;
-    Capabilities capabilities() const override {
-        Capabilities c  = fake::FakeBackend::capabilities();
-        c.agentSessions = true;
-        return c;
-    }
-    std::vector<AgentRole> agentRoles() const override {
-        AgentRole r;
-        r.id   = "designer";
-        r.name = "Designer";
-        r.user = mate;
-        return {r};
-    }
-    std::string agentSessionBlocker(const std::string &) const override { return {}; }
-    UserRef     mate = kNoUser;
-};
-
-} // namespace
-
-TEST("profile card \"Message\": a teammate's page, anyone else's DM") {
-    Store    store;
-    TeamFake backend{store, app().platform()};
-#ifdef MSGA_HAVE_MESSAGES
-    screens::ImageCache images{app().platform()};
-    screens::Context    ctx{app(), store, backend, images, {}, {}, {}, {}, {}};
-#else
-    alignas(16) char noCache[16]{};
-    screens::Context ctx{
-        app(), store, backend, *reinterpret_cast<screens::ImageCache *>(noCache), {}, {}, {}, {}, {}
-    };
-#endif
-    backend.setFixture(MSGA_TEST_ASSETS, base::fromLocal(2026, 9, 21, 16, 0));
-    bool done = false;
-    backend.connect([&](bool ok, const std::string &) { done = ok; });
-    REQUIRE(until([&] { return done; }));
-    backend.mate = store.findUser("U0LENA");
-    plat::WindowDesc d;
-    d.size        = {1200, 800};
-    d.decorations = plat::Decorations::Custom;
-    ui::Window      win(d);
-    shell::Settings settings;
-    shell::Shell    sh(ctx, win, settings, std::string());
-    sh.open(store.findConversation("C0DESIGN"));
-    pump();
-    REQUIRE(ctx.messageUser);
-    ctx.messageUser(backend.mate);
-    pump();
-    CHECK(sh.teammateOpen());
-    CHECK(sh.sidebar().selectedTeammate() == "designer");
-    ctx.messageUser(store.findUser("U0MIRA"));
-    REQUIRE(until([&] { return sh.current() == store.findConversation("D0MIRA"); }));
-    CHECK_FALSE(sh.teammateOpen());
+TEST("profile card Message opens a Slack DM") {
+    Harness h;
+    REQUIRE(h.ctx.messageUser);
+    const UserRef u = h.store.findUser("U0MIRA");
+    REQUIRE(u != kNoUser);
+    h.ctx.messageUser(u);
+    REQUIRE(until([&] { return h.sh->current() == h.store.findConversation("D0MIRA"); }));
 }
 
 // ── Composer @ list and emoji search cost (performance review M11) ─────────
