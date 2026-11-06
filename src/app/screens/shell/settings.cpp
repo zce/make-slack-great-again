@@ -275,6 +275,11 @@ void fromJson(const json::Value r, Settings &s) {
         if (!p.sections.empty())
             s.sidebarSectionOrders.push_back(std::move(p));
     }
+    for (const json::Value e : r["sidebarCollapsedUnreads"])
+        if (!e["section"].str().empty())
+            s.sidebarCollapsedUnreads.push_back(
+                {std::string(e["workspace"].str()), std::string(e["section"].str())}
+            );
     for (const json::Value p : r["ai"]) {
         AiProvider a;
         for (const auto &f : kAiFields)
@@ -363,6 +368,15 @@ std::string Settings::toFile() const {
                 w.value(id);
             w.endArray().endObject();
         }
+        w.endArray();
+    }
+    if (!sidebarCollapsedUnreads.empty()) {
+        w.key("sidebarCollapsedUnreads").beginArray();
+        for (const CollapsedUnreadPref &p : sidebarCollapsedUnreads)
+            w.beginObject()
+                .key("workspace").value(p.workspace)
+                .key("section").value(p.section)
+                .endObject();
         w.endArray();
     }
     // A removed provider's key goes from the store too (LlmTokenStore::clear).
