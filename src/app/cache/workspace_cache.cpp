@@ -384,6 +384,12 @@ void fields(IO &io, model::Conversation &c) {
     io.str(c.canvasTitle);
     io.str(c.localName);
     io.str(c.canvasId);
+    // Trailing optional tri-state: 0 = unknown (including older cache
+    // records), 1 = known internal, 2 = Slack Connect. No cache version bump.
+    uint8_t shared = !c.extShared ? 0 : *c.extShared ? 2 : 1;
+    io.byte(shared);
+    if (io.reading())
+        c.extShared = shared == 0 ? std::nullopt : std::optional<bool>(shared == 2);
 }
 
 // ── Files ───────────────────────────────────────────────────────────────────
