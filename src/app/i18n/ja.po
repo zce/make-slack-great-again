@@ -152,49 +152,9 @@ msgstr "AIプロバイダーが接続されていません — 設定→「AIア
 msgid "%1 is not connected"
 msgstr "%1は接続されていません"
 
-#: src/app/llm/service.cpp
-msgid "%1 does not support speech-to-text — connect an OpenAI-compatible provider in Settings → AI assistance"
-msgstr "%1は音声の文字起こしに対応していません — 設定→「AIアシスタンス」でOpenAI互換のプロバイダーを接続してください"
-
-#: src/app/llm/service.cpp
-msgid "%1 does not support speech-to-text"
-msgstr "%1は音声の文字起こしに対応していません"
-
-#: src/app/llm/voice_input.cpp
-msgid "Voice input needs a speech-to-text provider. Connect OpenAI or an OpenAI-compatible server in Settings → AI assistance."
-msgstr "音声入力には文字起こしに対応したプロバイダーが必要です。設定 → AIアシスタンスでOpenAIまたはOpenAI互換のサーバーを接続してください。"
-
-#: src/app/llm/voice_input.cpp
-msgid "No microphone recording is available on this system"
-msgstr "このシステムではマイクで録音できません"
-
-#: src/app/llm/voice_input.cpp
-msgid "Couldn't record: %1"
-msgstr "録音できませんでした: %1"
-
-#: src/app/llm/voice_input.cpp
-msgid "No speech was recorded"
-msgstr "音声が録音されませんでした"
-
-#: src/app/llm/voice_input.cpp
-msgid "Voice input needs a speech-to-text provider"
-msgstr "音声入力には文字起こしに対応したプロバイダーが必要です"
-
-#: src/app/llm/voice_input.cpp src/app/screens/messages/audio_card.cpp
-msgid "Couldn't transcribe: %1"
-msgstr "文字起こしできませんでした: %1"
-
-#: src/app/llm/voice_input.cpp src/app/screens/messages/audio_card.cpp
-msgid "No speech was recognised"
-msgstr "音声を認識できませんでした"
-
 #: src/app/llm/wire.cpp
 msgid "unknown error"
 msgstr "不明なエラー"
-
-#: src/app/llm/wire.cpp
-msgid "This server has no speech-to-text endpoint (HTTP 404)"
-msgstr "このサーバーには音声文字起こしのエンドポイントがありません（HTTP 404）"
 
 #: src/app/llm/wire.cpp
 msgid "No chat endpoint at this URL (HTTP 404) — most servers expect it to end in /v1"
@@ -215,10 +175,6 @@ msgstr "サーバーから予期しない応答が返されました（JSONで�
 #: src/app/llm/wire.cpp
 msgid "Unexpected response from server (no choices)"
 msgstr "サーバーから予期しない応答が返されました（choicesがありません）"
-
-#: src/app/llm/wire.cpp
-msgid "Unexpected response from server (no text)"
-msgstr "サーバーから予期しない応答が返されました（textがありません）"
 
 #: src/app/llm/wire.cpp
 msgid "Server not found"
@@ -377,20 +333,12 @@ msgid "APP"
 msgstr "アプリ"
 
 #: src/app/screens/messages/audio_card.cpp
-msgid "%1 · transcribed by %2"
-msgstr "%1 · %2による文字起こし"
-
-#: src/app/screens/messages/audio_card.cpp
 msgid "Transcript (auto-generated)"
 msgstr "文字起こし（自動生成）"
 
 #: src/app/screens/messages/audio_card.cpp
 msgid "Loading…"
 msgstr "読み込み中…"
-
-#: src/app/screens/messages/audio_card.cpp
-msgid "Transcribe with AI"
-msgstr "AIで文字起こし"
 
 #: src/app/screens/messages/audio_card.cpp
 msgid "View transcript"
@@ -411,18 +359,6 @@ msgstr "%1をダウンロード中"
 #: src/app/screens/messages/audio_card.cpp
 msgid "Download failed"
 msgstr "ダウンロードに失敗しました"
-
-#: src/app/screens/messages/audio_card.cpp
-msgid "%1 does not support speech-to-text. Pick an OpenAI-compatible provider in Settings → AI assistance."
-msgstr "%1は音声の文字起こしに対応していません。設定 → AIアシスタンスでOpenAI互換のプロバイダーを選んでください。"
-
-#: src/app/screens/messages/audio_card.cpp
-msgid "Transcription needs an AI provider. Connect one in Settings → AI assistance."
-msgstr "文字起こしにはAIプロバイダーが必要です。設定 → AIアシスタンスで接続してください。"
-
-#: src/app/screens/messages/audio_card.cpp
-msgid "Could not read the file"
-msgstr "ファイルを読み込めませんでした"
 
 #: src/app/screens/messages/emoji_picker.cpp
 msgid "Search all emoji"
@@ -581,10 +517,6 @@ msgid "Save for later"
 msgstr "後で見るために保存"
 
 #: src/app/screens/messages/message_list.cpp
-msgid "Ask agent"
-msgstr "エージェントに質問"
-
-#: src/app/screens/messages/message_list.cpp
 msgid "Share"
 msgstr "共有"
 
@@ -611,10 +543,6 @@ msgstr "複数の人が入力中…"
 #: src/app/screens/messages/message_list.cpp
 msgid "Remove from saved"
 msgstr "保存済みから削除"
-
-#: src/app/screens/messages/message_list.cpp
-msgid "Open agent thread"
-msgstr "エージェントのスレッドを開く"
 
 #: src/app/screens/messages/message_list.cpp
 msgid "Sent to the app"
@@ -713,14 +641,6 @@ msgid "Delete file…"
 msgstr "ファイルを削除…"
 
 #: src/app/screens/messages/message_list.cpp
-msgid "Allow %1 to ask agent"
-msgstr "%1 がエージェントに質問できるようにする"
-
-#: src/app/screens/messages/message_list.cpp
-msgid "Unlink agent"
-msgstr "エージェントのリンクを解除"
-
-#: src/app/screens/messages/message_list.cpp
 msgid "In 20 minutes"
 msgstr "20分後"
 
@@ -764,7 +684,7 @@ msgstr "プレビューを削除できませんでした（%1）。"
 msgid "group message"
 msgstr "グループメッセージ"
 
-#: src/app/screens/messages/rich.cpp src/app/screens/shell/shell_links.cpp
+#: src/app/screens/messages/rich.cpp
 msgid "%1 in %2"
 msgstr "%2 の %1"
 
@@ -1006,16 +926,8 @@ msgid "Download thread as text"
 msgstr "スレッドをテキストとしてダウンロード"
 
 #: src/app/screens/messages/thread_panel.cpp
-msgid "Open as session"
-msgstr "セッションとして開く"
-
-#: src/app/screens/messages/thread_panel.cpp
 msgid "Also send to channel"
 msgstr "チャンネルにも送信"
-
-#: src/app/screens/messages/thread_panel.cpp
-msgid "Open the Slack thread: %1"
-msgstr "Slack のスレッドを開く: %1"
 
 #: src/app/screens/messages/thread_panel.cpp
 msgid "Save thread"
@@ -1510,14 +1422,6 @@ msgid "Fetch models"
 msgstr "モデルを取得"
 
 #: src/app/screens/settings/settings_pages.cpp
-msgid "Speech model"
-msgstr "音声モデル"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Speech-to-text model for voice input and audio transcripts. Leave empty for the default."
-msgstr "音声入力と音声の文字起こしに使うモデルです。空欄の場合は既定のモデルを使います。"
-
-#: src/app/screens/settings/settings_pages.cpp
 msgid "Test connection"
 msgstr "接続をテスト"
 
@@ -1536,38 +1440,6 @@ msgstr ""
 #: src/app/screens/settings/settings_pages.cpp
 msgid "Native language:"
 msgstr "母国語:"
-
-#: src/app/screens/settings/settings_pages.cpp src/app/screens/shell/composer.cpp src/app/screens/shell/shortcuts.cpp
-msgid "Voice input"
-msgstr "音声入力"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid ""
-"Dictate messages with the microphone button in the message box. When you dictate, the recording and the conversation's recent messages are sent to your AI provider.\n"
-"The speech-to-text model is set in each provider's settings above."
-msgstr ""
-"メッセージ欄のマイクボタンで、メッセージを音声で入力できます。音声入力を使うと、録音と会話の最近のメッセージがAIプロバイダーに送信されます。\n"
-"文字起こしのモデルは、上の各プロバイダーの設定で指定します。"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Voice input needs an OpenAI or OpenAI-compatible provider with speech-to-text."
-msgstr "音声入力には、文字起こしに対応したOpenAIまたはOpenAI互換のプロバイダーが必要です。"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Glossary"
-msgstr "用語集"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Names, product terms and jargon to spell correctly, one per line."
-msgstr "正しく表記したい名前、製品名、専門用語を1行に1つずつ入力します。"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Clean up with AI"
-msgstr "AIで整える"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Removes filler words and false starts using your AI provider."
-msgstr "AIプロバイダーを使って、「えー」などのつなぎ言葉や言い直しを取り除きます。"
 
 #: src/app/screens/settings/settings_pages.cpp
 msgid "Connect"
@@ -2244,10 +2116,6 @@ msgid "Search GIFs — needs a GIPHY API key"
 msgstr "GIFを検索 — GIPHYのAPIキーが必要です"
 
 #: src/app/screens/shell/composer.cpp
-msgid "Stop and transcribe"
-msgstr "停止して文字起こし"
-
-#: src/app/screens/shell/composer.cpp
 msgid "Message %1"
 msgstr "%1へのメッセージ"
 
@@ -2406,10 +2274,6 @@ msgid "Leave conversation"
 msgstr "会話から退出"
 
 #: src/app/screens/shell/context_menus.cpp
-msgid "Stop"
-msgstr "停止"
-
-#: src/app/screens/shell/context_menus.cpp
 msgid "New section…"
 msgstr "新しいセクション…"
 
@@ -2424,30 +2288,6 @@ msgstr "ワークスペース管理"
 #: src/app/screens/shell/context_menus.cpp
 msgid "Log out"
 msgstr "ログアウト"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Find a session"
-msgstr "セッションを探す"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Create a session"
-msgstr "セッションを作成"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Create an unsafe session"
-msgstr "安全でないセッションを作成"
-
-#: src/app/screens/shell/context_menus.cpp src/app/screens/shell/teammate_page.cpp
-msgid "Edit teammate…"
-msgstr "チームメイトを編集…"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Restore default"
-msgstr "デフォルトに戻す"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Remove teammate…"
-msgstr "チームメイトを外す…"
 
 #: src/app/screens/shell/context_menus.cpp
 msgid "Create a section…"
@@ -2496,14 +2336,6 @@ msgstr "セクションに移動"
 #: src/app/screens/shell/context_menus.cpp
 msgid "Rename conversation…"
 msgstr "会話の名前を変更…"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Rename session…"
-msgstr "セッション名を変更…"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Remove from msga"
-msgstr "msgaから削除"
 
 #: src/app/screens/shell/context_menus.cpp
 msgid "Log out from %1"
@@ -2771,10 +2603,6 @@ msgid "Add a message, if you'd like."
 msgstr "必要に応じてメッセージを追加できます。"
 
 #: src/app/screens/shell/shell_dialogs.cpp
-msgid "Couldn't open the chat."
-msgstr "チャットを開けませんでした。"
-
-#: src/app/screens/shell/shell_dialogs.cpp
 msgid "Forwarding %1"
 msgstr "%1 を転送中"
 
@@ -2832,16 +2660,8 @@ msgid "The picture is fitted into a square, and the unread dot is drawn over its
 msgstr "画像は正方形に収まるよう縮小され、未読の点がその角に重ねて表示されます。画像ファイルをこのウィンドウにドロップすることもできます。"
 
 #: src/app/screens/shell/shell_dialogs.cpp
-msgid "Rename session"
-msgstr "セッション名を変更"
-
-#: src/app/screens/shell/shell_dialogs.cpp
 msgid "Name conversation"
 msgstr "会話に名前を付ける"
-
-#: src/app/screens/shell/shell_dialogs.cpp
-msgid "Only msga shows this name; Claude Code keeps its own. Leave it empty to use Claude Code's name again."
-msgstr "この名前はmsgaにだけ表示され、Claude Codeは独自の名前を保持します。空欄にするとClaude Codeの名前に戻ります。"
 
 #: src/app/screens/shell/shell_dialogs.cpp
 msgid "Only you see this name. Leave it empty to show the members' names again."
@@ -2870,10 +2690,6 @@ msgstr "セクションを削除"
 #: src/app/screens/shell/shell_dialogs.cpp
 msgid "Delete \"%1\"? Its conversations go back to where they were listed before."
 msgstr "「%1」を削除しますか？ 中の会話は元の場所に戻ります。"
-
-#: src/app/screens/shell/shell_links.cpp
-msgid "The session is gone."
-msgstr "セッションはもうありません。"
 
 #: src/app/screens/shell/shell_notify.cpp
 msgid "Someone"
@@ -2932,14 +2748,6 @@ msgid "Add channels"
 msgstr "チャンネルを追加"
 
 #: src/app/screens/shell/sidebar.cpp
-msgid "Add teammate"
-msgstr "チームメイトを追加"
-
-#: src/app/screens/shell/sidebar.cpp
-msgid "Add sessions"
-msgstr "セッションを追加"
-
-#: src/app/screens/shell/sidebar.cpp
 msgid "Open a direct message"
 msgstr "ダイレクトメッセージを開く"
 
@@ -2950,10 +2758,6 @@ msgstr "自分"
 #: src/app/screens/shell/sidebar.cpp
 msgid "Starred"
 msgstr "スター付き"
-
-#: src/app/screens/shell/sidebar.cpp src/app/screens/shell/teammate_page.cpp
-msgid "Sessions"
-msgstr "セッション"
 
 #: src/app/screens/shell/sidebar.cpp
 msgid "Direct messages"
@@ -2976,10 +2780,6 @@ msgid "channels"
 msgstr "チャンネル"
 
 #: src/app/screens/shell/sidebar.cpp
-msgid "Team"
-msgstr "チーム"
-
-#: src/app/screens/shell/sidebar.cpp
 msgid "Find a channel"
 msgstr "チャンネルを探す"
 
@@ -2987,14 +2787,6 @@ msgstr "チャンネルを探す"
 msgid "%n background task running"
 msgid_plural "%n background tasks running"
 msgstr[0] "%n 件のバックグラウンドタスクを実行中"
-
-#: src/app/screens/shell/sidebar_footer.cpp
-msgid "Zen mode is on: tool calls are hidden. Click to show everything."
-msgstr "禅モードはオンです：ツール呼び出しは非表示です。クリックするとすべて表示します。"
-
-#: src/app/screens/shell/sidebar_footer.cpp
-msgid "Zen mode is off. Click to hide tool calls for easier reading."
-msgstr "禅モードはオフです。クリックするとツール呼び出しを隠して読みやすくします。"
 
 #: src/app/screens/shell/sidebar_footer.cpp
 msgid "Profile & status"
@@ -3310,36 +3102,6 @@ msgstr "保存中…"
 msgid "Could not save: %1"
 msgstr "保存できませんでした: %1"
 
-#: src/app/screens/shell/teammate_page.cpp
-msgid "No sessions yet. Write below to start one."
-msgstr "まだセッションはありません。下に書き込むと始まります。"
-
-#: src/app/screens/shell/teammate_page.cpp
-msgid "Change folder"
-msgstr "フォルダーを変更"
-
-#: src/app/screens/shell/teammate_page.cpp
-msgid "%n new"
-msgid_plural "%n new"
-msgstr[0] "%n 件の新着"
-
-#: src/app/screens/shell/teammate_page.cpp
-msgid "Start new session in %1"
-msgstr "%1 で新しいセッションを開始"
-
-#: src/app/screens/shell/teammate_page.cpp
-msgid "%n session"
-msgid_plural "%n sessions"
-msgstr[0] "%n 件のセッション"
-
-#: src/app/screens/shell/teammate_page.cpp
-msgid "Browse…"
-msgstr "参照…"
-
-#: src/app/screens/shell/teammate_page.cpp
-msgid "Folder for new sessions with the %1"
-msgstr "%1 との新しいセッションのフォルダー"
-
 #: src/app/screens/shell/threads_page.cpp
 msgid "%1 files"
 msgstr "%1個のファイル"
@@ -3415,26 +3177,6 @@ msgstr "msgaの新しいバージョンをダウンロードしました。適�
 #: src/app/screens/shell/update_bar.cpp
 msgid "Restart now"
 msgstr "今すぐ再起動"
-
-#: src/app/screens/shell/voice_strip.cpp
-msgid "Cancel voice input (Esc)"
-msgstr "音声入力をキャンセル（Esc）"
-
-#: src/app/screens/shell/voice_strip.cpp
-msgid "Dismiss"
-msgstr "閉じる"
-
-#: src/app/screens/shell/voice_strip.cpp
-msgid "Esc to cancel"
-msgstr "Escでキャンセル"
-
-#: src/app/screens/shell/voice_strip.cpp
-msgid "Transcribing…"
-msgstr "文字起こし中…"
-
-#: src/app/screens/shell/voice_strip.cpp
-msgid "Cleaning up…"
-msgstr "整えています…"
 
 #: src/app/slack/browser_login.cpp
 msgid "Opening %1…"
@@ -3642,6 +3384,201 @@ msgstr "ダウンロードに失敗しました: %1"
 #: src/app/update/updater.cpp
 msgid "Downloaded update is corrupt (checksum mismatch)."
 msgstr "ダウンロードした更新ファイルが破損しています（チェックサム不一致）。"
+
+#~ msgid "%1 does not support speech-to-text — connect an OpenAI-compatible provider in Settings → AI assistance"
+#~ msgstr "%1は音声の文字起こしに対応していません — 設定→「AIアシスタンス」でOpenAI互換のプロバイダーを接続してください"
+
+#~ msgid "%1 does not support speech-to-text"
+#~ msgstr "%1は音声の文字起こしに対応していません"
+
+#~ msgid "Voice input needs a speech-to-text provider. Connect OpenAI or an OpenAI-compatible server in Settings → AI assistance."
+#~ msgstr "音声入力には文字起こしに対応したプロバイダーが必要です。設定 → AIアシスタンスでOpenAIまたはOpenAI互換のサーバーを接続してください。"
+
+#~ msgid "No microphone recording is available on this system"
+#~ msgstr "このシステムではマイクで録音できません"
+
+#~ msgid "Couldn't record: %1"
+#~ msgstr "録音できませんでした: %1"
+
+#~ msgid "No speech was recorded"
+#~ msgstr "音声が録音されませんでした"
+
+#~ msgid "Voice input needs a speech-to-text provider"
+#~ msgstr "音声入力には文字起こしに対応したプロバイダーが必要です"
+
+#~ msgid "Couldn't transcribe: %1"
+#~ msgstr "文字起こしできませんでした: %1"
+
+#~ msgid "No speech was recognised"
+#~ msgstr "音声を認識できませんでした"
+
+#~ msgid "This server has no speech-to-text endpoint (HTTP 404)"
+#~ msgstr "このサーバーには音声文字起こしのエンドポイントがありません（HTTP 404）"
+
+#~ msgid "Unexpected response from server (no text)"
+#~ msgstr "サーバーから予期しない応答が返されました（textがありません）"
+
+#~ msgid "%1 · transcribed by %2"
+#~ msgstr "%1 · %2による文字起こし"
+
+#~ msgid "Transcribe with AI"
+#~ msgstr "AIで文字起こし"
+
+#~ msgid "%1 does not support speech-to-text. Pick an OpenAI-compatible provider in Settings → AI assistance."
+#~ msgstr "%1は音声の文字起こしに対応していません。設定 → AIアシスタンスでOpenAI互換のプロバイダーを選んでください。"
+
+#~ msgid "Transcription needs an AI provider. Connect one in Settings → AI assistance."
+#~ msgstr "文字起こしにはAIプロバイダーが必要です。設定 → AIアシスタンスで接続してください。"
+
+#~ msgid "Could not read the file"
+#~ msgstr "ファイルを読み込めませんでした"
+
+#~ msgid "Ask agent"
+#~ msgstr "エージェントに質問"
+
+#~ msgid "Open agent thread"
+#~ msgstr "エージェントのスレッドを開く"
+
+#~ msgid "Allow %1 to ask agent"
+#~ msgstr "%1 がエージェントに質問できるようにする"
+
+#~ msgid "Unlink agent"
+#~ msgstr "エージェントのリンクを解除"
+
+#~ msgid "Open as session"
+#~ msgstr "セッションとして開く"
+
+#~ msgid "Open the Slack thread: %1"
+#~ msgstr "Slack のスレッドを開く: %1"
+
+#~ msgid "Speech model"
+#~ msgstr "音声モデル"
+
+#~ msgid "Speech-to-text model for voice input and audio transcripts. Leave empty for the default."
+#~ msgstr "音声入力と音声の文字起こしに使うモデルです。空欄の場合は既定のモデルを使います。"
+
+#~ msgid "Voice input"
+#~ msgstr "音声入力"
+
+#~ msgid ""
+#~ "Dictate messages with the microphone button in the message box. When you dictate, the recording and the conversation's recent messages are sent to your AI provider.\n"
+#~ "The speech-to-text model is set in each provider's settings above."
+#~ msgstr ""
+#~ "メッセージ欄のマイクボタンで、メッセージを音声で入力できます。音声入力を使うと、録音と会話の最近のメッセージがAIプロバイダーに送信されます。\n"
+#~ "文字起こしのモデルは、上の各プロバイダーの設定で指定します。"
+
+#~ msgid "Voice input needs an OpenAI or OpenAI-compatible provider with speech-to-text."
+#~ msgstr "音声入力には、文字起こしに対応したOpenAIまたはOpenAI互換のプロバイダーが必要です。"
+
+#~ msgid "Glossary"
+#~ msgstr "用語集"
+
+#~ msgid "Names, product terms and jargon to spell correctly, one per line."
+#~ msgstr "正しく表記したい名前、製品名、専門用語を1行に1つずつ入力します。"
+
+#~ msgid "Clean up with AI"
+#~ msgstr "AIで整える"
+
+#~ msgid "Removes filler words and false starts using your AI provider."
+#~ msgstr "AIプロバイダーを使って、「えー」などのつなぎ言葉や言い直しを取り除きます。"
+
+#~ msgid "Stop and transcribe"
+#~ msgstr "停止して文字起こし"
+
+#~ msgid "Stop"
+#~ msgstr "停止"
+
+#~ msgid "Find a session"
+#~ msgstr "セッションを探す"
+
+#~ msgid "Create a session"
+#~ msgstr "セッションを作成"
+
+#~ msgid "Create an unsafe session"
+#~ msgstr "安全でないセッションを作成"
+
+#~ msgid "Edit teammate…"
+#~ msgstr "チームメイトを編集…"
+
+#~ msgid "Restore default"
+#~ msgstr "デフォルトに戻す"
+
+#~ msgid "Remove teammate…"
+#~ msgstr "チームメイトを外す…"
+
+#~ msgid "Rename session…"
+#~ msgstr "セッション名を変更…"
+
+#~ msgid "Remove from msga"
+#~ msgstr "msgaから削除"
+
+#~ msgid "Couldn't open the chat."
+#~ msgstr "チャットを開けませんでした。"
+
+#~ msgid "Rename session"
+#~ msgstr "セッション名を変更"
+
+#~ msgid "Only msga shows this name; Claude Code keeps its own. Leave it empty to use Claude Code's name again."
+#~ msgstr "この名前はmsgaにだけ表示され、Claude Codeは独自の名前を保持します。空欄にするとClaude Codeの名前に戻ります。"
+
+#~ msgid "The session is gone."
+#~ msgstr "セッションはもうありません。"
+
+#~ msgid "Add teammate"
+#~ msgstr "チームメイトを追加"
+
+#~ msgid "Add sessions"
+#~ msgstr "セッションを追加"
+
+#~ msgid "Sessions"
+#~ msgstr "セッション"
+
+#~ msgid "Team"
+#~ msgstr "チーム"
+
+#~ msgid "Zen mode is on: tool calls are hidden. Click to show everything."
+#~ msgstr "禅モードはオンです：ツール呼び出しは非表示です。クリックするとすべて表示します。"
+
+#~ msgid "Zen mode is off. Click to hide tool calls for easier reading."
+#~ msgstr "禅モードはオフです。クリックするとツール呼び出しを隠して読みやすくします。"
+
+#~ msgid "No sessions yet. Write below to start one."
+#~ msgstr "まだセッションはありません。下に書き込むと始まります。"
+
+#~ msgid "Change folder"
+#~ msgstr "フォルダーを変更"
+
+#~ msgid "%n new"
+#~ msgid_plural "%n new"
+#~ msgstr[0] "%n 件の新着"
+
+#~ msgid "Start new session in %1"
+#~ msgstr "%1 で新しいセッションを開始"
+
+#~ msgid "%n session"
+#~ msgid_plural "%n sessions"
+#~ msgstr[0] "%n 件のセッション"
+
+#~ msgid "Browse…"
+#~ msgstr "参照…"
+
+#~ msgid "Folder for new sessions with the %1"
+#~ msgstr "%1 との新しいセッションのフォルダー"
+
+#~ msgid "Cancel voice input (Esc)"
+#~ msgstr "音声入力をキャンセル（Esc）"
+
+#~ msgid "Dismiss"
+#~ msgstr "閉じる"
+
+#~ msgid "Esc to cancel"
+#~ msgstr "Escでキャンセル"
+
+#~ msgid "Transcribing…"
+#~ msgstr "文字起こし中…"
+
+#~ msgid "Cleaning up…"
+#~ msgstr "整えています…"
 
 #~ msgid "Yes, and don't ask again for %1 commands in %2"
 #~ msgstr "はい、%2 での %1 コマンドは今後確認しない"
