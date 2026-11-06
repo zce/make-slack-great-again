@@ -689,6 +689,6 @@ TEST("mrkdwn: external msga message URLs") {
 
     CHECK_FALSE(mrkdwn::parseAppLink("msga://oauth/callback?code=abc").valid());
     CHECK_FALSE(mrkdwn::parseAppLink("msga://evil.example/archives/C1/p1793583443622599").valid());
-    CHECK_FALSE(mrkdwn::parseAppLink("msga://team.slack.com/archives/NO/p1793583443622599").valid());
+    CHECK_FALSE(mrkdwn::parseAppLink("msga://team.slack.com/archives/no/p1793583443622599").valid());
     CHECK_FALSE(mrkdwn::parseAppLink("https://team.slack.com/archives/C1/p1793583443622599").valid());
 }
