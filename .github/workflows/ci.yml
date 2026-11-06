@@ -17,17 +17,22 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 600M
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install build dependencies
         timeout-minutes: 7
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            clang lld cmake ninja-build pkg-config python3 \
+            clang lld cmake ninja-build pkg-config python3 ccache \
             libfreetype-dev libharfbuzz-dev \
             libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev wayland-protocols \
@@ -35,18 +40,25 @@ jobs:
             libxcb-randr0-dev libxcb-cursor-dev libxcb-xfixes0-dev \
             libxcb-xinput-dev libxcb-xtest0-dev libdbus-1-dev \
             fonts-inter fonts-noto-color-emoji
+      - name: Cache compiler outputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ubuntu2404-v1-${{ github.sha }}
+          restore-keys: ccache-ubuntu2404-v1-
       - name: Configure
         run: |
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DMSGA_BUILD_TESTS=ON \
             -DMSGA_DEMO=OFF \
-            -DMSGA_SELF_UPDATE=OFF
+            -DMSGA_SELF_UPDATE=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build-ci --parallel 4
-      - name: Verify regression-sensitive tests
-        run: ctest --test-dir build-ci --output-on-failure --parallel 1 -R '^(text_ink_lean|ui_popup|messages_actions|shell_ui_tests|settings_tests)$'
       - name: Test
+        timeout-minutes: 15
         run: ctest --test-dir build-ci --output-on-failure --parallel 1
 
       # GitHub Actions artifacts are already downloaded as ZIP archives.
@@ -61,7 +73,7 @@ jobs:
           (cd dist && sha256sum msga > SHA256SUMS)
       - name: Upload pull request test build
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: msga-linux-x86_64-pr${{ github.event.pull_request.number }}
           path: |
