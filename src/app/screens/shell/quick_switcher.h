@@ -125,6 +125,7 @@ private:
     plat::TimerId               _searchTimer = 0;
     bool                        _searching = false;
     bool                        _preserveScroll = false;
+    bool                        _keyboardSelection = false; // preserve a user's pick across async reordering
     std::shared_ptr<int>        _alive = std::make_shared<int>(0);
     std::vector<bool>           _dimmed;
     ui::TextEdit               *_field   = nullptr;
