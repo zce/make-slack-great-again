@@ -878,6 +878,17 @@ MessageRef parseThreadLink(std::string_view url) {
     return ref;
 }
 
+MessageRef parseAppLink(std::string_view url) {
+    constexpr std::string_view prefix = "msga://";
+    if (!startsWith(url, prefix))
+        return {};
+    if (startsWith(url, "msga://thread/"))
+        return parseThreadLink(url);
+    // Reuse Slack's existing strict permalink parser (including its host,
+    // conversation ID and timestamp validation), not a second URL grammar.
+    return parseMessageLink(str::concat({"https://", url.substr(prefix.size())}));
+}
+
 std::string refToToken(const MessageRef &ref) {
     return str::concat({ref.host, "/", ref.conv, "/", ref.ts, "/", ref.threadTs, "/", ref.author});
 }
