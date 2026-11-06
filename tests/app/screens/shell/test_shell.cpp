@@ -5,7 +5,6 @@
 #include "app/fake/fake_backend.h"
 #include "app/llm/service.h"
 #include "support/fake_llm_server.h"
-#include "app/llm/voice_input.h"
 #include "app/model/backend_proxy.h"
 #include "app/model/jobs.h"
 #ifdef MSGA_SELF_UPDATE
@@ -41,7 +40,6 @@
 #include "screens/shell/threads_page.h"
 #include "screens/shell/activity_page.h"
 #include "screens/shell/nav_chrome.h"
-#include "screens/shell/voice_strip.h"
 
 #ifdef MSGA_HAVE_MESSAGES
 #include "app/screens/messages/image_cache.h"
@@ -2721,202 +2719,6 @@ TEST("settings: the AI providers reach the LLM layer; Summarize's notice opens t
     h.ctx.ai = nullptr;
 }
 
-// ── Voice input ─────────────────────────────────────────────────────────────
-
-namespace {
-
-std::string toneWav(float amplitude) {
-    std::string pcm;
-    for (int i = 0; i < 16 * 600; ++i) {
-        const int16_t v = int16_t(amplitude * 32767 * std::sin(i * 2 * 3.14159265 * 440 / 16000));
-        pcm += char(v & 0xff);
-        pcm += char((v >> 8) & 0xff);
-    }
-    return plat::audio::wavFromPcm16(pcm, 16000, 1);
-}
-
-} // namespace
-
-TEST("composer: voice input — the mic, the strip, the dictation at the caret, Escape cancels") {
-    const std::string &base = fakellm::server();
-    if (base.empty()) {
-        std::printf("skip: no python3 for the fake AI provider\n");
-        return;
-    }
-    fakellm::ctl(app().platform(), "POST", "/_ctl/reset");
-    const std::string speech = file::join(std::getenv("HOME"), "speech.wav");
-    const std::string quiet  = file::join(std::getenv("HOME"), "quiet.wav");
-    REQUIRE(file::writeAtomic(speech, toneWav(0.4f)));
-    REQUIRE(file::writeAtomic(quiet, toneWav(0)));
-    llm::Service ai(app().platform()); // outlives the shell's composers
-    Harness      h(&ai);
-    using shell::shortcuts::Id;
-    auto &c   = h.sh->composer();
-    auto *mic = c.button(Id::VoiceInput);
-    REQUIRE(mic != nullptr);
-    h.sh->applySettings();
-    CHECK_FALSE(mic->visible()); // no provider with speech-to-text
-    h.settings.provider("anthropic")->key = "sk-ant";
-    h.sh->applySettings();
-    CHECK_FALSE(mic->visible()); // Anthropic has none
-    h.settings.ai.push_back({"custom-1", "Fake", base + "/v1", {}, "m", "gpt-transcribe"});
-    h.settings.voiceGlossary = "msga\n  Zed  \n\n";
-    h.settings.voiceCleanup  = false;
-    h.sh->applySettings();
-    CHECK(mic->visible());
-    CHECK(ai.voice().glossary() == (std::vector<std::string>{"msga", "Zed"}));
-
-    // Tap the mic: recording, the strip with its meter; tap again: the text
-    // lands after what was typed, with a space.
-    base::test::setEnv("MSGA_VOICE_FAKE_WAV", speech);
-    c.edit().insertText("hello");
-    mic->activate();
-    shell::VoiceStrip *strip = c.voiceStrip();
-    REQUIRE(strip != nullptr);
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Recording);
-    CHECK(strip->visible());
-    CHECK(c.voiceActiveHere());
-    CHECK(mic->tooltip().rfind("Stop and transcribe", 0) == 0);
-    CHECK(strip->elapsedText() == "0:00");
-    pump(20);
-    mic->activate();
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Transcribing);
-    for (int i = 0; i < 2000 && c.voiceActiveHere(); ++i)
-        app().pump(5);
-    CHECK_FALSE(c.voiceActiveHere());
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Hidden);
-    CHECK_STR(c.edit().text(), "hello um so the deploy is uh ready");
-    CHECK(mic->tooltip().rfind("Voice input", 0) == 0);
-    json::Document log;
-    REQUIRE(log.parse(fakellm::ctl(app().platform(), "GET", "/_ctl/log").body, nullptr));
-    REQUIRE(log.root().size() == 1); // clean-up off: no chat request
-    const std::string body(log.root()[0]["body"].str());
-    CHECK(body.find("name=\"keywords[]\"\r\n\r\nmsga\r\n") != std::string::npos);
-    CHECK(body.find("name=\"keywords[]\"\r\n\r\nZed\r\n") != std::string::npos);
-    CHECK(body.find("Conversation: design") != std::string::npos);
-
-    // Escape cancels a recording ahead of everything else.
-    mic->activate();
-    CHECK(c.voiceActiveHere());
-    ui::Event esc{ui::EventType::KeyDown};
-    esc.key = plat::Key::Escape;
-    CHECK(c.edit().onKey(esc));
-    CHECK_FALSE(c.voiceActiveHere());
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Hidden);
-
-    // A silent recording: the strip says so; × dismisses it.
-    base::test::setEnv("MSGA_VOICE_FAKE_WAV", quiet);
-    mic->activate();
-    pump(4);
-    mic->activate();
-    for (int i = 0; i < 400 && c.voiceActiveHere(); ++i)
-        app().pump(5);
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Error);
-    CHECK_STR(strip->error(), "No speech was recorded");
-    REQUIRE(strip->onCancel);
-    strip->onCancel();
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Hidden);
-    // Leaving never loses a dictation: the thread panel closing (an ancestor
-    // hidden), the Threads page replacing the conversation, another
-    // conversation opening — the recording stops, is transcribed all the
-    // same, and the text lands where it was started.
-    base::test::setEnv("MSGA_VOICE_FAKE_WAV", speech);
-    const auto waitIdle = [&] {
-        for (int i = 0; i < 2000 && ai.voice().state() != llm::VoiceInput::State::Idle; ++i)
-            app().pump(5);
-    };
-    const model::ConvRef design  = h.sh->current();
-    const model::ConvRef general = h.store.findConversation("C0GENERAL");
-    const auto          &msgs    = h.store.conversation(design).messages;
-    REQUIRE(!msgs.empty());
-    const model::Ts root    = msgs.back().ts;
-    // Slow answers, so the tests below see the transcriptions in flight.
-    const char     *slowStt = R"([{"text":"um so the deploy is uh ready","__delay":0.6},
-                              {"text":"um so the deploy is uh ready","__delay":0.6}])";
-    fakellm::script(app().platform(), "/v1/audio/transcriptions", slowStt);
-    h.sh->openThread(design, root);
-    pump();
-    shell::Composer *tc = h.sh->threadComposer();
-    REQUIRE(tc != nullptr);
-    REQUIRE(tc->button(Id::VoiceInput) != nullptr);
-    tc->button(Id::VoiceInput)->activate();
-    CHECK(tc->voiceActiveHere());
-    pump(4);
-    h.sh->closeThread();
-    pump();
-    CHECK(ai.voice().state() == llm::VoiceInput::State::Transcribing);
-    // A new dictation meanwhile does not cancel it: both finish.
-    c.edit().clear();
-    mic->activate();
-    CHECK(c.voiceActiveHere());
-    pump(4);
-    mic->activate();
-    waitIdle();
-    CHECK_STR(c.edit().text(), "um so the deploy is uh ready");
-    h.sh->openThread(design, root);
-    pump();
-    CHECK_STR(tc->edit().text(), "um so the deploy is uh ready");
-    tc->edit().clear();
-    h.sh->closeThread();
-    pump();
-    // The Threads page, then back: the text is in the editor.
-    c.edit().clear();
-    mic->activate();
-    pump(4);
-    h.sh->showPage(shell::Shell::Page::Threads);
-    pump();
-    waitIdle();
-    h.sh->open(design);
-    pump();
-    CHECK_STR(c.edit().text(), "um so the deploy is uh ready");
-    // Another conversation: its composer shows nothing of it; the text goes
-    // after design's draft.
-    c.edit().setText("draft");
-    fakellm::script(app().platform(), "/v1/audio/transcriptions", slowStt);
-    mic->activate();
-    pump(4);
-    h.sh->open(general);
-    pump();
-    CHECK_FALSE(c.voiceActiveHere());
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Hidden);
-    CHECK(ai.voice().state() == llm::VoiceInput::State::Transcribing);
-    // Back before it is done: the strip shows the transcription.
-    h.sh->open(design);
-    pump();
-    CHECK(c.voiceActiveHere());
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Transcribing);
-    h.sh->open(general);
-    pump();
-    CHECK_STR(c.edit().text(), "");
-    waitIdle();
-    CHECK_STR(c.edit().text(), "");
-    h.sh->open(design);
-    pump();
-    CHECK_STR(c.edit().text(), "draft um so the deploy is uh ready");
-    c.edit().clear();
-    // A failure after leaving is shown on coming back.
-    base::test::setEnv("MSGA_VOICE_FAKE_WAV", quiet);
-    mic->activate();
-    pump(4);
-    h.sh->open(general);
-    pump();
-    waitIdle();
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Hidden);
-    h.sh->open(design);
-    pump();
-    CHECK(strip->mode() == shell::VoiceStrip::Mode::Error);
-    CHECK_STR(strip->error(), "No speech was recorded");
-    strip->onCancel();
-    base::test::unsetEnv("MSGA_VOICE_FAKE_WAV");
-
-    // The provider goes: the mic hides.
-    h.settings.ai.pop_back();
-    h.sh->applySettings();
-    CHECK_FALSE(mic->visible());
-    file::remove(speech);
-    file::remove(quiet);
-}
-
 // ── Running workspaces (a session per workspace) ────────────────────────────
 
 namespace {
@@ -3248,14 +3050,6 @@ TEST("history: back and forward cross workspaces; a signed-out one's entries go"
     CHECK(w.sh->current() == aGeneral);
     CHECK(w.switched.size() == switches);
     CHECK(&w.ctx.store() == &w.a);
-}
-
-TEST("Slack workspaces do not expose Claude's zen-mode toggle") {
-    TwoWorkspaces w;
-    shell::SidebarFooter &f = w.sh->sidebar().footer();
-    CHECK_FALSE(f.zenToggle()->visible());
-    w.show(kKeyB);
-    CHECK_FALSE(f.zenToggle()->visible());
 }
 
 #ifndef __APPLE__

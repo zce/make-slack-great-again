@@ -9,7 +9,7 @@
 // Old keys with nothing to map to here are left behind:
 // notifications/defaultMigrated (applied, not kept), the Teams and IMAP
 // workspaces and credentials/teamsClientId (services dropped),
-// imap/domainIcons. zenMode/<workspace key> becomes Settings::zenWorkspaces.
+// imap/domainIcons. obsolete Claude and voice fields are ignored.
 #pragma once
 
 #include "app/auth/workspaces.h"

@@ -505,9 +505,6 @@ TEST("old cache: a first start brings the whole old cache along") {
     CHECK(s.customEmoji().size() == 2);
     CHECK((s.myGroups.size() == 1 && s.myGroups[0] == "S1"));
     CHECK(s.threadMuted(c1, model::parseTs("1767225000.000100")));
-    REQUIRE(s.aiTranscript("F1"));
-    CHECK_STR(s.aiTranscript("F1")->text, "hello there");
-    CHECK_STR(s.aiTranscript("F1")->by, "OpenAI");
     CHECK(s.reminderAt(c1, model::parseTs("1767225000.000100")) == 1767300000);
     // The Slack backend's own part, in its format (saveExtras).
     const json::Value x = meta.root()["x"];
@@ -607,7 +604,6 @@ TEST("old cache: over an existing new cache, only the app's own state") {
     CHECK_FALSE(s.conversation(s.findConversation("C1")).starred);         // Slack's to say
     CHECK_STR(s.conversation(s.findConversation("G1")).localName, "Mine"); // the newer name
     CHECK(s.threadMuted(s.findConversation("C1"), model::parseTs("1767225000.000100")));
-    CHECK(s.aiTranscript("F1") != nullptr);
     const json::Value x = meta.root()["x"];
     CHECK(x["sweep"].integer() == 42);
     CHECK(x["followed"].size() == 2);

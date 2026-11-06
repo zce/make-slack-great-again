@@ -182,7 +182,6 @@ TEST("shortcuts: tooltips and chips spell the keys per platform") {
     CHECK_STR(nativeKeys(Id::EmojiPicker), "Ctrl+Shift+\\");
     CHECK_STR(nativeKeys(Id::OpenSettings), "Ctrl+,");
     CHECK_STR(nativeKeys(Id::SearchMessages), "Ctrl+F");
-    CHECK_STR(nativeKeys(Id::VoiceInput), "Ctrl+Shift+Space");
 #endif
     CHECK_STR(nativeKeys(Id::EditLastMessage), "\xE2\x86\x91");
     CHECK_STR(nativeKeys(Id::CancelOrExitEdit), "Esc");

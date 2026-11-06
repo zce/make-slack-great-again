@@ -13,7 +13,7 @@
 //   emoji.json          {name: url or "alias:name"}
 //   usergroups.json     [{id, ha handle, na name, us [user ids]}]
 //   meta.json           {conv, name (last open), meId, sweepAt, mutedThreads
-//                       ["C\tts"], followedThreads ["C\tts"], aiTranscripts
+//                       ["C\tts"], followedThreads ["C\tts"]
 //                       {file id: {text, by}}, reminders [{conv, ts, due,
 //                       saved, root, snippet, author, botName, botAvatar,
 //                       fired}], reminderPreviews [{key "C\tts", …}],

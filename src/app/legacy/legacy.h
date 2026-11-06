@@ -19,7 +19,7 @@
 //   3. delete the two `#ifdef MSGA_LEGACY_IMPORT` blocks in
 //      src/app/screens/shell/main.cpp (the include and the call)
 // Leftovers are harmless: <configDir>/legacy-imported (the done list) and
-// Settings::zenWorkspaces' import source.
+// retained Slack settings only.
 #pragma once
 
 #include <string>

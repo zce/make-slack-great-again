@@ -239,7 +239,6 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.slackSession               = false;
     s.slackClientId              = "123.456";
     s.giphyKey                   = "gk";
-    s.voiceGlossary              = "gRPC\nnginx";
     s.spellLanguages             = {"en_US", "de_DE_frami"};
     s.emojiRecent                = {"tada", "+1"};
     s.emojiSkinTone              = 3;
@@ -247,7 +246,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.quickReactionNames         = {"tada", "fire", "eyes"};
     s.lastAttachDir              = "/tmp/pics";
     s.provider("anthropic")->key = "sk-ant-abcd1234";
-    s.ai.push_back({"custom-1", "vLLM", "http://localhost:8000/v1", "", "qwen", ""});
+    s.ai.push_back({"custom-1", "vLLM", "http://localhost:8000/v1", "", "qwen"});
     s.aiDefault = "custom-1";
     REQUIRE(s.save(path));
 #ifndef _WIN32
@@ -278,7 +277,6 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK_FALSE(r.slackSession);
     CHECK_STR(r.slackClientId, "123.456");
     CHECK_STR(r.giphyKey, "gk");
-    CHECK_STR(r.voiceGlossary, "gRPC\nnginx");
     REQUIRE(r.spellLanguages.size() == 2);
     CHECK_STR(r.spellLanguages[1], "de_DE_frami");
     REQUIRE(r.emojiRecent.size() == 2);
