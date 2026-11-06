@@ -1676,8 +1676,9 @@ void SlackBackend::sectionCall(
 void SlackBackend::createSection(std::string name, std::string emoji, ConvRef first) {
     std::string form;
     addParam(form, "name", name);
-    if (!emoji.empty())
-        addParam(form, "emoji", emoji);
+    // This undocumented endpoint requires the emoji key even when no emoji
+    // is selected. Omitting it returns invalid_arguments; an empty value is valid.
+    addParam(form, "emoji", emoji);
     // The id is Slack's: the section shows once it answers.
     sectionCall(
         "users.channelSections.create",
