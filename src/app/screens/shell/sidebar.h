@@ -1,6 +1,7 @@
 // The conversation sidebar:
-// uniform 30 px rows under a 6 px top inset — the "Activity", "Threads",
-// "Saved messages" and "Scheduled messages" entries, then the Starred / Channels /
+// overview shortcuts ("Activity", "Threads", "Saved messages", "Scheduled
+// messages") have their own compact navigation treatment and a separator
+// before the collapsible Starred / Channels /
 // Direct messages / Agents & apps sections (a click on a header collapses
 // it, hiding every row; hovering shows the chevron that says what a click
 // does, and on the right the header's "+" — Channels: "Add channels",
@@ -255,6 +256,7 @@ private:
     std::vector<SectionHeader *>           _sections;
     std::vector<ui::View *>                _nav; // Activity, Threads, Saved, Scheduled messages
     std::vector<const char *>              _navTitles;
+    ui::View                *_navDivider = nullptr;
     ui::View                *_savedRow = nullptr, *_threadsRow = nullptr, *_scheduledRow = nullptr;
     ui::View                *_activityRow = nullptr;
     Nav                      _navSelected = Nav::None;
