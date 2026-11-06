@@ -128,7 +128,7 @@ TEST("shortcuts: one row per action, the help panel's rows in order") {
         CHECK(def(Id(i)).id == Id(i));
     const char *help[] = {
         "Open settings",
-        "Jump to a conversation",
+        "Search all",
         "Search messages",
         "Send message",
         "New line in message",
