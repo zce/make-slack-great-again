@@ -272,7 +272,7 @@ void fromJson(const json::Value r, Settings &s) {
         for (const json::Value id : e["sections"])
             if (!id.str().empty())
                 p.sections.emplace_back(id.str());
-        if (!p.workspace.empty() && !p.sections.empty())
+        if (!p.sections.empty())
             s.sidebarSectionOrders.push_back(std::move(p));
     }
     for (const json::Value p : r["ai"]) {
