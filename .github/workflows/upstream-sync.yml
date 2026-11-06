@@ -1,0 +1,63 @@
+name: Sync upstream
+
+# Preserve merge ancestry. Never force-update master, and never auto-merge
+# upstream code into a version we release.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Merge upstream into a proposal branch
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/punarinta/make-slack-great-again.git
+          git fetch upstream master
+          git fetch origin master
+          git checkout -B automation/upstream-sync origin/master
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "Up to date with upstream"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Conflicts intentionally fail the job; a human must resolve them.
+          git merge --no-edit upstream/master
+          git push --force-with-lease origin HEAD:refs/heads/automation/upstream-sync
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Open or update upstream PR
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --head automation/upstream-sync --base master --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh pr create \
+              --head automation/upstream-sync \
+              --base master \
+              --title "chore: sync upstream master" \
+              --body "Automatic proposal merging punarinta/make-slack-great-again master into our fork. Review the diff and CI before merging. **Use Merge commit, not Squash or Rebase**, to preserve upstream ancestry. Conflicts are never auto-resolved."
+          fi
+          # GITHUB_TOKEN-created PRs do not themselves trigger pull_request CI.
+          gh workflow run ci.yml --ref automation/upstream-sync
