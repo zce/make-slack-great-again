@@ -361,7 +361,7 @@ TEST("service: the stand-in answers in-process, only while nothing is connected"
     CHECK(got.ok);
     CHECK_STR(got.response.text, "canned");
     CHECK(asked.find("Hi \"there\"") != std::string::npos);
-    s.setProviders({llm::fromSettings("openai", "OpenAI", "", "k", "")});
+    s.setProviders({llm::fromSettings("openai", "OpenAI", "", "k", "")}, "openai");
     CHECK_STR(s.active()->id, "openai");
 }
 
