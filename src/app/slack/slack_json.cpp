@@ -410,6 +410,10 @@ model::Conversation toConversation(const json::Value &o, model::Store &store) {
     const std::string topic = trimmed(o["topic"]["value"]);
     c.topic                 = !topic.empty() ? topic : trimmed(o["purpose"]["value"]);
     c.member                = o["is_member"].boolean(true);
+    // is_shared also means Enterprise Grid's *internal* cross-workspace
+    // channels. Only is_ext_shared identifies Slack Connect conversations.
+    if (o.has("is_ext_shared"))
+        c.extShared = o["is_ext_shared"].boolean();
     c.memberCount           = uint32_t(o["num_members"].integer());
     c.lastRead              = model::parseTs(o["last_read"].str());
     c.latest                = latestTs(o);
