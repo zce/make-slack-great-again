@@ -1014,11 +1014,17 @@ void Dialog::layout() {
 void Dialog::paint(gfx::Painter &p) {
     if (_h <= 0) {
         p.fillRect(bounds(), kCardScrim);
-        p.dropShadow(_panel->frame(), kCardRadius, 40, {0, 6}, 0x46000000U);
+        p.dropShadow(
+            _panel->frame(), kCardRadius, 14, {0, 3},
+            gfx::withAlpha(color(C::Shadow), 0.65f)
+        );
         return;
     }
     p.fillRect(bounds(), kScrim);
-    p.dropShadow(_panel->frame(), metric(M::RadiusL), 16, color(C::Shadow));
+    p.dropShadow(
+        _panel->frame(), metric(M::RadiusL), 12, {0, 2},
+        gfx::withAlpha(color(C::Shadow), 0.65f)
+    );
 }
 
 bool Dialog::onEvent(Event &e) {

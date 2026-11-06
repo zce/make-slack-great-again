@@ -251,7 +251,7 @@ private:
 //   Dialog(title, cardW)  a dialog: a 12-px card as tall as its content
 //                         (cardW 0: clamp(window − 80, min(480, …), 560)),
 //                         a bold ×1.45 title and a round close button over
-//                         rgba(0,0,0,140), a soft 40-px shadow; content() is
+//                         rgba(0,0,0,140), a restrained themed shadow; content() is
 //                         a column, 12 apart. The header and content() carry
 //                         the 28/24 padding, not the card, and the cross
 //                         lines up with content()'s right edge. An empty

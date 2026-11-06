@@ -41,6 +41,29 @@ struct Tipped : ui::Clickable {
 
 } // namespace
 
+TEST("popup: modal scrim respects transparent rounded client corners") {
+    Win w(500, 360);
+    w.w->setTransparentBackground(true);
+    w.w->setOverlayClip(10, 10);
+    auto *surface = w.root().add<ui::View>();
+    surface->style().margins(10, 10, 10, 10);
+    surface->setBackground(ui::C::Surface, 10);
+    auto dialog = std::make_unique<ui::Dialog>("Connect workspace", 360);
+    w.w->showPopup(std::move(dialog));
+    w.frame();
+
+    const auto alpha = [&](int x, int y) {
+        uint32_t pixel = 0;
+        hooks().readPixel(w.native(), x, y, &pixel);
+        return pixel >> 24;
+    };
+    CHECK(alpha(0, 0) == 0);
+    CHECK(alpha(499, 0) == 0);
+    CHECK(alpha(0, 359) == 0);
+    CHECK(alpha(499, 359) == 0);
+    CHECK(alpha(250, 180) == 255);
+}
+
 TEST("popup: the titled dialog — 560-wide card, Escape, backdrop and buttons") {
     Win   w(1000, 700);
     int   accepted = 0, rejected = 0;

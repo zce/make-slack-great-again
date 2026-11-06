@@ -973,7 +973,10 @@ Shell::Shell(
         win.setTransparentBackground(true);
         auto *frame = win.root().add<WindowFrame>();
         _windowFrame = frame;
-        frame->setRounded(!win.native().isMaximized() && !win.native().isFullscreen());
+        const bool rounded = !win.native().isMaximized() && !win.native().isFullscreen();
+        frame->setRounded(rounded);
+        win.setOverlayClip(rounded ? WindowFrame::kInset : 0,
+                           rounded ? WindowFrame::kRadius : 0);
         screen = frame;
     } else {
         screen = win.root().add<View>();
@@ -1610,8 +1613,8 @@ void Shell::syncWindowFrame() {
     const bool rounded = !_win.native().isMaximized() && !_win.native().isFullscreen();
     if (frame->rounded() != rounded) {
         frame->setRounded(rounded);
-        // Erase old shadow pixels when a compositor changes window state.
-        _win.damageAll();
+        _win.setOverlayClip(rounded ? WindowFrame::kInset : 0,
+                            rounded ? WindowFrame::kRadius : 0);
     }
 }
 

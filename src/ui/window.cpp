@@ -133,6 +133,17 @@ void Window::setTransparentBackground(bool on) {
     damageAll();
 }
 
+void Window::setOverlayClip(float inset, float radius) {
+    inset = std::max(0.f, inset);
+    radius = std::max(0.f, radius);
+    if (inset == _overlayClipInset && radius == _overlayClipRadius)
+        return;
+    _overlayClipInset = inset;
+    _overlayClipRadius = radius;
+    _blits.clear();
+    damageAll(); // clear an old scrim when the rounded edge changes
+}
+
 Window::~Window() {
     _dying = true;
     if (_tooltipTimer)
@@ -1030,6 +1041,21 @@ void Window::paintTree(View *v, gfx::Painter &p, RectF dmg, float ox, float oy) 
     p.restore();
 }
 
+void Window::paintOverlay(gfx::Painter &p, RectF damage) {
+    p.save();
+    if (_overlayClipRadius > 0) {
+        const SizeF sz = size();
+        const float inset = _overlayClipInset;
+        p.clipRoundRect(
+            {inset, inset, std::max(0.f, sz.w - 2 * inset),
+             std::max(0.f, sz.h - 2 * inset)},
+            _overlayClipRadius
+        );
+    }
+    paintTree(_overlay.get(), p, damage, 0, 0);
+    p.restore();
+}
+
 void Window::onFrame(bool requested) {
     const double t0 = app()->nowMs();
     _frameRequested = false;
@@ -1152,7 +1178,7 @@ void Window::onFrame(bool requested) {
             p.save();
             p.clipRect(lr);
             paintTree(_root.get(), p, lr, 0, 0);
-            paintTree(_overlay.get(), p, lr, 0, 0);
+            paintOverlay(p, lr);
             p.restore();
         }
         _stats.lastDamage.assign(rects.begin() + ptrdiff_t(shifted), rects.end());
@@ -1215,7 +1241,7 @@ bool Window::dumpFullRepaint(const std::string &path) {
     const RectF  all{0, 0, float(w) / s, float(h) / s};
     const int    painted = _stats.viewsPainted;
     paintTree(_root.get(), p, all, 0, 0);
-    paintTree(_overlay.get(), p, all, 0, 0);
+    paintOverlay(p, all);
     _stats.viewsPainted = painted;
     writePpm(path, full.pixels(), w, h, w);
     return true;
@@ -1253,7 +1279,7 @@ void Window::verifyFrame(const plat::Canvas &c, const std::vector<plat::Rect> &p
     const int    painted = _stats.viewsPainted;
     const RectF  all{0, 0, float(w) / s, float(h) / s};
     paintTree(_root.get(), p, all, 0, 0);
-    paintTree(_overlay.get(), p, all, 0, 0);
+    paintOverlay(p, all);
     _stats.viewsPainted = painted;
     int    bx0 = w, by0 = h, bx1 = -1, by1 = -1, maxDelta = 0;
     size_t diff = 0, noise = 0;
