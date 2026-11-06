@@ -6,4 +6,4 @@ Icon=msga
 Type=Application
 Categories=Network;InstantMessaging;
 StartupWMClass=msga
-MimeType=x-scheme-handler/msga;
+MimeType=x-scheme-handler/msga;x-scheme-handler/slack;
