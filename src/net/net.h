@@ -4,6 +4,8 @@
 // Windows, NSURLSession on macOS. Linux has no system HTTP library that a
 // static binary can rely on, so there it is our own HTTP/1.1 + WebSocket
 // client over mbedTLS (TLS 1.2/1.3 client only) with the system CA bundle.
+// Linux proxy selection uses HTTP(S)_PROXY/ALL_PROXY/NO_PROXY and GNOME
+// manual proxy settings when the environment is unset.
 //
 // Threading: every call here is made on the UI thread (the one running
 // plat::App). Blocking I/O happens on worker threads; callbacks always run
@@ -11,7 +13,7 @@
 // the call that started the work. Destroying a Client or WebSocket cancels
 // its work: no callback runs after the destructor returns.
 //
-// What it deliberately does not do: HTTP/2, proxies, compression (no
+// What it deliberately does not do: HTTP/2, compression (no
 // Accept-Encoding is sent, so servers answer uncompressed), a persistent
 // cookie jar. Redirects are followed here (not by the OS stack) so that a
 // Cookie header set by the caller survives the whole chain, together with
