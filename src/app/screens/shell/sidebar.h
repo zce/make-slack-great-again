@@ -111,6 +111,12 @@ public:
     const Sorts          &sorts() const { return _sorts; }
     std::function<void()> onSortsChanged;
     void                  setSort(const std::string &key, SectionSort sort);
+    // Workspace-local ordering of section *headers*, independent of the
+    // conversation order inside each section and of Slack's own web layout.
+    void                  setSectionOrder(std::vector<std::string> order);
+    const std::vector<std::string> &sectionOrder() const { return _sectionOrder; }
+    bool                  moveSection(const std::string &key, int step);
+    std::function<void()> onSectionOrderChanged;
     // A section's key: a custom one's id, "#starred", "#channels",
     // "#direct", "#apps" for the built-ins ("" for the Team).
     static std::string    sectionKey(int kind, const std::string &id);
@@ -233,6 +239,7 @@ private:
     Nav                      _navSelected = Nav::None;
     VisitStamps              _visited; // opened here (visit stamps)
     Sorts                    _sorts;
+    std::vector<std::string> _sectionOrder;
     Filters                  _filters;
     model::ConvRef           _selected        = model::kNoConv;
     model::Store::ObserverId _observer        = 0;
