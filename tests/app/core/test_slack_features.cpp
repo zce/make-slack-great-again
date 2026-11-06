@@ -872,6 +872,37 @@ TEST("slack features: custom sidebar sections — the list, moves, create, a ref
     CHECK(e.errors.back().find("section_not_found") != std::string::npos);
 }
 
+TEST("slack features: leaving a custom section restores Slack Connect grouping") {
+    if (!haveServer())
+        return;
+    Env e(R"({
+        "users.conversations": {"ok": true, "channels": [
+            {"id": "C1", "name": "partner", "is_member": true, "is_ext_shared": true},
+            {"id": "D1", "is_im": true, "user": "UMIRA", "is_ext_shared": true}],
+            "response_metadata": {"next_cursor": ""}},
+        "users.channelSections.list": {"ok": true, "channel_sections": [
+            {"channel_section_id": "L1", "type": "standard", "name": "Projects",
+             "channel_ids_page": {"channel_ids": ["C1", "D1"], "count": 2}},
+            {"channel_section_id": "LEXT", "type": "slack_connect", "name": "Externals",
+             "channel_ids_page": {"channel_ids": [], "count": 0}},
+            {"channel_section_id": "LCH", "type": "channels", "name": "Channels",
+             "channel_ids_page": {"channel_ids": [], "count": 0}}]}})");
+    REQUIRE(e.connect());
+    REQUIRE(pumpUntil([&] { return e.store.sections().size() == 1; }));
+    REQUIRE(e.store.sectionOf("C1") != nullptr);
+    e.be->moveToSection(e.conv("C1"), {});
+    e.be->moveToSection(e.conv("D1"), {});
+    REQUIRE(pumpUntil([] {
+        return count("users.channelSections.channels.bulkUpdate") == 2;
+    }));
+    const Log log;
+    for (int i = 0; i < 2; ++i) {
+        const json::Value form = log.get("users.channelSections.channels.bulkUpdate", i)["form"];
+        const std::string insert(form["insert"].str());
+        CHECK(insert.find(R"("channel_section_id":"LEXT")") != std::string::npos);
+    }
+}
+
 TEST("slack features: external sharing is not ordinary Grid sharing") {
     if (!haveServer())
         return;
