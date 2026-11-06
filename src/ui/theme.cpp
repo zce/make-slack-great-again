@@ -566,7 +566,9 @@ text::Style font(Font f, C c) {
 
 text::Style pxFont(float px, text::Weight w, Color c) {
     text::Style s = font(Font::Body);
-    s.size        = s.size * px / 15.f; // Body is 15 px here
+    // px is an absolute logical font size. Only inherit OS/app text preferences,
+    // not changes to the Body typography token (currently 16.5).
+    s.size        = s.size * px / kFonts[size_t(Font::Body)].size;
     s.weight      = w;
     s.color       = c;
     return s;
