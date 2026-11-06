@@ -35,6 +35,7 @@ namespace {
 // the text size), a 6 px inset above the first row, pills inset 8 px from the
 // list's edges; icons at kPadH, labels and conversation content at 32.
 constexpr float kRowHBase = 32, kTopPad = 8, kPill = 12, kPadH = 14, kContentX = 34;
+constexpr float kNavIndent = 6, kNavRowGap = 2;
 constexpr int   kAvatarPx = 40; // 20 logical, sharp at 2x
 
 float rowH() {
@@ -92,16 +93,21 @@ public:
     virtual void refreshLook() { update(); }
 };
 
-// "Threads" / "Saved messages": a pill like a conversation row, the icon
-// optically one notch smaller centred in the 14 px slot, the section face.
+// Overview destinations are navigation actions, not collapsible list
+// sections or conversation rows. Give them their own type scale and spacing.
 class NavRow final : public HoverRow {
 public:
     NavRow(Icon i, const char *text) : icon(i) {
-        pillRow(this);
-        label = add<Label>(text, Font::Section, C::SidebarTextMuted);
+        setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
+        setRole(Role::Button);
+        style().row().height(rowH()).margins(kPill, kNavRowGap, kPill, kNavRowGap).items(Align::Center);
+        style().padding(kContentX - kPill + kNavIndent, 0, 8, 0);
+        followTextRowHeight(this);
+        label = add<Label>(text, Font::Control, C::SidebarTextMuted);
         label->setMaxLines(1);
     }
     void refreshLook() override {
+        label->setFont(checked() || unread ? Font::ControlBold : Font::Control);
         label->setColor(ink(checked(), hovered() || unread));
         update();
     }
@@ -109,7 +115,8 @@ public:
         HoverRow::paint(p);
         const float s = 13, y = snapPx((height() - s) / 2);
         gfx::drawIcon(
-            p, icon, {kPadH - kPill + 0.5f, y, s, s}, color(ink(checked(), hovered() || unread))
+            p, icon, {kPadH - kPill + kNavIndent + 0.5f, y, s, s},
+            color(ink(checked(), hovered() || unread))
         );
     }
     Icon   icon;
@@ -927,6 +934,7 @@ void Sidebar::rebuild() {
     _sections.clear();
     _nav.clear();
     _navTitles.clear();
+    _navDivider       = nullptr;
     _savedRow         = nullptr;
     _threadsRow       = nullptr;
     _scheduledRow     = nullptr;
@@ -963,6 +971,10 @@ void Sidebar::rebuild() {
     if (!navRow(_navSelected))
         _navSelected = Nav::None;
     showNavSelection();
+    if (!_nav.empty()) {
+        _navDivider = _items->add<Separator>(false, C::SidebarHover);
+        _navDivider->style().margins(20, 12, 20, 10);
+    }
 
     // Starred first (any kind), then channels, direct messages, agents &
     // apps; fixture (= server) order inside each.
@@ -1598,6 +1610,12 @@ void Sidebar::refreshNav() {
     // "Scheduled messages" only while something waits to be posted.
     if (_scheduledRow)
         _scheduledRow->setVisible(_ctx.store().hasScheduled());
+    // A workspace with only optional overview pages may have no visible
+    // shortcuts. Avoid leaving a stray separator above Starred / Channels.
+    if (_navDivider)
+        _navDivider->setVisible(
+            std::any_of(_nav.begin(), _nav.end(), [](const View *r) { return r->visible(); })
+        );
 }
 
 bool Sidebar::scheduledShown() const {
