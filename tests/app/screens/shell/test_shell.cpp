@@ -4160,9 +4160,9 @@ TEST("title bar: controls take their presses, empty space drags the window") {
     pump();
     CHECK(hd.search()->enabled());
 #else
-    // The 22 px strip above the header: caption, but for its own buttons.
-    CHECK(search.y > 22);
-    CHECK(at(search) == H::Client);
+    // The conversation title is now part of the 48 px title strip.
+    CHECK(centre(hd.title()).y < 48);
+    CHECK(at(centre(hd.title())) == H::Client);
     CHECK(at({400, 11}) == H::Caption);
 #endif
 }

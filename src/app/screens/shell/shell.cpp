@@ -518,10 +518,26 @@ public:
             p.fillRect(bounds(), color(C::Sidebar));
         p.fillRoundRect({0, 0, width() - pad.r, height() - pad.b}, 12, color(C::Surface));
     }
+    // Mask children at each rounded corner; their rectangular backgrounds must
+    // not cover the inset pane's curved edge.
+    void paintOver(gfx::Painter &p) override {
+        const auto &pad = currentStyle().pad;
+        if (!pad.r || !pad.b) return;
+        const float w = width() - pad.r, h = height() - pad.b, r = 12;
+        const RectF corners[] = {{0, 0, r, r}, {w-r, 0, r, r},
+                                 {0, h-r, r, r}, {w-r, h-r, r, r}};
+        for (const auto &corner : corners) {
+            p.save();
+            p.clipRect(corner);
+            p.fillRect(corner, color(C::Sidebar));
+            p.fillRoundRect({0, 0, w, h}, r, color(C::Surface));
+            p.restore();
+        }
+    }
     void layout() override {
         const bool edge =
             window() && (window()->native().isMaximized() || window()->native().isFullscreen());
-        const float want = edge ? 0 : 4;
+        const float want = edge ? 0 : 6;
         if (currentStyle().pad.r != want || currentStyle().pad.b != want) {
             style().pad.r = want;
             style().pad.b = want;
@@ -926,33 +942,10 @@ Shell::Shell(
     _listHandle = body->add<ListHandle>(*_sidebar, [this](float width) {
 #ifndef __APPLE__
         if (_titleSidebar)
-            _titleSidebar->style().width(width + 42);
+            _titleSidebar->style().width(width + 4);
 #endif
     });
     buildMain(body);
-#ifndef __APPLE__
-    // The workspace selector replaces the old vertical rail. The entire
-    // switcher remains in the sidebar's footer, separate from the profile.
-    auto *switcher = _sidebar->add<Clickable>();
-    _workspaceSwitch = switcher;
-    switcher->style().row().height(52).margins(8, 0, 8, 8)
-        .padding(8, 4).spacing(8).items(Align::Center).noShrink();
-    switcher->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 8});
-    switcher->setBorder(C::SidebarHover);
-    switcher->setRole(Role::Button);
-    switcher->setTooltip(tr("Switch workspace"));
-    _workspaceAvatar = switcher->add<Avatar>();
-    _workspaceAvatar->style().size(32, 32).noShrink();
-    _workspaceAvatar->setRadius(7);
-    _workspaceAvatar->setPlaceholder(C::Accent);
-    _workspaceAvatar->setHitTransparent(true);
-    switcher->add<IconView>(Icon::ChevronDown, 16, C::SidebarTextMuted);
-    switcher->add<View>()->style().flex(1);
-    switcher->onClick = [this, switcher] {
-        const RectF r = switcher->windowRect();
-        showWorkspacePicker({r.x + 8, r.y});
-    };
-#endif
     // With no workspace signed in (setSignedIn(false)) this takes the
     // sidebar's and the main pane's place.
     _signedOut = body->add<InsetPane>();
@@ -1381,13 +1374,20 @@ void Shell::buildTitleBar(View *parent) {
     _titleBarH = kTitleBarH;
     _titleBar->style().row().height(kTitleBarH).noShrink().items(Align::Center);
     _titleSidebar = _titleBar->add<View>();
-    _titleSidebar->style().row().width(kListW + 42).height(kTitleBarH)
-        .padding(20, 0, 8, 0).spacing(3).items(Align::Center).noShrink();
+    _titleSidebar->style().row().width(kListW + 4).height(kTitleBarH)
+        .padding(12, 0, 5, 0).spacing(2).items(Align::Center).noShrink();
 
     auto *workspace = _titleSidebar->add<Clickable>();
     workspace->style().row().flex(1).spacing(5).items(Align::Center);
     workspace->setRole(Role::Button);
     workspace->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 6});
+    _workspaceAvatar = workspace->add<Avatar>();
+    _workspaceAvatar->style().size(22, 22).noShrink();
+    _workspaceAvatar->setRadius(5);
+    _workspaceAvatar->setPlaceholder(C::Accent);
+    _workspaceAvatar->setHitTransparent(true);
+    _workspaceAvatar->style().margins(0, 0, 4, 0);
+    _workspaceSwitch = workspace;
     _titleLabel = workspace->add<Label>(tr("msga"), Font::HeaderTitle, C::SidebarText);
     _titleLabel->setMaxLines(1);
     _titleLabel->style().shrink = 1;
@@ -1403,17 +1403,18 @@ void Shell::buildTitleBar(View *parent) {
         Icon::ChevronRight, 28, 16, C::SidebarTextMuted, tr("Forward"));
     forward->onClick = [this] { navigateHistory(false); };
 
-    _titleBar->add<View>()->style().flex(1);
+    // The conversation name now belongs to the main-pane portion of the title bar.
+    _header = _titleBar->add<ConvHeader>(_ctx, _avatars);
     auto *search = _titleBar->add<Clickable>();
     search->style().row().width(252).height(30).padding(12, 0).spacing(9)
         .items(Align::Center).noShrink();
     search->setLook({C::SidebarHover, C::SidebarSelected, C::SidebarSelected, C::None, 9});
     search->setRole(Role::Button);
-    search->setTooltip(tr("Quick switch"));
+    search->setTooltip(shortcuts::tip(tr("Search all"), shortcuts::Id::QuickSwitch));
     search->add<IconView>(Icon::Search, 16, C::SidebarTextMuted);
     search->add<Label>(tr("Search"), Font::Control, C::SidebarText);
     search->add<View>()->style().flex(1);
-    search->add<IconView>(Icon::Plus, 14, C::SidebarTextMuted);
+    search->add<Label>(shortcuts::nativeKeys(shortcuts::Id::QuickSwitch), Font::Small, C::SidebarTextMuted);
     search->onClick = [this] { showQuickSwitcher(); };
     _titleBar->add<View>()->style().width(24).noShrink();
 
@@ -1593,8 +1594,6 @@ void Shell::buildMain(View *parent) {
 #ifdef __APPLE__
     // The header is the unified title bar's.
     _header = _titleBar->add<ConvHeader>(_ctx, _avatars);
-#else
-    _header = _mainPane->add<ConvHeader>(_ctx, _avatars);
 #endif
     _header->onSearch     = [this] { openSearch(); };
     _tabs                 = _mainPane->add<ConvTabs>();
@@ -3150,7 +3149,7 @@ void Shell::updateRailVisible() {
         footer.setVisible(_signedIn);
     }
     if (_workspaceSwitch)
-        _workspaceSwitch->setVisible(_signedIn);
+        _workspaceSwitch->setVisible(true);
     _rail->setVisible(false);
 #else
     const bool show = _settings.showRail || !_signedIn || _waiting;
@@ -3215,7 +3214,7 @@ void Shell::refreshRail() {
         const std::string &name = _ctx.store().workspaceName;
         _titleLabel->setText(_signedIn && !name.empty() ? name : std::string(tr("msga")));
     }
-    if (_workspaceAvatar && _signedIn) {
+    if (_workspaceAvatar) {
         const std::string icon = workspaceIconPath();
         _workspaceAvatar->setBitmap(icon.empty() ? nullptr : _avatars.get(icon, 64));
         const std::string &name = _ctx.store().workspaceName;

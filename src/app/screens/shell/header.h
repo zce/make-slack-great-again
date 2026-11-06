@@ -57,6 +57,7 @@ private:
     Avatars                        &_avatars;
     HeaderAvatar                   *_avatar = nullptr;
     ui::Label                      *_title = nullptr, *_count = nullptr;
+    ui::Clickable                  *_titleButton = nullptr; // non-macOS title/menu trigger
     ui::Clickable                  *_members = nullptr, *_huddle = nullptr, *_search = nullptr;
     StarButton                     *_star = nullptr;
     model::ConvRef                  _conv = model::kNoConv;
