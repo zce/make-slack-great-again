@@ -37,7 +37,7 @@ std::string desktopEntry(const std::string &exePath, const std::string &icon) {
         "Type=Application\n"
         "Categories=Network;InstantMessaging;\n"
         "StartupWMClass=msga\n"
-        "MimeType=x-scheme-handler/msga;\n",
+        "MimeType=x-scheme-handler/msga;x-scheme-handler/slack;\n",
     });
 }
 
