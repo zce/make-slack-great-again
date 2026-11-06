@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  translation-snapshot:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Export regenerated catalogs (one-time maintainer snapshot)
+        run: |
+          python3 src/tools/i18n.py update
+          echo 'I18N_JA_BEGIN'
+          base64 -w 152 src/app/i18n/ja.po
+          echo 'I18N_JA_END'
+          echo 'I18N_CPP_BEGIN'
+          base64 -w 152 src/app/i18n/languages_generated.cpp
+          echo 'I18N_CPP_END'
   linux:
     name: ${{ matrix.runner }} / ${{ matrix.compiler }}
     strategy:
