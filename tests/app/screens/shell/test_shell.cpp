@@ -3080,6 +3080,26 @@ uint64_t lastNotification(plat::TestHooks::NotificationProbe *out) {
 
 } // namespace
 
+TEST("global search: message matches include background workspaces without changing tabs") {
+    TwoWorkspaces w;
+    w.post(w.b, "C0GENERAL", "unique-cross-workspace-search-token");
+    w.sh->showQuickSwitcher();
+    auto *search = w.sh->quickSwitcher();
+    REQUIRE(search);
+    CHECK(search->tab() == 0);
+    search->field().setText("unique-cross-workspace-search-token");
+    for (int i = 0; i < 1000 && search->messageResults().empty(); ++i) pump(5);
+    REQUIRE(!search->messageResults().empty());
+    CHECK(search->tab() == 0); // tab only scopes quick navigation, not message search
+    CHECK(search->messageResults()[0].workspace == 1);
+    CHECK(search->messageResults()[0].hit.conv == w.b.findConversation("C0GENERAL"));
+    search->choose(0); // first result is the message, even when a channel also matches
+    pump();
+    REQUIRE(w.switched.size() == 1);
+    CHECK_STR(w.switched[0], kKeyB);
+    CHECK(w.sh->current() == w.b.findConversation("C0GENERAL"));
+}
+
 TEST("workspaces: a background workspace notifies, its name first; the click goes there") {
     TwoWorkspaces  w;
     const uint64_t before = lastNotification(nullptr);
