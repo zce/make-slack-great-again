@@ -1318,8 +1318,24 @@ bool Sidebar::moveSection(const std::string &key, int step) {
     const size_t i = size_t(it - order.begin());
     if ((step < 0 && i == 0) || (step > 0 && i + 1 == order.size()))
         return false;
+    const SectionHeader *moving = _sections[i];
+    const SectionHeader *neighbor = _sections[size_t(int(i) + step)];
     std::swap(order[i], order[size_t(int(i) + step)]);
     _sectionOrder = std::move(order);
+    // Keep the existing Slack sync when moving one custom section directly
+    // past another. Built-in and cross-kind moves are local until the
+    // undocumented API's system-section write contract is verified.
+    if (moving->kind == 5 && neighbor->kind == 5) {
+        const auto &server = _ctx.store().sections();
+        const auto find = [&](const std::string &id) {
+            return std::find_if(server.begin(), server.end(), [&](const auto &s) {
+                return s.id == id;
+            });
+        };
+        const auto a = find(moving->sectionId), b = find(neighbor->sectionId);
+        if (a != server.end() && b != server.end() && b - a == step)
+            _ctx.backend.moveSection(moving->sectionId, step);
+    }
     rebuildSoon(false); // the menu's clicked header may still be on the stack
     if (onSectionOrderChanged)
         onSectionOrderChanged();
