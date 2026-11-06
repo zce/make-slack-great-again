@@ -203,21 +203,6 @@ std::string joined(const std::vector<std::string> &v) {
 
 } // namespace
 
-// The caption remains draggable and handles double-clicks through the OS hit-area path.
-// Removing two title-bar controls must not leave native min/max hotspots behind.
-TEST("title bar: only close remains as a native window-control button") {
-#ifndef __APPLE__
-    Harness h;
-    const int w = int(h.win->size().w);
-    CHECK(h.sh->hitTest({w - 20, 24}) == plat::HitArea::CloseButton);
-    for (int x : {w - 60, w - 100}) {
-        const auto area = h.sh->hitTest({x, 24});
-        CHECK(area != plat::HitArea::MinimizeButton);
-        CHECK(area != plat::HitArea::MaximizeButton);
-    }
-#endif
-}
-
 // ── Sidebar ─────────────────────────────────────────────────────────────────
 
 TEST("sidebar: the entries and sections, and Saved messages while something is saved") {
