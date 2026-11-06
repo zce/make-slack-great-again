@@ -1056,8 +1056,13 @@ TEST("slack: on Grid the org's methods go with the org token and the workspace's
     slack::Auth plain{"xoxc-ws", "xoxd-c"}; // off Grid: no org token
     slack::apiCall(client, plain, "client.counts", {}, count);
     REQUIRE(pumpUntil([&] { return done == 4; }));
-    const Log         log;
-    const json::Value counts = log.get("client.counts", 0);
+    const Log log;
+    // Concurrent API calls may reach the fake server in either order.
+    // Match responses by token instead of relying on arrival order.
+    const json::Value firstCount = log.get("client.counts", 0);
+    const json::Value secondCount = log.get("client.counts", 1);
+    const bool firstIsOrg = firstCount["auth"].str() == "Bearer xoxc-org";
+    const json::Value counts = firstIsOrg ? firstCount : secondCount;
     CHECK_STR(counts["auth"].str(), "Bearer xoxc-org");
     CHECK_STR(counts["cookie"].str(), "d=xoxd-c");
     CHECK_STR(counts["form"]["team_id"].str(), "T1");
@@ -1070,7 +1075,7 @@ TEST("slack: on Grid the org's methods go with the org token and the workspace's
     const json::Value history = log.get("conversations.history");
     CHECK_STR(history["auth"].str(), "Bearer xoxc-ws");
     CHECK(history["form"]["team_id"].str().empty());
-    const json::Value offGrid = log.get("client.counts", 1);
+    const json::Value offGrid = firstIsOrg ? secondCount : firstCount;
     CHECK_STR(offGrid["auth"].str(), "Bearer xoxc-ws");
     CHECK(offGrid["form"]["team_id"].str().empty());
 }
