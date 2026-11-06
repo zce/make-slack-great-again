@@ -3429,10 +3429,6 @@ msgstr "次の会話"
 msgid "Close dialog or window"
 msgstr "ダイアログまたはウィンドウを閉じる"
 
-#: src/app/screens/shell/shortcuts.cpp
-msgid "Remove idle session from msga"
-msgstr "待機中のセッションをmsgaから削除"
-
 #: src/app/screens/shell/sidebar.cpp
 msgid "Add channels"
 msgstr "チャンネルを追加"
@@ -4128,6 +4124,9 @@ msgstr "ダウンロードに失敗しました: %1"
 #: src/app/update/updater.cpp
 msgid "Downloaded update is corrupt (checksum mismatch)."
 msgstr "ダウンロードした更新ファイルが破損しています（チェックサム不一致）。"
+
+#~ msgid "Remove idle session from msga"
+#~ msgstr "待機中のセッションをmsgaから削除"
 
 #~ msgid "Just now"
 #~ msgstr "たった今"
