@@ -1458,15 +1458,7 @@ void Shell::buildTitleBar(View *parent) {
         _pinBtn          = chrome(Icon::PinOff, tr("Pin window on top"), false);
         _pinBtn->onClick = [this] { togglePin(); };
     }
-    _minBtn          = chrome(Icon::WcMinimize, tr("Minimize"), false);
-    _maxBtn          = chrome(Icon::WcMaximize, tr("Maximize"), false);
     _closeBtn        = chrome(Icon::WcClose, tr("Close"), true);
-    _minBtn->onClick = [this] { minimize(); };
-    _maxBtn->onClick = [this] {
-        const bool maxed = !_win.native().isMaximized();
-        _win.native().setMaximized(maxed);
-        _maxBtn->setIcon(maxed ? Icon::WcRestore : Icon::WcMaximize);
-    };
     _closeBtn->onClick = [this] {
         if (_win.onCloseRequested)
             _win.onCloseRequested();
@@ -1535,11 +1527,8 @@ void Shell::togglePin() {
     updateTitleButtons();
 }
 
-// The pin red while pinned, its
-// tooltip the action a click takes; the restore glyph while maximized.
+// The pin turns red while pinned, and its tooltip describes the next action.
 void Shell::updateTitleButtons() {
-    if (_maxBtn)
-        _maxBtn->setIcon(_win.native().isMaximized() ? Icon::WcRestore : Icon::WcMaximize);
     if (_pinBtn) {
         const bool pinned = _win.native().isAlwaysOnTop();
         _pinBtn->setIcon(pinned ? Icon::Pin : Icon::PinOff);
@@ -3713,10 +3702,6 @@ plat::HitArea Shell::hitTest(plat::Point p) const {
 #endif
     if (_pinBtn && _pinBtn->windowRect().contains(pt))
         return H::Client;
-    if (_minBtn && _minBtn->windowRect().contains(pt))
-        return H::MinimizeButton;
-    if (_maxBtn && _maxBtn->windowRect().contains(pt))
-        return H::MaximizeButton;
     if (_closeBtn && _closeBtn->windowRect().contains(pt))
         return H::CloseButton;
     // Title-bar controls are client input, not window-drag targets.

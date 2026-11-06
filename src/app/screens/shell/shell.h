@@ -446,7 +446,7 @@ private:
     bool                   _haveWorkspaces = false; // setWorkspaces was called
     ui::View              *_listHandle = nullptr, *_signedOut = nullptr, *_addBtn = nullptr;
     bool                   _signedIn = true;
-    ui::Button    *_pinBtn = nullptr, *_minBtn = nullptr, *_maxBtn = nullptr, *_closeBtn = nullptr;
+    ui::Button    *_pinBtn = nullptr, *_closeBtn = nullptr;
     ui::Clickable *_prefsBtn                = nullptr;
     ConvHeader    *_header                  = nullptr;
     ConvTabs      *_tabs                    = nullptr;
