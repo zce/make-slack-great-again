@@ -16,11 +16,26 @@ concurrency:
 
 jobs:
   linux:
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.runner }} / ${{ matrix.compiler }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Keep the PR binary compatible with Ubuntu 24.04's glibc/runtime.
+          - runner: ubuntu-24.04
+            compiler: gcc
+            artifact: true
+          # Exercise the current LTS libraries and newer Clang toolchain.
+          - runner: ubuntu-26.04
+            compiler: clang
+            artifact: false
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
+      CC: ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }}
+      CXX: ${{ matrix.compiler == 'clang' && 'clang++' || 'g++' }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 600M
     steps:
@@ -44,8 +59,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-ubuntu2404-v1-${{ github.sha }}
-          restore-keys: ccache-ubuntu2404-v1-
+          key: ccache-${{ matrix.runner }}-${{ matrix.compiler }}-v2-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.runner }}-${{ matrix.compiler }}-v2-
       - name: Configure
         run: |
           cmake -S . -B build-ci -G Ninja \
@@ -64,7 +79,7 @@ jobs:
       # GitHub Actions artifacts are already downloaded as ZIP archives.
       # Upload the executable directly to avoid a ZIP containing a .tar.gz.
       - name: Prepare pull request test build
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && matrix.artifact
         run: |
           set -euo pipefail
           mkdir -p dist
