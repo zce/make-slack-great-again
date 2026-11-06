@@ -560,7 +560,12 @@ void WlWindow::onConfigure(uint32_t serial) {
     _configured        = true;
     const bool resized = s.w != _size.w || s.h != _size.h;
     _size              = s;
-    if (resized)
+    // A fractional-scale preference can arrive before the first configure.
+    // updateScale() intentionally does not emit Resized while unconfigured,
+    // so the UI can still have its initial 1x text/layout cache even though
+    // the Wayland canvas is already at 1.5x or 2x. Always synchronize it on
+    // the first configure, even when the compositor kept our requested size.
+    if (first || resized)
         emitEvent({.type = EventType::Resized});
     if (stateChanged)
         emitEvent({.type = EventType::StateChanged});
