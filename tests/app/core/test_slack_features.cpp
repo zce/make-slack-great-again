@@ -810,11 +810,14 @@ TEST("slack features: custom sidebar sections — the list, moves, create, a ref
     {
         const Log   sets;
         json::Value r = sets.get("users.channelSections.set", 0)["form"];
+        json::Value m = sets.get("users.channelSections.set", 1)["form"];
+        // The backend issues these independent requests asynchronously; the
+        // fake server may receive the move before the rename.
+        if (r["channel_section_id"].str() != "L1") std::swap(r, m);
         CHECK_STR(std::string(r["channel_section_id"].str()), "L1");
         CHECK_STR(std::string(r["name"].str()), "Work");
         CHECK_STR(std::string(r["emoji"].str()), "fire");
         CHECK_FALSE(r.has("next_channel_section_id")); // invalid_arguments on a rename
-        json::Value m = sets.get("users.channelSections.set", 1)["form"];
         CHECK_STR(std::string(m["channel_section_id"].str()), "L2");
         CHECK_STR(std::string(m["name"].str()), "Later");
         CHECK(m.has("emoji") && m["emoji"].str().empty());
