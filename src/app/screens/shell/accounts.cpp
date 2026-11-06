@@ -320,15 +320,43 @@ void Accounts::clearLink() {
     _linkObserver = 0;
     _linkKey.clear();
     _link = {};
+    _nativeLink = {};
 }
 
 void Accounts::tryOpenLink() {
-    if (!_link.valid() || !_linkStore || !_active || _activeKey != _linkKey)
+    if ((!_link.valid() && !_nativeLink.valid()) || !_linkStore ||
+        !_active || _activeKey != _linkKey)
         return;
-    const model::ConvRef conv = _active->store.findConversation(_link.conv);
+    model::Store &store = _active->store;
+
+    if (_nativeLink.valid()) {
+        if (_nativeLink.kind == mrkdwn::NativeLinkKind::Channel) {
+            const model::ConvRef conv = store.findConversation(_nativeLink.id);
+            if (conv == model::kNoConv)
+                return; // The initial roster may still be loading.
+            if (!store.conversation(conv).member) {
+                if (!_active->live)
+                    return;
+                clearLink();
+                return;
+            }
+            clearLink();
+            _shell.open(conv);
+        } else if (_nativeLink.kind == mrkdwn::NativeLinkKind::User) {
+            const model::UserRef user = store.findUser(_nativeLink.id);
+            if (user == model::kNoUser)
+                return; // User roster not loaded yet.
+            clearLink();
+            if (_ctx.messageUser)
+                _ctx.messageUser(user); // Existing DM creation/opening flow.
+        }
+        return;
+    }
+
+    const model::ConvRef conv = store.findConversation(_link.conv);
     if (conv == model::kNoConv)
         return; // The initial roster may still be loading.
-    if (!_active->store.conversation(conv).member) {
+    if (!store.conversation(conv).member) {
         if (!_active->live)
             return; // A placeholder can precede the first full roster.
         clearLink();
@@ -347,57 +375,82 @@ void Accounts::tryOpenLink() {
 bool Accounts::handleUrl(std::string_view url) {
     if (_oauth && _oauth->handleCallback(url))
         return true;
-    const mrkdwn::MessageRef ref = mrkdwn::parseAppLink(url);
-    if (!ref.valid() || !model::parseTs(ref.ts) ||
-        (!ref.threadTs.empty() && !model::parseTs(ref.threadTs)))
+    const mrkdwn::NativeLink native = mrkdwn::parseNativeLink(url);
+    // Passing an ordinary Slack permalink on the command line should work
+    // without a conversion to msga://. No global HTTPS handler is installed.
+    const mrkdwn::MessageRef ref =
+        native.valid() ? mrkdwn::MessageRef{} :
+        str::startsWith(url, "https://") ? mrkdwn::parseMessageLink(url) :
+                                           mrkdwn::parseAppLink(url);
+    if (!native.valid() &&
+        (!ref.valid() || !model::parseTs(ref.ts) ||
+         (!ref.threadTs.empty() && !model::parseTs(ref.threadTs))))
         return false;
 
-    // Resolve by the Slack team's hostname, not by channel ID alone: channel
-    // IDs are not a cross-workspace routing authority.
     std::string key;
-    int unknown = 0;
-    std::string loneUnknown;
-    for (const auto &record : _store.all()) {
-        if (record.service != slack::kService)
-            continue;
-        const Running *running = find(record.key());
-        const std::string workspaceUrl = running && !running->store.workspaceUrl.empty()
-                                    ? running->store.workspaceUrl
-                                    : slack::fromRecord(record).workspaceUrl;
-        if (ref.host.empty()) {
-            if (record.hasKey(_activeKey))
+    if (native.valid()) {
+        // Official slack:// links use workspace IDs rather than hostnames.
+        if (!native.team.empty()) {
+            key = std::string(slack::kService) + ":" + native.team;
+            if (!_store.find(key))
+                return false;
+        } else {
+            const auth::WorkspaceRecord *active = _store.find(_activeKey);
+            if (active && active->service == slack::kService)
+                key = _activeKey;
+        }
+    } else {
+        // Resolve permalinks by the Slack workspace hostname, not by channel
+        // ID alone (which is not a cross-workspace routing authority).
+        int unknown = 0;
+        std::string loneUnknown;
+        for (const auto &record : _store.all()) {
+            if (record.service != slack::kService)
+                continue;
+            const Running *running = find(record.key());
+            const std::string workspaceUrl = running && !running->store.workspaceUrl.empty()
+                                                 ? running->store.workspaceUrl
+                                                 : slack::fromRecord(record).workspaceUrl;
+            if (ref.host.empty()) {
+                if (record.hasKey(_activeKey))
+                    key = record.key();
+                continue;
+            }
+            if (workspaceUrl.empty()) {
+                ++unknown;
+                loneUnknown = record.key();
+                continue;
+            }
+            std::string_view host = workspaceUrl;
+            const size_t scheme = host.find("://");
+            if (scheme != std::string_view::npos)
+                host.remove_prefix(scheme + 3);
+            host = host.substr(0, host.find_first_of("/?#"));
+            if (str::iequals(host, ref.host)) {
                 key = record.key();
-            continue;
+                break;
+            }
         }
-        if (workspaceUrl.empty()) {
-            ++unknown;
-            loneUnknown = record.key();
-            continue;
+        // An OAuth workspace can initially have no URL. Fallback only when it
+        // is the sole candidate; never route to a known different hostname.
+        if (key.empty() && !ref.host.empty() && unknown == 1) {
+            int slackCount = 0;
+            for (const auto &record : _store.all())
+                slackCount += record.service == slack::kService;
+            if (slackCount == 1)
+                key = loneUnknown;
         }
-        std::string_view host = workspaceUrl;
-        const size_t scheme = host.find("://");
-        if (scheme != std::string_view::npos)
-            host.remove_prefix(scheme + 3);
-        host = host.substr(0, host.find_first_of("/?#"));
-        if (str::iequals(host, ref.host)) {
-            key = record.key();
-            break;
-        }
-    }
-    // An OAuth workspace can initially have no URL. Fallback only when it
-    // is the sole candidate; never route to a known different hostname.
-    if (key.empty() && !ref.host.empty() && unknown == 1) {
-        int slackCount = 0;
-        for (const auto &record : _store.all())
-            slackCount += record.service == slack::kService;
-        if (slackCount == 1)
-            key = loneUnknown;
     }
     if (key.empty())
         return false;
 
     clearLink();
+    if (native.kind == mrkdwn::NativeLinkKind::Open) {
+        activate(key);
+        return _active && _activeKey == key;
+    }
     _link = ref;
+    _nativeLink = native;
     _linkKey = key;
     activate(key);
     Running *r = find(key);
@@ -408,7 +461,8 @@ bool Accounts::handleUrl(std::string_view url) {
     _linkStore = &r->store;
     _linkObserver = r->store.observe(model::Store::kAnyConv, [this](const model::Change &change) {
         if (change.kind == model::ChangeKind::Roster ||
-            change.kind == model::ChangeKind::Meta)
+            change.kind == model::ChangeKind::Meta ||
+            change.kind == model::ChangeKind::Users)
             tryOpenLink();
     });
     tryOpenLink();
@@ -702,6 +756,7 @@ void Accounts::connect(uint64_t serial) {
                 // when the workspace opened; nothing open yet means do it now.
                 if (first && _shell.current() == model::kNoConv)
                     restoreLast(*r);
+                tryOpenLink();
             }
             return;
         }
