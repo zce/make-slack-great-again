@@ -388,7 +388,7 @@ int main(int argc, char **argv) {
         demoBackend->setFixture(demo, 0);
         backend.setTarget(*demoBackend);
     }
-    const bool demoMode = demoBackend.has_value();    const bool demoMode = demoBackend || demoClaude;
+    const bool demoMode = demoBackend.has_value();
 #else
     const bool demoMode = false;
 #endif
