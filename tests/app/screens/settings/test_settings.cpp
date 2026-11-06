@@ -700,6 +700,13 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     );
     CHECK_FALSE(h.ctx.linkPreviews);
     CHECK(h.settings.relevantDays == 16);
+    // Settings are saved on a worker. The in-memory draft applies at once,
+    // but the file may not be flushed when the Save click returns.
+    REQUIRE(until([&] {
+        const shell::Settings loaded = shell::Settings::load(path);
+        return loaded.fontSize == 2 && loaded.use24h && !loaded.linkPreviews &&
+               loaded.relevantDays == 16 && loaded.names == 2;
+    }));
     const shell::Settings r = shell::Settings::load(path);
     CHECK(r.fontSize == 2 && r.use24h && !r.linkPreviews && r.relevantDays == 16);
     CHECK(h.settings.names == 2 && r.names == 2);
