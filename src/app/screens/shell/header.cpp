@@ -304,11 +304,11 @@ ConvHeader::ConvHeader(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _av
     actions->style().items(Align::Center);
     actions->add<View>()->style().flex(1);
 #else
-    // The title bar owns this view on non-macOS. Keep the name and star
-    // together on the left, and the huddle beside the global search.
+    // The title bar owns the conversation name and star on non-macOS.
+    // Huddle is reparented into the tabs' right-hand action area by Shell.
     // The title's hit area starts 8 px before its text; keep the text
     // aligned with the content pane's original 16 px inset.
-    style().row().height(48).padding(8, 0, 0, 0).spacing(4)
+    style().row().height(46).padding(8, 0, 0, 0).spacing(4)
         .items(Align::Center).flex(1);
     View *heading = this, *actions = this;
 #endif

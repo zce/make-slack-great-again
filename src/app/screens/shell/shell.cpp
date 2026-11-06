@@ -76,7 +76,7 @@ namespace {
 // does not say how tall its title bar is.
 constexpr float kMacTitleBarH = 38;
 #else
-constexpr float kTitleBarH = 48; // integrated title and toolbar
+constexpr float kTitleBarH = 46; // compact integrated title and toolbar (48 px maximum)
 #endif
 constexpr float kRailW = 64;
 constexpr float kListW = 248, kListMinW = 180, kListMaxW = 400;
@@ -507,9 +507,8 @@ private:
     float _startX = 0, _startW = 0;
 };
 
-// The windowed frame: the right panel keeps 4 px off the window's right and
-// bottom edges unless maximized or full screen, and the rail colour shows
-// there (a nav-coloured margin).
+// Keep the content pane framed in every window state, including maximized
+// and fullscreen; the inset exposes the current sidebar theme behind it.
 class InsetPane final : public View {
 public:
     void paint(gfx::Painter &p) override {
@@ -535,9 +534,8 @@ public:
         }
     }
     void layout() override {
-        const bool edge =
-            window() && (window()->native().isMaximized() || window()->native().isFullscreen());
-        const float want = edge ? 0 : 6;
+        // Fullscreen uses the same inset and corner treatment as windowed mode.
+        constexpr float want = 6;
         if (currentStyle().pad.r != want || currentStyle().pad.b != want) {
             style().pad.r = want;
             style().pad.b = want;
@@ -1394,7 +1392,10 @@ void Shell::buildTitleBar(View *parent) {
         .padding(12, 0, 5, 0).spacing(2).items(Align::Center).noShrink();
 
     auto *workspace = _titleSidebar->add<Clickable>();
-    workspace->style().row().flex(1).spacing(5).items(Align::Center);
+    // Match the conversation-name hover height without consuming the title
+    // bar's full height. Extra leading padding balances the logo visually.
+    workspace->style().row().height(34).flex(1).padding(8, 0, 4, 0)
+        .spacing(5).items(Align::Center);
     workspace->setRole(Role::Button);
     workspace->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 6});
     _workspaceAvatar = workspace->add<Avatar>();
@@ -1414,9 +1415,11 @@ void Shell::buildTitleBar(View *parent) {
     };
     auto back = _titleSidebar->add<GlyphButton>(
         Icon::ChevronLeft, 28, 16, C::SidebarTextMuted, tr("Back"));
+    back->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 7});
     back->onClick = [this] { navigateHistory(true); };
     auto forward = _titleSidebar->add<GlyphButton>(
         Icon::ChevronRight, 28, 16, C::SidebarTextMuted, tr("Forward"));
+    forward->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 7});
     forward->onClick = [this] { navigateHistory(false); };
 
     // The conversation name now belongs to the main-pane portion of the title bar.
@@ -1431,7 +1434,7 @@ void Shell::buildTitleBar(View *parent) {
     search->add<View>()->style().flex(1);
     search->add<Label>(shortcuts::nativeKeys(shortcuts::Id::QuickSwitch), Font::Small, C::SidebarTextMuted);
     search->onClick = [this] { showQuickSwitcher(); };
-    _titleBar->add<View>()->style().width(24).noShrink();
+    _titleBar->add<View>()->style().width(16).noShrink();
 
     _titleActions = _titleBar->add<View>();
     // Only the existing profile/presence control is adopted here; its menu
@@ -1444,7 +1447,9 @@ void Shell::buildTitleBar(View *parent) {
 #ifndef __APPLE__ // macOS keeps its traffic lights
     auto chrome = [&](Icon icon, const char *tip, bool danger) {
         auto *b = _titleBar->add<IconButton>(icon, tip);
-        b->style().size(40, kTitleBarH);
+        // A centred 34 px hover target, consistent with the title pill.
+        // The close button alone gets the theme's danger hover.
+        b->style().size(32, 34).margins(0, 0, 8, 0);
         b->setIconSize(12);
         b->setTextColor(C::TitleBarControl);
         b->setLook(
@@ -1452,7 +1457,7 @@ void Shell::buildTitleBar(View *parent) {
              danger ? C::Danger : C::SidebarHover,
              danger ? C::Danger : C::SidebarHover,
              C::None,
-             0}
+             7}
         );
         b->setFocusable(false);
         return b;
@@ -1590,6 +1595,18 @@ void Shell::buildMain(View *parent) {
 #endif
     _header->onSearch     = [this] { openSearch(); };
     _tabs                 = _mainPane->add<ConvTabs>();
+#ifndef __APPLE__
+    // A dedicated right-aligned action area within the existing tabs strip.
+    // Reparent the original huddle button rather than duplicating its click
+    // handler or capability/visibility state in the shell.
+    _tabs->add<View>()->style().flex(1);
+    auto *tabActions = _tabs->add<View>();
+    tabActions->style().row().height(38).padding(0, 0, 16, 0)
+        .spacing(6).items(Align::Center).noShrink();
+    auto *huddle = _header->huddle();
+    tabActions->adopt(_header->remove(huddle));
+    huddle->style().margins(0, 0, 0, 0);
+#endif
     _tabs->onSelect       = [this](int tab) { showCanvas(tab == 1); };
     // The huddle banner: under the tabs, over the messages.
     _huddleBanner         = _mainPane->add<HuddleBanner>();

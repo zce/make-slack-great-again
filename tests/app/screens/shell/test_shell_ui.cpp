@@ -203,6 +203,25 @@ std::string joined(const std::vector<std::string> &v) {
 
 } // namespace
 
+
+// The integrated title row stays compact, and conversation-only actions
+// live beside the tabs rather than increasing title-bar density.
+TEST("title layout: huddle belongs to tab actions, title controls stay compact") {
+#ifndef __APPLE__
+    Harness h;
+    h.backend.huddles = true;
+    h.sh->header().refresh();
+    pump();
+    CHECK(h.sh->titleBarHeight() <= 48);
+    CHECK(h.sh->workspaceSwitcher()->height() == 34);
+    const ui::View *huddle = h.sh->header().huddle();
+    REQUIRE(huddle->parent() != nullptr);
+    CHECK(huddle->parent()->parent() == &h.sh->tabs());
+    CHECK(huddle->visible());
+    CHECK(huddle->windowRect().y >= h.sh->titleBarHeight());
+#endif
+}
+
 // ── Sidebar ─────────────────────────────────────────────────────────────────
 
 TEST("sidebar: the entries and sections, and Saved messages while something is saved") {
