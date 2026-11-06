@@ -1483,7 +1483,7 @@ msgstr "ライト %1"
 msgid "Choose emoji"
 msgstr "絵文字を選択"
 
-#: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/shell.cpp
+#: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/sidebar_footer.cpp
 msgid "Settings"
 msgstr "設定"
 
@@ -3545,6 +3545,14 @@ msgstr "プロフィールを管理"
 #: src/app/screens/shell/sidebar_footer.cpp
 msgid "Manage status"
 msgstr "ステータスを管理"
+
+#: src/app/screens/shell/sidebar_footer.cpp
+msgid "Appear active"
+msgstr ""
+
+#: src/app/screens/shell/sidebar_footer.cpp
+msgid "Appear away"
+msgstr ""
 
 #: src/app/screens/shell/sidebar_footer.cpp
 msgid "Show workspaces"

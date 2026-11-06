@@ -33,9 +33,13 @@ public:
     ~SidebarFooter() override;
 
     void refresh(); // my avatar, presence and the toggle from the Store/backend
+    // Reuse this control in the Activity Bar; if it is hidden, move it back
+    // to the sidebar so profile and settings remain accessible.
+    void setInRail(bool inRail);
+    bool inRail() const { return _inRail; }
 
     // The avatar menu's items; unset ones show disabled.
-    std::function<void()>        onManageProfile, onManageStatus;
+    std::function<void()>        onManageProfile, onManageStatus, onOpenSettings;
     // The zen toggle was clicked; `on` is the new state (already shown).
     std::function<void(bool on)> onZenToggled;
     void                         setZenOn(bool on);
@@ -72,6 +76,7 @@ private:
     screens::Context       &_ctx;
     Avatars                &_avatars;
     ui::Clickable          *_avatarBtn    = nullptr;
+    ui::View               *_spacer       = nullptr;
     Avatar                 *_avatar       = nullptr;
     PresenceToggle         *_toggle       = nullptr;
     GhostButton            *_zen          = nullptr;
@@ -80,6 +85,7 @@ private:
     model::Jobs::ObserverId _jobsObserver = 0;
     bool                    _zenOn        = false;
     bool                    _railShown    = true;
+    bool                    _inRail       = false;
     plat::TimerId           _confirm      = 0; // settle back if the service never answers
 };
 

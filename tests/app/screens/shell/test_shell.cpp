@@ -3226,6 +3226,23 @@ TEST("Slack workspaces do not expose Claude's zen-mode toggle") {
     CHECK_FALSE(f.zenToggle()->visible());
 }
 
+TEST("activity bar: profile avatar frees sidebar space and survives rail toggle") {
+    TwoWorkspaces w;
+    auto &f = w.sh->sidebar().footer();
+    REQUIRE(f.parent() == w.sh->rail());
+    CHECK(f.inRail());
+    CHECK(f.avatarButton()->visible());
+    CHECK_FALSE(f.toggle()->visible());
+    f.toggleRail();
+    CHECK_FALSE(w.sh->rail()->visible());
+    CHECK(f.parent() == &w.sh->sidebar());
+    CHECK_FALSE(f.inRail());
+    f.toggleRail();
+    CHECK(w.sh->rail()->visible());
+    CHECK(f.parent() == w.sh->rail());
+    CHECK(f.inRail());
+}
+
 TEST("header: names, presence, DND and my phantom state follow the Store") {
     TwoWorkspaces w;
     Store        &st   = w.a;

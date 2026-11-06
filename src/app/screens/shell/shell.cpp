@@ -946,6 +946,7 @@ Shell::Shell(
         };
     };
     _sidebar->footer().onManageProfile = [this] { ProfileDialog::show(_win, _ctx, _avatars); };
+    _sidebar->footer().onOpenSettings  = [this] { openSettings(); };
     _sidebar->footer().onError         = [this](const std::string &message) { showError(message); };
     _sidebar->footer().setRailShown(_settings.showRail);
     _sidebar->footer().onRailToggled = [this](bool shown) {
@@ -1464,8 +1465,8 @@ void Shell::updateTitleButtons() {
     }
 }
 
-// The workspace switcher: the bubble 16 px from the top, the ghost "+" 16
-// under it, the gear 14 px above the bottom; tooltips to the right.
+// The workspace switcher: tiles at the top, the account avatar at the bottom
+// (the settings gear remains when signed out); tooltips to the right.
 void Shell::buildRail(View *parent) {
     _rail = parent->add<Rail>();
     _rail->style().width(kRailW).noShrink().padding(0, 16, 0, 14).items(Align::Center);
@@ -3057,7 +3058,20 @@ int Shell::workspaceDot(const std::string &key) const {
 // (its footer's avatar menu brings the rail back) is not: signed out or
 // waiting, the rail is the only way to another workspace or a new one.
 void Shell::updateRailVisible() {
-    _rail->setVisible(_settings.showRail || !_signedIn || _waiting);
+    const bool show = _settings.showRail || !_signedIn || _waiting;
+    if (_sidebar) {
+        SidebarFooter &footer = _sidebar->footer();
+        View *destination = show ? _rail : static_cast<View *>(_sidebar);
+        if (footer.parent() != destination) {
+            // Move the existing control: its presence state, task observer,
+            // timer and callbacks should not be duplicated.
+            destination->adopt(footer.parent()->remove(&footer));
+            footer.setInRail(show);
+        }
+        footer.setVisible(!show || _signedIn);
+    }
+    _prefsBtn->setVisible(show && !_signedIn);
+    _rail->setVisible(show);
 }
 
 void Shell::refreshRail() {
