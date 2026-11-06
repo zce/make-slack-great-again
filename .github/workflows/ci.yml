@@ -44,7 +44,7 @@ jobs:
       - name: Build
         run: cmake --build build-ci --parallel 4
       - name: Verify UI and font-sensitive tests
-        run: ctest --test-dir build-ci --output-on-failure --parallel 1 --tests-regex '^(text_ink_lean|ui_popup|messages_actions|shell_ui_tests)
+        run: ctest --test-dir build-ci --output-on-failure --parallel 1 -R '^(text_ink_lean|ui_popup|messages_actions|shell_ui_tests)$'
 
       - name: Test
         run: ctest --test-dir build-ci --output-on-failure --parallel 2
