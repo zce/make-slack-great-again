@@ -914,7 +914,7 @@ NativeLink parseNativeLink(std::string_view url) {
         return {};
 
     // URL-encoded IDs are accepted, but duplicates and malformed IDs are not.
-    bool haveTeam = false, haveId = false;
+    bool haveTeam = false, haveId = false, haveMessage = false, haveThread = false;
     for (size_t pos = 0; pos < query.size();) {
         const size_t amp = query.find('&', pos);
         const std::string_view item = query.substr(
@@ -923,16 +923,25 @@ NativeLink parseNativeLink(std::string_view url) {
         const size_t eq = item.find('=');
         if (eq != std::string_view::npos) {
             const std::string_view key = item.substr(0, eq);
-            if (key == "team" || key == "id") {
+            if (key == "team" || key == "id" ||
+                (path == "channel" && (key == "message" || key == "thread_ts"))) {
                 const std::string val = str::percentDecode(item.substr(eq + 1));
                 if (key == "team") {
                     if (haveTeam) return {};
                     out.team = val;
                     haveTeam = true;
-                } else {
+                } else if (key == "id") {
                     if (haveId) return {};
                     out.id = val;
                     haveId = true;
+                } else if (key == "message") {
+                    if (haveMessage) return {};
+                    out.messageTs = val;
+                    haveMessage = true;
+                } else {
+                    if (haveThread) return {};
+                    out.threadTs = val;
+                    haveThread = true;
                 }
             }
         }
@@ -954,8 +963,25 @@ NativeLink parseNativeLink(std::string_view url) {
         return haveId ? NativeLink{} : out;
     if (out.team.empty())
         return {};
-    if (out.kind == NativeLinkKind::Channel)
+    if (out.kind == NativeLinkKind::Channel) {
+        // The browser launcher passes Slack's dotted message and parent
+        // timestamps separately. Keep both: thread_ts alone opens the panel,
+        // while message + thread_ts selects the actual reply.
+        const auto validTs = [](std::string_view ts) {
+            const size_t dot = ts.find('.');
+            if (dot == std::string_view::npos || dot == 0 || dot > 10 ||
+                dot + 1 == ts.size() || ts.size() - dot - 1 > 6)
+                return false;
+            for (size_t i = 0; i < ts.size(); ++i)
+                if (i != dot && !isAsciiDigit(ts[i]))
+                    return false;
+            return true;
+        };
+        if ((haveMessage && !validTs(out.messageTs)) ||
+            (haveThread && !validTs(out.threadTs)))
+            return {};
         return isId(out.id, "CGD") ? out : NativeLink{};
+    }
     return isId(out.id, "UW") ? out : NativeLink{};
 }
 

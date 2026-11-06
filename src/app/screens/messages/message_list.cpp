@@ -2207,17 +2207,11 @@ void MessageList::jumpTo(Ts ts) {
     _jumpTs = ts;
     if (applyJump() || _conv == model::kNoConv)
         return;
-    // Not loaded: wait for one older page (checkEdges asks for it while a
-    // jump is pending, wherever the list is scrolled) and give up when that
-    // page doesn't bring it either. So a target up to one page further back
-    // is reached, never a walk through the whole history for a deleted
-    // message. A thread's replies come in one load (Saved messages jumps to
-    // a reply).
-    if (threadMode()) {
-        if (_ctx.store().replies(_conv, _root))
-            _jumpTs = 0;
+    // Not loaded: history jumps get one older page; a thread jump must
+    // survive an incomplete cached page until the asynchronous refresh
+    // inserts the target reply. showThread/clear reset stale jump targets.
+    if (threadMode())
         return;
-    }
     const model::Conversation &c = _ctx.store().conversation(_conv);
     // Only an older page can still bring it in -- a target at or after what's
     // already loaded (not found there, or newer: a live arrival still to

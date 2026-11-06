@@ -301,8 +301,13 @@ void Accounts::tryOpenLink() {
                 clearLink();
                 return;
             }
+            const model::Ts message = model::parseTs(_nativeLink.messageTs);
+            const model::Ts thread  = model::parseTs(_nativeLink.threadTs);
             clearLink();
-            _shell.open(conv);
+            if (message || thread)
+                _shell.jumpToMessage(conv, message ? message : thread, thread);
+            else
+                _shell.open(conv);
         } else if (_nativeLink.kind == mrkdwn::NativeLinkKind::User) {
             const model::UserRef user = store.findUser(_nativeLink.id);
             if (user == model::kNoUser)
@@ -346,6 +351,10 @@ bool Accounts::handleUrl(std::string_view url) {
     if (!native.valid() &&
         (!ref.valid() || !model::parseTs(ref.ts) ||
          (!ref.threadTs.empty() && !model::parseTs(ref.threadTs))))
+        return false;
+    if (native.kind == mrkdwn::NativeLinkKind::Channel &&
+        ((!native.messageTs.empty() && !model::parseTs(native.messageTs)) ||
+         (!native.threadTs.empty() && !model::parseTs(native.threadTs))))
         return false;
 
     std::string key;

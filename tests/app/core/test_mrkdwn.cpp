@@ -713,6 +713,33 @@ TEST("mrkdwn: official Slack native links") {
     CHECK(channel.kind == NativeLinkKind::Channel);
     CHECK_STR(channel.team, "T123ABC456");
     CHECK_STR(channel.id, "C0ABA5P80QY");
+    CHECK(channel.messageTs.empty());
+    CHECK(channel.threadTs.empty());
+
+    // Slack's browser launch page forwards the message and its thread root
+    // in a slack://channel deep link, not in the original HTTP permalink.
+    const auto reply = mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP"
+        "&message=1793818271.076489&thread_ts=1792674458.384049"
+    );
+    REQUIRE(reply.valid());
+    CHECK_STR(reply.id, "C0A4GKEUGGP");
+    CHECK_STR(reply.messageTs, "1793818271.076489");
+    CHECK_STR(reply.threadTs, "1792674458.384049");
+
+    const auto target = mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&message=1793818271%2E076489"
+    );
+    REQUIRE(target.valid());
+    CHECK_STR(target.messageTs, reply.messageTs);
+    CHECK(target.threadTs.empty());
+
+    const auto thread = mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&thread_ts=1792674458.384049"
+    );
+    REQUIRE(thread.valid());
+    CHECK(thread.messageTs.empty());
+    CHECK_STR(thread.threadTs, reply.threadTs);
 
     const auto alias = mrkdwn::parseNativeLink(
         "msga://channel?team=%54123ABC456&id=C0ABA5P80QY"
@@ -727,6 +754,16 @@ TEST("mrkdwn: official Slack native links") {
     CHECK(user.kind == NativeLinkKind::User);
     CHECK_STR(user.id, "U12345");
 
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&message=bad"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&thread_ts=1792674458384049"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP"
+        "&message=1793818271.076489&message=1793818271.076490"
+    ).valid());
     CHECK_FALSE(mrkdwn::parseNativeLink("slack://channel?id=C12345").valid());
     CHECK_FALSE(mrkdwn::parseNativeLink("slack://user?team=T12345&id=C12345").valid());
     CHECK_FALSE(mrkdwn::parseNativeLink("slack://channel?team=T12345&id=invalid").valid());

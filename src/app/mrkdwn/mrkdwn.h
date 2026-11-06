@@ -103,12 +103,13 @@ MessageRef  parseThreadLink(std::string_view url);
 // OAuth callbacks and unknown/unsafe hosts are not message links.
 MessageRef  parseAppLink(std::string_view url);
 
-// Slack's documented native deep links, also accepted under msga://.
+// Slack's native deep links, including message/thread targets passed by its
+// browser launcher; also accepted under msga://.
 // App/file actions require UI that MSGA does not currently provide.
 enum class NativeLinkKind { Invalid, Open, Channel, User };
 struct NativeLink {
     NativeLinkKind kind = NativeLinkKind::Invalid;
-    std::string team, id;
+    std::string team, id, messageTs, threadTs;
     bool valid() const { return kind != NativeLinkKind::Invalid; }
 };
 NativeLink parseNativeLink(std::string_view url);

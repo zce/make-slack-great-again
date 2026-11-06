@@ -977,6 +977,29 @@ TEST(
     CHECK_FALSE(e.list->flashing(6000 * 1000000LL));
 }
 
+TEST("anchoring: a thread permalink waits for a reply missing from cached messages") {
+    Env           e(true);
+    const ConvRef design = e.conv("C0DESIGN");
+    Ts            root   = 0;
+    for (const model::Message &m : e.store.conversation(design).messages)
+        if (m.replyCount > 0)
+            root = m.ts;
+    REQUIRE(root != 0);
+    e.list->showThread(design, root);
+    REQUIRE(until([&] { return e.store.replies(design, root) != nullptr &&
+                                !e.list->items().empty(); }));
+
+    // The parent thread exists in cache, but the linked reply arrives only
+    // after Slack refreshes its thread. Do not discard the pending target.
+    model::Message reply = msg(e.store.me, model::tsSecs(root) + 86400, "linked reply");
+    reply.threadTs       = root;
+    const Ts target      = reply.ts;
+    e.list->jumpTo(target);
+    CHECK_FALSE(e.list->flashing(target));
+    e.store.addMessage(design, std::move(reply));
+    REQUIRE(until([&] { return e.list->flashing(target); }));
+}
+
 TEST("actions: a reaction pill toggles mine; the newest message on screen marks read") {
     Env           e(true);
     const ConvRef design = e.conv("C0DESIGN");
