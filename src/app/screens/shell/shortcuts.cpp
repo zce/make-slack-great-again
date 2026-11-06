@@ -83,12 +83,6 @@ const Def kDefs[] = {
     // search keep their Esc), only from inside the thread or with no focus,
     // and a modal popup still goes first.
     {Id::CloseThread, Scope::Window, false, N_("Close thread"), {{K::Escape, 0}, kNone}},
-    // Claude Code workspace only, and only on an idle (gray-dot) session.
-    {Id::RemoveIdleSession,
-     Scope::Documented,
-     false,
-     N_("Remove idle session from msga"),
-     {{K::Delete, Shift}, kNone}},
 };
 static_assert(sizeof(kDefs) / sizeof(kDefs[0]) == size_t(Id::Count), "a row per Id");
 
