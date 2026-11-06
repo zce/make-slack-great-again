@@ -1109,7 +1109,7 @@ Popup *showForwardDialog(
     model::Ts                                ts,
     const std::string                       &onlyFile,
     std::function<void(const std::string &)> onError,
-    std::vector<ForwardWorkspace>            workspaces,
+    std::vector<ForwardWorkspace>            workspaces
 ) {
     if (!ctx.store().findMessage(conv, ts))
         return nullptr;
