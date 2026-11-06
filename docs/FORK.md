@@ -39,6 +39,20 @@ Planned follow-on work (not part of this infrastructure PR):
 3. Probe Slack Lists APIs under both session and OAuth credentials before implementing a native Lists UI.
 4. Iterate on visual customizations as independent, reviewable changes.
 
+## Search entry points
+
+The title-bar Search control and `Ctrl+K` (`Cmd+K` on macOS) open one
+palette for channel/DM navigation, people and message-text matches. Message
+hits use the existing Slack backend search API and jump to the selected
+message; workspace tabs scope the results to each signed-in workspace.
+`Ctrl+F` remains the dedicated message search overlay. The palette does
+**not** claim full Slack file-content search.
+
+On Linux and Windows, the workspace switcher, conversation heading,
+star and huddle actions belong to the integrated title bar. The old
+sidebar-bottom switcher and standalone member-count button are removed.
+macOS retains the upstream unified-title-bar layout for now.
+
 ## Slack deep links (Linux)
 
 The fork understands both the upstream MSGA message links and Slack's documented native
