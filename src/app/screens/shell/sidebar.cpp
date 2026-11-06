@@ -623,8 +623,7 @@ public:
         const bool  stale =
             cv.latest && tsSecs(cv.latest) < sidebar._ctx.backend.nowSecs() - kMaxNotifyAgeSecs;
         unread        = sidebar.paintsUnread(cv);
-        // DMs count every unread message (an agent session only what needs
-        // me: Session counts those as mentions); channels their mentions.
+        // DMs count unread messages; channels count mentions.
         const int red = cv.isDirect() ? int(cv.unread) : int(cv.mentions);
         count         = !stale && !quiet && red > 0 ? red : 0;
         dot = !stale && !quiet && sidebar.level(cv) == model::NotifyLevel::All && !cv.isDirect() &&
@@ -815,7 +814,7 @@ void Sidebar::clearVisited() {
 }
 
 // Relevant: unread, open, visited or active within the window, or a
-// channel nothing is known about yet. Agent sessions are always listed.
+// channel nothing is known about yet.
 bool Sidebar::relevant(ConvRef ref) const {
     const auto &c = _ctx.store().conversation(ref);
     if (c.unread > 0 || ref == _selected)
@@ -987,8 +986,7 @@ void Sidebar::rebuild() {
                 h->collapsed   = was != _collapsedCustom.end() && was->second;
                 applyCollapse(h);
             }
-        // No Starred section until something is starred, no Agents & apps
-        // without an app DM, and an agent workspace drops an empty Channels.
+        // No Starred section until starred, no Agents & apps without an app DM.
         if (lists[s].empty() && (s == 0 || s == 3))
             continue;
         auto *h = section(s, defs[s].icon, defs[s].title, lists[s]);
@@ -1069,8 +1067,7 @@ void Sidebar::usersSoon() {
         if (_rebuildTimer)
             return; // the pending rebuild reads the users anyway
         // No profile (nor custom emoji) changed since the shape was taken:
-        // a presence round, which only moves the dots. An agent workspace
-        // (its team may change with its users) always takes the long way.
+        // a presence round, which only moves the dots.
         const auto &st = _ctx.store();
         if (_shapeStore == &st && _shapeMe == st.me &&
             _shapeProfileRev == st.profileRevision() && _shapeTextRev == st.textRevision()) {
@@ -1571,9 +1568,7 @@ Attention workspaceAttention(const model::Store &st, model::NotifyLevel fallback
         const model::NotifyLevel level = cv.effectiveNotify(fallback);
         if (level == model::NotifyLevel::Nothing)
             continue;
-        if (st.answersAreMentions) // an agent session: only what needs you
-            a.important += int(cv.mentions);
-        else if (cv.isDirect())
+        if (cv.isDirect())
             a.important += int(cv.unread);
         else {
             a.important += int(cv.mentions);
