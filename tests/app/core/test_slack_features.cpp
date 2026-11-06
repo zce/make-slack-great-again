@@ -852,7 +852,10 @@ TEST("slack features: custom sidebar sections — the list, moves, create, a ref
     {
         // Slack returns invalid_arguments if the emoji field is omitted,
         // even when a section is created without an icon.
-        const json::Value form = Log().get("users.channelSections.create")["form"];
+        // Value borrows its Document: keep the log alive while checking
+        // fields, including the empty string which Slack requires.
+        const Log         log;
+        const json::Value form = log.get("users.channelSections.create")["form"];
         CHECK_STR(std::string(form["name"].str()), "Ops");
         CHECK(form.has("emoji"));
         CHECK_STR(std::string(form["emoji"].str()), "");
