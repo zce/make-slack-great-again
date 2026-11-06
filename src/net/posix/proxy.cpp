@@ -144,7 +144,12 @@ bool hostMatches(const Url &target, std::string_view item) {
         return target.host == suffix.substr(1) ||
                (target.host.size() > suffix.size() && target.host.ends_with(suffix));
     }
-    return target.host == rule;
+    // Like curl, a bare no_proxy domain also matches its subdomains, but
+    // never a lookalike suffix without the dot boundary.
+    return target.host == rule ||
+           (target.host.size() > rule.size() &&
+            target.host[target.host.size() - rule.size() - 1] == '.' &&
+            target.host.ends_with(rule));
 }
 
 bool bypasses(const Url &target, std::string_view rules) {
