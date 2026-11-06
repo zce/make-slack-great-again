@@ -42,9 +42,10 @@ Planned follow-on work (not part of this infrastructure PR):
 ## Search entry points
 
 The title-bar Search control and `Ctrl+K` (`Cmd+K` on macOS) open one
-palette for channel/DM navigation, people and message-text matches. Message
-hits use the existing Slack backend search API and jump to the selected
-message; workspace tabs scope the results to each signed-in workspace.
+palette for message-text matches, channel/DM navigation and people. Message
+hits appear first, newest first, across all connected Slack workspaces, and
+jump to the selected message. Workspace tabs still scope conversation and
+people quick navigation, but no longer limit message search.
 `Ctrl+F` remains the dedicated message search overlay. The palette does
 **not** claim full Slack file-content search.
 
