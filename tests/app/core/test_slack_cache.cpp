@@ -209,6 +209,30 @@ TEST("slack cache: a cold start writes it, a warm start shows it before the netw
     CHECK_STR(e.c("C1").messages[1].text, "third"); // "second" was deleted
 }
 
+TEST("slack cache: external connection state survives a warm start") {
+    if (!haveServer())
+        return;
+    wipe();
+    {
+        Env e;
+        REQUIRE(e.connect());
+        REQUIRE(e.conv("C1") != kNoConv && e.conv("D1") != kNoConv);
+        e.store.updateConversation(e.conv("C1"), [](model::Conversation &c) {
+            c.extShared = true;
+        });
+        e.store.updateConversation(e.conv("D1"), [](model::Conversation &c) {
+            c.extShared = false;
+        });
+    } // flush the roster, including both true and explicit false
+    {
+        Env e(false);
+        REQUIRE(e.warm);
+        CHECK(e.c("C1").extShared.value_or(false));
+        CHECK(e.c("D1").extShared.has_value());
+        CHECK_FALSE(e.c("D1").extShared.value_or(true));
+    }
+}
+
 TEST("slack cache: a presence flip doesn't re-serialise users.json; a profile change does") {
     if (!haveServer())
         return;
