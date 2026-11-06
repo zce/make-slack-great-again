@@ -2075,9 +2075,6 @@ void Shell::closeThreadOnEscape() {
     closeThread();
 }
 
-// Shift+Del on an idle Claude Code session: "Remove from msga". Filtered
-// before the focused view sees the key, because the composer keeps focus; a
-// text field with a selection keeps the key (Cut there).
 namespace {
 
 // A key that types a character (letters, digits, punctuation, space, the
