@@ -3,6 +3,7 @@
 #include "base/str.h"
 #include "base/thread.h"
 #include "net/posix/posix.h"
+#include "net/posix/proxy.h"
 #include "net/transport.h"
 
 #include <algorithm>
@@ -350,8 +351,21 @@ Stream::~Stream() {
 }
 
 bool Stream::open(const Url &url, const Waiter &w, std::string *error) {
+    const Proxy proxy = proxyFor(url);
+    if (proxy.kind == Proxy::Kind::Invalid) {
+        *error = proxy.error;
+        return false;
+    }
+    Url peer = url;
+    if (proxy.kind != Proxy::Kind::Direct) {
+        peer.host = proxy.host;
+        peer.port = proxy.port;
+        // TCP to the proxy is not encrypted; TLS is applied only after the
+        // proxy tunnel, with the original target hostname verified below.
+        peer.scheme = "http";
+    }
     std::vector<Addr> addrs;
-    if (!resolve(url, w, &addrs, error))
+    if (!resolve(peer, w, &addrs, error))
         return false;
     for (size_t i = 0; i < addrs.size(); ++i) {
         // A black-holed address (broken IPv6) must not eat the whole
@@ -369,9 +383,11 @@ bool Stream::open(const Url &url, const Waiter &w, std::string *error) {
     }
     if (_fd < 0) {
         if (*error != "cancelled") // the host may have moved: look it up afresh next time
-            dnsForget(str::concat({url.host, ":", str::number(url.port)}));
+            dnsForget(str::concat({peer.host, ":", str::number(peer.port)}));
         return false;
     }
+    if (proxy.kind != Proxy::Kind::Direct && !proxyTunnel(_fd, url, proxy, w, error))
+        return false;
     if (!url.secure())
         return true;
     _tls = tlsNew(_fd, url, error);
