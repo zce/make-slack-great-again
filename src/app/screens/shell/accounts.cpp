@@ -3,6 +3,7 @@
 #include "app/cache/workspace_cache.h"
 #include "app/identity.h"
 #include "app/model/jobs.h"
+#include "app/model/types.h"
 #include "app/claude/backend.h"
 #include "app/claude/cli.h"
 #include "app/claude/common.h"
@@ -112,6 +113,7 @@ Accounts::Accounts(
 }
 
 Accounts::~Accounts() {
+    clearLink();
     plat::App &pa = _ctx.app.platform();
     // The screens let go first (their observers move to the blank Store):
     // as on every switch, nothing may point into the old Store when the slot
@@ -311,8 +313,104 @@ void Accounts::networkChanged(bool online) {
         sock->networkChanged(online);
 }
 
+void Accounts::clearLink() {
+    if (_linkStore)
+        _linkStore->unobserve(_linkObserver);
+    _linkStore = nullptr;
+    _linkObserver = 0;
+    _linkKey.clear();
+    _link = {};
+}
+
+void Accounts::tryOpenLink() {
+    if (!_link.valid() || !_linkStore || !_active || _activeKey != _linkKey)
+        return;
+    const model::ConvRef conv = _active->store.findConversation(_link.conv);
+    if (conv == model::kNoConv)
+        return; // The initial roster may still be loading.
+    if (!_active->store.conversation(conv).member) {
+        clearLink();
+        return;
+    }
+    const model::Ts ts = model::parseTs(_link.ts);
+    const model::Ts thread = model::parseTs(_link.threadTs);
+    if (!ts || (!_link.threadTs.empty() && !thread)) {
+        clearLink();
+        return;
+    }
+    clearLink(); // Unsubscribe before navigating: navigation updates the Store.
+    _shell.jumpToMessage(conv, ts, thread);
+}
+
 bool Accounts::handleUrl(std::string_view url) {
-    return _oauth && _oauth->handleCallback(url);
+    if (_oauth && _oauth->handleCallback(url))
+        return true;
+    const mrkdwn::MessageRef ref = mrkdwn::parseAppLink(url);
+    if (!ref.valid() || !model::parseTs(ref.ts) ||
+        (!ref.threadTs.empty() && !model::parseTs(ref.threadTs)))
+        return false;
+
+    // Resolve by the Slack team's hostname, not by channel ID alone: channel
+    // IDs are not a cross-workspace routing authority.
+    std::string key;
+    int unknown = 0;
+    std::string loneUnknown;
+    for (const auto &record : _store.all()) {
+        if (record.service != slack::kService)
+            continue;
+        const Running *running = find(record.key());
+        const std::string url = running && !running->store.workspaceUrl.empty()
+                                    ? running->store.workspaceUrl
+                                    : slack::fromRecord(record).workspaceUrl;
+        if (ref.host.empty()) {
+            if (record.hasKey(_activeKey))
+                key = record.key();
+            continue;
+        }
+        if (url.empty()) {
+            ++unknown;
+            loneUnknown = record.key();
+            continue;
+        }
+        std::string_view host = url;
+        const size_t scheme = host.find("://");
+        if (scheme != std::string_view::npos)
+            host.remove_prefix(scheme + 3);
+        host = host.substr(0, host.find_first_of("/?#"));
+        if (str::iequals(host, ref.host)) {
+            key = record.key();
+            break;
+        }
+    }
+    // An OAuth workspace can initially have no URL. Fallback only when it
+    // is the sole candidate; never route to a known different hostname.
+    if (key.empty() && !ref.host.empty() && unknown == 1) {
+        int slackCount = 0;
+        for (const auto &record : _store.all())
+            slackCount += record.service == slack::kService;
+        if (slackCount == 1)
+            key = loneUnknown;
+    }
+    if (key.empty())
+        return false;
+
+    clearLink();
+    _link = ref;
+    _linkKey = key;
+    activate(key);
+    Running *r = find(key);
+    if (!r || r != _active) {
+        clearLink();
+        return false;
+    }
+    _linkStore = &r->store;
+    _linkObserver = r->store.observe(model::Store::kAnyConv, [this](const model::Change &change) {
+        if (change.kind == model::ChangeKind::Roster ||
+            change.kind == model::ChangeKind::Meta)
+            tryOpenLink();
+    });
+    tryOpenLink();
+    return true;
 }
 
 namespace {
@@ -489,6 +587,8 @@ void Accounts::shutdown(Running &r, bool keepCache) {
 void Accounts::drop(Running *r, bool keepCache) {
     if (!r)
         return;
+    if (r && _linkStore == &r->store)
+        clearLink();
     if (r == _active)
         showSignedOut(); // the screens let go of it first
     shutdown(*r, keepCache);
