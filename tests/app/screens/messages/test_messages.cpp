@@ -2672,15 +2672,26 @@ TEST("loading: a permalink finds an old thread parent and highlights the late re
     const Ts target = model::parseTs("1793818271.076489");
 
     // The channel has newer messages but has not paged back to this root.
-    e.store.addMessage(c, msg(e.mira, model::parseTs("1793819000.000001"), "newer"));
+    model::Message newer;
+    newer.ts   = model::parseTs("1793819000.000001");
+    newer.user = e.mira;
+    newer.text = "newer";
+    e.store.addMessage(c, std::move(newer));
     e.list->showThread(c, root);
     REQUIRE(e.backend.threads.size() == 1);
     CHECK(e.list->state() == State::Loading);
     e.list->jumpTo(target);
 
     // Slack completes its thread request asynchronously.
-    e.store.setThreadRoot(c, msg(e.mira, root, "old parent"));
-    model::Message reply = msg(e.mira, target, "requested reply");
+    model::Message parent;
+    parent.ts   = root;
+    parent.user = e.mira;
+    parent.text = "old parent";
+    e.store.setThreadRoot(c, std::move(parent));
+    model::Message reply;
+    reply.ts       = target;
+    reply.user     = e.mira;
+    reply.text     = "requested reply";
     reply.threadTs = root;
     std::vector<model::Message> replies;
     replies.push_back(std::move(reply));
@@ -2692,7 +2703,6 @@ TEST("loading: a permalink finds an old thread parent and highlights the late re
     CHECK(e.list->state() == State::None);
     CHECK(e.list->items().size() >= 3);
     CHECK(e.list->flashing(target));
-    CHECK(e.list->list().viewFor(0) != nullptr || e.list->items().size() >= 3);
     CHECK(e.store.indexOf(c, root) == SIZE_MAX); // did not splice channel history
 }
 
