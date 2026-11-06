@@ -124,6 +124,15 @@ Window::Window(const plat::WindowDesc &desc) {
     resized();
 }
 
+void Window::setTransparentBackground(bool on) {
+    if (_transparentBackground == on)
+        return;
+    _transparentBackground = on;
+    _root->setBackground(on ? C::None : C::WindowBg);
+    _blits.clear();
+    damageAll();
+}
+
 Window::~Window() {
     _dying = true;
     if (_tooltipTimer)
@@ -1133,6 +1142,12 @@ void Window::onFrame(bool requested) {
         _stats.viewsPainted = 0;
         for (size_t i = shifted; i < rects.size(); ++i) {
             const plat::Rect &r = rects[i];
+            if (_transparentBackground) {
+                // SHM buffers carry yesterday's pixels. Alpha must be cleared
+                // before blending, even for a small damage-only repaint.
+                for (int y = r.y; y < r.y + r.h; ++y)
+                    std::fill_n(c.pixels + size_t(y) * c.stride + r.x, size_t(r.w), 0u);
+            }
             const RectF       lr{r.x / s, r.y / s, r.w / s, r.h / s};
             p.save();
             p.clipRect(lr);

@@ -507,6 +507,43 @@ private:
     float _startX = 0, _startW = 0;
 };
 
+// The main Wayland window uses a transparent ARGB surface; the shadow lives
+// outside this view in a 10 px inset. We only clip the *children* inside the
+// rounded frame; its background gradient is clipped here as well.
+class WindowFrame final : public View {
+public:
+    static constexpr float kInset = 10, kRadius = 10;
+
+    WindowFrame() {
+        style().column();
+        setClipChildren(true);
+    }
+    bool rounded() const { return _rounded; }
+    void setRounded(bool rounded) {
+        if (_rounded == rounded)
+            return;
+        _rounded = rounded;
+        const float inset = rounded ? kInset : 0;
+        style().margins(inset, inset, inset, inset);
+        // The radius is also used by Window::paintTree for the child clip.
+        setBackground(C::Sidebar, rounded ? kRadius : 0);
+        setPaintOutset(rounded ? uint8_t(kInset) : 0);
+    }
+    void paint(gfx::Painter &p) override {
+        if (_rounded) {
+            p.dropShadow(bounds(), kRadius, 6, {0, 1}, color(C::Shadow));
+            p.save();
+            p.clipRoundRect(bounds(), kRadius);
+        }
+        paintNavGradient(*this, p, C::Sidebar);
+        if (_rounded)
+            p.restore();
+    }
+
+private:
+    bool _rounded = false;
+};
+
 // The content pane keeps its rounded surface and themed right/bottom inset in
 // normal, maximized, and fullscreen windows. The outer window stays square.
 class InsetPane final : public View {
@@ -918,8 +955,19 @@ Shell::Shell(
             c->attachFiles(paths);
     };
 
-    auto *screen = win.root().add<View>();
-    screen->style().column();
+    View *screen = nullptr;
+    // Native Wayland SHM already uses premultiplied ARGB8888. Only this
+    // top-level window enables transparent repaint; dialogs are unchanged.
+    if (std::strcmp(ctx.app.platform().backendName(), "wayland") == 0) {
+        win.setTransparentBackground(true);
+        auto *frame = win.root().add<WindowFrame>();
+        _windowFrame = frame;
+        frame->setRounded(!win.native().isMaximized() && !win.native().isFullscreen());
+        screen = frame;
+    } else {
+        screen = win.root().add<View>();
+        screen->style().column();
+    }
     buildTitleBar(screen);
 #ifdef MSGA_SELF_UPDATE
     _updateBar            = screen->add<UpdateBar>();
@@ -1496,6 +1544,7 @@ void Shell::buildTitleBar(View *parent) {
         if (e.type == plat::EventType::StateChanged) {
             updateTitleButtons();
             syncFullScreenChrome();
+            syncWindowFrame();
             syncWindowVisible(); // minimised or back
         } else if (e.type == plat::EventType::FocusIn || e.type == plat::EventType::FocusOut)
             updateReading();
@@ -1506,6 +1555,18 @@ void Shell::buildTitleBar(View *parent) {
                 fitToScreen();
         }
     };
+}
+
+void Shell::syncWindowFrame() {
+    if (!_windowFrame)
+        return;
+    auto *frame = static_cast<WindowFrame *>(_windowFrame);
+    const bool rounded = !_win.native().isMaximized() && !_win.native().isFullscreen();
+    if (frame->rounded() != rounded) {
+        frame->setRounded(rounded);
+        // Erase old shadow pixels when a compositor changes window state.
+        _win.damageAll();
+    }
 }
 
 // The native chrome (macOS's title-bar rim and
@@ -3689,9 +3750,12 @@ plat::HitArea Shell::hitTest(plat::Point p) const {
 #else
     const bool resizable = true;
 #endif
+    const float frameInset = _windowFrame &&
+        static_cast<const WindowFrame *>(_windowFrame)->rounded() ? WindowFrame::kInset : 0;
     if (resizable && !nat.isMaximized() && !nat.isFullscreen()) {
-        const bool l = p.x < kResizeEdge, r = p.x >= sz.w - kResizeEdge;
-        const bool t = p.y < kResizeEdge, b = p.y >= sz.h - kResizeEdge;
+        const float edge = std::max(kResizeEdge, frameInset);
+        const bool l = p.x < edge, r = p.x >= sz.w - edge;
+        const bool t = p.y < edge, b = p.y >= sz.h - edge;
         if (t && l)
             return H::ResizeTopLeft;
         if (t && r)
@@ -3709,7 +3773,7 @@ plat::HitArea Shell::hitTest(plat::Point p) const {
         if (t && !(_closeBtn && _closeBtn->windowRect().contains({float(p.x), float(p.y)})))
             return H::ResizeTop;
     }
-    if (p.y >= titleBarHeight())
+    if (p.y >= titleBarHeight() + frameInset)
         return H::Client;
     const PointF pt{float(p.x), float(p.y)};
 #ifdef __APPLE__

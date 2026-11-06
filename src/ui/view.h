@@ -448,6 +448,10 @@ public:
     // The root is a Stack filling the window (background C::WindowBg): add one
     // screen view to it and it fills the window.
     View         &root() { return *_root; }
+    // For the main Wayland window's client-side shadow/corners only. Clears
+    // each damaged rectangle before painting so the ARGB surface preserves
+    // transparency across partial repaints and recycled SHM buffers.
+    void         setTransparentBackground(bool on);
 
     // ── Focus ───────────────────────────────────────────────────────────────
     View *focusView() const { return _focus; }
@@ -617,6 +621,7 @@ private:
     // Optimistic: a new window is normally activated, and some setups (no WM)
     // never send FocusIn; FocusOut corrects it.
     bool                               _active = true, _frameRequested = false, _inFrame = false;
+    bool                               _transparentBackground = false;
     bool                               _dying = false, _textInput = false, _buttonHeld = false;
     bool                               _focusVisible = false, _frameAgain = false;
     bool                               _hoverDirty = false, _pointerInside = false;

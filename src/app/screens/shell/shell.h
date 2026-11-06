@@ -301,6 +301,7 @@ private:
     // macOS full screen: no title bar strip; the conversation header moves
     // over the right pane, so the rail and the sidebar reach the top.
     void        syncFullScreenChrome();
+    void        syncWindowFrame(); // Wayland CSD: outer shadow/rounding follows window state
     float       titleBarHeight() const; // 0 while the strip is hidden
     void        updateTitleButtons();
     void        updateHeader();
@@ -434,7 +435,7 @@ private:
 
     Sidebar               *_sidebar  = nullptr;
     Composer              *_composer = nullptr;
-    ui::View              *_titleBar = nullptr, *_rail = nullptr;
+    ui::View              *_titleBar = nullptr, *_rail = nullptr, *_windowFrame = nullptr;
     ui::View              *_titleSidebar = nullptr, *_titleActions = nullptr;
     ui::View              *_workspaceSwitch = nullptr;
     Avatar                *_workspaceAvatar = nullptr;
