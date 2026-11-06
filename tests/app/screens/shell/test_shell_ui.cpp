@@ -560,7 +560,12 @@ TEST("header: channel members and star, a DM's avatar, huddles only where the se
     Harness            h;
     shell::ConvHeader &hd = h.sh->header();
     CHECK_STR(hd.title()->text(), "#design");
+#ifdef __APPLE__
     CHECK(hd.members()->visible());
+#else
+    // The channel title replaces the standalone member-count control.
+    CHECK_FALSE(hd.members()->visible());
+#endif
     CHECK_STR(hd.memberCount()->text(), "9");
     CHECK_STR(hd.members()->tooltip(), "View members");
     CHECK_STR(hd.star()->tooltip(), "Unstar conversation");
