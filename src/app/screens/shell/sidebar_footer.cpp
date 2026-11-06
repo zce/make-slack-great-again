@@ -446,13 +446,15 @@ void SidebarFooter::togglePresence() {
     // Optimistic: flip the icon now, ask the service, settle on its answer
     // (or, without one, back on the truth after kConfirmMs).
     const bool target = !_toggle->hidden();
-    _toggle->show(target, true);
+    // The top profile menu owns this control while it is invisible. There
+    // is no animation to render, so update its state without a frame ticker.
+    _toggle->show(target, !_inTitle);
     auto &pa = _ctx.app.platform();
     if (_confirm)
         pa.cancelTimer(_confirm);
     _confirm = pa.addTimer(kConfirmMs, false, [this] {
         _confirm = 0;
-        _toggle->show(_ctx.backend.selfPresence().manualAway, true);
+        _toggle->show(_ctx.backend.selfPresence().manualAway, !_inTitle);
         refresh();
     });
     _ctx.backend.setPresence(target, [this](bool ok, const std::string &err) {
@@ -470,7 +472,7 @@ void SidebarFooter::togglePresence() {
             _ctx.app.platform().cancelTimer(_confirm);
             _confirm = 0;
         }
-        _toggle->show(_ctx.backend.selfPresence().manualAway, true);
+        _toggle->show(_ctx.backend.selfPresence().manualAway, !_inTitle);
         refresh();
     });
 }
