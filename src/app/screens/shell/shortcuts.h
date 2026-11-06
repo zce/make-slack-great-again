@@ -57,9 +57,6 @@ enum class Id : uint8_t {
     NewLine,
     EditLastMessage,
     CancelOrExitEdit,
-    // Filtered window-wide ahead of the focused view (the composer keeps focus
-    // and would take Shift+Del as a delete).
-    RemoveIdleSession,
     Count
 };
 
