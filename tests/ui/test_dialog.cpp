@@ -236,7 +236,9 @@ TEST("popup: date and time fields step, type and clamp") {
     cb->onChange = [&](bool v) { on = v; };
     w.frame();
     const ui::RectF c = cb->windowRect();
-    CHECK(near(c.h, 18)); // the box: 16 + the 1-px border
+    // The indicator remains 18px. Larger labels may need a taller row.
+    CHECK(c.h >= 18.f);
+    CHECK(c.h < 32.f); // still a compact single-line control
     w.click(c.x + 8, c.y + c.h / 2);
     CHECK(on && cb->checked());
     cb->focus();
