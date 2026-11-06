@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -272,6 +273,9 @@ struct Conversation {
     bool                 starred     = false;
     bool                 muted       = false;
     bool                 member      = true; // channels: joined; DMs: open (not closed)
+    // Slack Connect: absent if the API did not report sharing; true/false
+    // when it did. An absent field on a partial refresh keeps the last value.
+    std::optional<bool>  extShared;
     NotifyLevel          notify      = NotifyLevel::Default;
     std::string          canvasTitle; // non-empty: the channel has a canvas
     std::string          canvasId;    // its file ("F0123"); "" while unknown or none
