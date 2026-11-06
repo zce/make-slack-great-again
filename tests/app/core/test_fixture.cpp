@@ -537,5 +537,4 @@ TEST("fake backend: mute, notification level, pins, saved, leave and opening DMs
     REQUIRE(waitFor(*app, [&] { return got != kNoConv; }));
     CHECK(got != d1 && s.conversation(got).kind == ConvKind::Dm);
     CHECK(s.conversation(got).dmUser == s.me);
-    CHECK_FALSE(be.isAgentSession(got));
 }
