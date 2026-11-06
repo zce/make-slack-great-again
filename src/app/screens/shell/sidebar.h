@@ -31,6 +31,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace shell {
@@ -111,6 +112,14 @@ public:
     const Sorts          &sorts() const { return _sorts; }
     std::function<void()> onSortsChanged;
     void                  setSort(const std::string &key, SectionSort sort);
+    // A collapsed section normally hides everything. These section keys
+    // instead keep its unread conversation rows visible.
+    using CollapsedUnreads = std::unordered_set<std::string>;
+    void                  setCollapsedUnreads(CollapsedUnreads enabled);
+    const CollapsedUnreads &collapsedUnreads() const { return _collapsedUnreads; }
+    bool                  showUnreadWhenCollapsed(const std::string &key) const;
+    void                  toggleCollapsedUnreads(const std::string &key);
+    std::function<void()> onCollapsedUnreadsChanged;
     // Workspace-local ordering of section *headers*, independent of the
     // conversation order inside each section and of Slack's own web layout.
     void                  setSectionOrder(std::vector<std::string> order);
@@ -239,6 +248,7 @@ private:
     Nav                      _navSelected = Nav::None;
     VisitStamps              _visited; // opened here (visit stamps)
     Sorts                    _sorts;
+    CollapsedUnreads         _collapsedUnreads;
     std::vector<std::string> _sectionOrder;
     Filters                  _filters;
     model::ConvRef           _selected        = model::kNoConv;
