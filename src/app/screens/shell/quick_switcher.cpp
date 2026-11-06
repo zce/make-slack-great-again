@@ -351,7 +351,7 @@ QuickSwitcher::QuickSwitcher(
         _tabName->style().flex(1).margins(4, 0, 0, 0);
     }
     _field = add<TextEdit>();
-    _field->setPlaceholder(tr("Search conversations, people and messages\xE2\x80\xA6"));
+    _field->setPlaceholder(tr("Search\xE2\x80\xA6"));
     _field->setMaxLines(1);
     _field->setBackground(C::InputBg, 6);
     _field->setBorder(C::InputBorderFocus);
