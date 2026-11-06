@@ -34,7 +34,7 @@ namespace {
 // the text size), a 6 px inset above the first row, pills inset 8 px from the
 // list's edges; icons at kPadH, labels and conversation content at 32.
 constexpr float kRowHBase = 32, kTopPad = 8, kPill = 12, kPadH = 14, kContentX = 34;
-constexpr float kNavIndent = 6, kNavRowGap = 2;
+constexpr float kNavRowGap = 2;
 constexpr int   kAvatarPx = 40; // 20 logical, sharp at 2x
 
 float rowH() {
@@ -93,14 +93,15 @@ public:
 };
 
 // Overview destinations are navigation actions, not collapsible list
-// sections or conversation rows. Give them their own type scale and spacing.
+// sections or conversation rows. Give them their own type scale and vertical
+// spacing, while aligning icons and labels to the section headers below.
 class NavRow final : public HoverRow {
 public:
     NavRow(Icon i, const char *text) : icon(i) {
         setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
         setRole(Role::Button);
         style().row().height(rowH()).margins(kPill, kNavRowGap, kPill, kNavRowGap).items(Align::Center);
-        style().padding(kContentX - kPill + kNavIndent, 0, 8, 0);
+        style().padding(kContentX - kPill, 0, 8, 0);
         followTextRowHeight(this);
         label = add<Label>(text, Font::Control, C::SidebarTextMuted);
         label->setMaxLines(1);
@@ -114,7 +115,7 @@ public:
         HoverRow::paint(p);
         const float s = 13, y = snapPx((height() - s) / 2);
         gfx::drawIcon(
-            p, icon, {kPadH - kPill + kNavIndent + 0.5f, y, s, s},
+            p, icon, {kPadH - kPill + 0.5f, y, s, s},
             color(ink(checked(), hovered() || unread))
         );
     }
