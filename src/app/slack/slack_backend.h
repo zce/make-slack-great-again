@@ -205,6 +205,7 @@ public:
     void readCallForTest(std::string method, std::string form, ApiDone done, bool background) {
         readCall(std::move(method), std::move(form), std::move(done), background);
     }
+    void reloadConversationsForTest() { reloadConversations(); }
 
     // ── Shared by both halves ───────────────────────────────────────────────
     // A Web API call with this workspace's auth; tracked so the destructor
