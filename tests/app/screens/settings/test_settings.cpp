@@ -574,7 +574,15 @@ TEST("settings: the Markdown formatting choice reaches the composer on Save") {
     auto &c = h.sh->composer();
     c.edit().insertText("*it* **bold**");
     CHECK_STR(mrkdwn::compose(c.mrkdwn()).mrkdwn, "_it_ *bold*");
-    CHECK(shell::Settings::load(path).markdownFormatting); // saved
+    // Save schedules a worker write; observing the in-memory setting is not
+    // proof that its atomic file replacement has completed yet.
+    bool persisted = false;
+    for (int i = 0; i < 1000 && !persisted; ++i) {
+        persisted = shell::Settings::load(path).markdownFormatting;
+        if (!persisted)
+            app().pump(5);
+    }
+    CHECK(persisted);
 }
 
 TEST("settings: a one-click reaction picked in Settings is no use, and lands only on its page") {
