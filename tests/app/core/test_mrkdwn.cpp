@@ -727,6 +727,16 @@ TEST("mrkdwn: official Slack native links") {
     CHECK_STR(reply.messageTs, "1793818271.076489");
     CHECK_STR(reply.threadTs, "1792674458.384049");
 
+    const auto actualBrowserLink = mrkdwn::parseNativeLink(
+        "slack://channel?team=T0A0PUXB7QD&id=C0A4GKEUGGP"
+        "&message=1793818271.076489&thread_ts=1792674458.384049&host=slack.com"
+    );
+    REQUIRE(actualBrowserLink.valid());
+    CHECK_STR(actualBrowserLink.team, "T0A0PUXB7QD");
+    CHECK_STR(actualBrowserLink.id, "C0A4GKEUGGP");
+    CHECK_STR(actualBrowserLink.messageTs, "1793818271.076489");
+    CHECK_STR(actualBrowserLink.threadTs, "1792674458.384049");
+
     const auto target = mrkdwn::parseNativeLink(
         "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&message=1793818271%2E076489"
     );

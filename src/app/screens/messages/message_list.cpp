@@ -797,6 +797,9 @@ void MessageList::showThread(ConvRef conv, Ts root) {
             _loadingThread = false;
             rebuild(false);
             resetRows();
+            // Replies may have arrived while the loading state deliberately
+            // hid every row. Resolve the permalink target only now.
+            applyJump();
         });
     }
     updateState();

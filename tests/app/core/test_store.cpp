@@ -55,6 +55,43 @@ struct Fixture {
 
 } // namespace
 
+TEST("store: an old thread parent stays out of channel history") {
+    Fixture f;
+    const Ts root   = parseTs("1792674458.384049");
+    const Ts recent = parseTs("1793819000.000001");
+    f.s.addPage(f.c, page({recent}, f.mira));
+    Recorder r;
+    f.s.observe(f.c, r.fn());
+
+    f.s.setThreadRoot(f.c, msg(root, f.mira, "old parent"));
+    const Message *parent = f.s.findMessage(f.c, root);
+    REQUIRE(parent != nullptr);
+    CHECK_STR(parent->text, "old parent");
+    CHECK(f.s.indexOf(f.c, root) == SIZE_MAX);
+    CHECK(f.s.conversation(f.c).messages.size() == 1);
+    REQUIRE(!r.log.empty());
+    CHECK(r.log.back().thread == root); // only a thread list changes
+
+    // Ordinary history can eventually page back to this root without a
+    // duplicate or a change to the existing channel paging boundary.
+    f.s.addPage(f.c, page({root}, f.mira));
+    CHECK(f.s.indexOf(f.c, root) != SIZE_MAX);
+    CHECK(f.s.findMessage(f.c, root) == &f.s.conversation(f.c).messages.front());
+    CHECK(f.s.conversation(f.c).messages.size() == 2);
+}
+
+TEST("store: removing a thread-only parent does not erase channel history") {
+    Fixture f;
+    const Ts root = parseTs("1792674458.384049");
+    const Ts recent = parseTs("1793819000.000001");
+    f.s.addPage(f.c, page({recent}, f.mira));
+    f.s.setThreadRoot(f.c, msg(root, f.mira, "root"));
+    REQUIRE(f.s.removeMessage(f.c, root));
+    CHECK(f.s.findMessage(f.c, root) == nullptr);
+    CHECK(f.s.conversation(f.c).messages.size() == 1);
+    CHECK(f.s.conversation(f.c).messages.front().ts == recent);
+}
+
 TEST("store: a composer draft is kept per conversation and thread") {
     Fixture        f;
     const uint64_t rev = f.s.localRevision();

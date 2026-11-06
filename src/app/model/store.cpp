@@ -523,11 +523,37 @@ Message *Store::findMessage(ConvRef ref, Ts ts) {
     for (auto &t : c.threads)
         if (auto it = lowerByTs(t.replies, ts); it != t.replies.end() && it->ts == ts)
             return &*it;
+    // A deep-linked thread's root may be older than the fetched channel page.
+    for (auto &t : c.threads)
+        if (t.root == ts && t.parent)
+            return t.parent.get();
     return nullptr;
 }
 
 const Message *Store::findMessage(ConvRef ref, Ts ts) const {
     return const_cast<Store *>(this)->findMessage(ref, ts);
+}
+
+void Store::setThreadRoot(ConvRef ref, Message root) {
+    if (ref >= _convs.size() || !root.ts || root.isReply())
+        return;
+    Conversation &c = _convs[ref];
+    // A root already in the top-level timeline needs no separate copy.
+    if (indexOf(ref, root.ts) != SIZE_MAX)
+        return;
+    Thread *t = findThread(c, root.ts);
+    if (!t) {
+        c.threads.push_back(Thread{root.ts, {}});
+        t = &c.threads.back();
+    }
+    if (t->parent) {
+        if (*t->parent == root)
+            return;
+        root.saved = t->parent->saved;
+    }
+    t->parent = std::make_unique<Message>(std::move(root));
+    // Only thread views should rebuild: the channel history has not changed.
+    emit({ChangeKind::Update, ref, t->root, t->root});
 }
 
 const std::vector<Message> *Store::replies(ConvRef ref, Ts root) const {
@@ -636,7 +662,11 @@ void Store::addMessage(ConvRef ref, Message m) {
         });
     const bool typingChanged = typers.size() != typersBefore;
 
-    if (Message *existing = findMessage(ref, ts)) {
+    // A separately fetched thread parent is not in the channel timeline.
+    // If a real channel message later supplies it, insert that message into
+    // the timeline rather than updating the thread-only copy in place.
+    if (Message *existing = findMessage(ref, ts);
+        existing && (thread || indexOf(ref, ts) != SIZE_MAX)) {
         // A push for something we have (our own send echoed back): replace.
         *existing = std::move(m);
         emit({ChangeKind::Update, ref, thread, ts});
@@ -708,6 +738,13 @@ bool Store::removeMessage(ConvRef ref, Ts ts) {
         return false;
     Conversation &c      = _convs[ref];
     const Ts      thread = m->isReply() ? m->threadTs : 0;
+    if (!thread && indexOf(ref, ts) == SIZE_MAX) {
+        // Removing a thread-only parent deletes that thread, not an unrelated
+        // channel message at the lower_bound position.
+        std::erase_if(c.threads, [ts](const Thread &t) { return t.root == ts; });
+        emit({ChangeKind::Remove, ref, ts, ts});
+        return true;
+    }
     auto         &list   = *listFor(c, thread, false);
     list.erase(lowerByTs(list, ts));
     if (thread) {

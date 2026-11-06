@@ -367,6 +367,44 @@ TEST("slack read: a thread loads every replies page and refreshes its root") {
     CHECK_STR(l.get("conversations.replies")["form"]["ts"].str(), "1700000200.000200");
 }
 
+TEST("slack read: a deep-linked old parent loads without changing channel pagination") {
+    if (!haveServer())
+        return;
+    Env e(nullptr);
+    const ConvRef c = e.addChannel("C0A4GKEUGGP");
+    const Ts root   = model::parseTs("1792674458.384049");
+    const Ts reply  = model::parseTs("1793818271.076489");
+    const Ts recent = model::parseTs("1793819000.000001");
+    model::Message m;
+    m.ts = recent;
+    m.text = "most recent channel message";
+    std::vector<model::Message> history;
+    history.push_back(std::move(m));
+    e.store.addPage(c, std::move(history));
+
+    script("conversations.replies", R"([{"ok":true,"messages":[
+        {"type":"message","ts":"1792674458.384049","thread_ts":"1792674458.384049",
+         "user":"UMIRA","text":"old parent","reply_count":1},
+        {"type":"message","ts":"1793818271.076489","thread_ts":"1792674458.384049",
+         "user":"UJONAS","text":"requested reply"}]}])");
+    bool done = false, ok = false;
+    e.be->loadThread(c, root, [&](bool success, const std::string &) {
+        done = true;
+        ok = success;
+    });
+    REQUIRE(pumpUntil([&] { return done; }) && ok);
+    const model::Message *parent = e.store.findMessage(c, root);
+    REQUIRE(parent);
+    CHECK_STR(parent->text, "old parent");
+    REQUIRE(e.store.replies(c, root));
+    CHECK(e.store.replies(c, root)->size() == 1);
+    CHECK(e.store.replies(c, root)->front().ts == reply);
+    CHECK(e.store.indexOf(c, root) == SIZE_MAX);
+    CHECK(e.store.conversation(c).messages.size() == 1);
+    CHECK(e.store.conversation(c).messages.front().ts == recent);
+    CHECK_STR(Log().get("conversations.replies")["form"]["ts"].str(), "1792674458.384049");
+}
+
 // The thread download relies on it: one failed page fails the whole load
 // (no partial thread reported as complete), and a looping cursor ends.
 TEST("slack read: a failed replies page fails the thread load; a looping cursor stops") {

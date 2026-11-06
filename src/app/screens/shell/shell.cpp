@@ -2333,7 +2333,14 @@ void Shell::openThread(ConvRef conv, Ts root) {
 #endif
     _thread->setVisible(true); // ThreadBody fits the saved width to the window
     _splitter->setVisible(true);
+#ifdef MSGA_HAVE_MESSAGES
+    // MessageList loads a thread missing from the Store. Refresh here only
+    // when it already has replies, avoiding two competing initial fetches.
+    if (_ctx.store().replies(conv, root))
+        _ctx.backend.loadThread(conv, root, nullptr);
+#else
     _ctx.backend.loadThread(conv, root, nullptr);
+#endif
     _ctx.backend.setActiveConversation(conv, root);
     // The focus stays where it was (the reply bar that opened it).
 }

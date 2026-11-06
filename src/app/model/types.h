@@ -249,6 +249,10 @@ struct Message {
 struct Thread {
     Ts                   root = 0;
     std::vector<Message> replies; // oldest first
+    // A permalink can open a thread older than the channel's loaded history.
+    // Keep its fetched parent here rather than splicing it into channel history
+    // and corrupting the cursor used to load earlier channel pages.
+    std::unique_ptr<Message> parent;
 };
 
 // A new metadata field also goes into store.cpp's sameMeta (addConversation

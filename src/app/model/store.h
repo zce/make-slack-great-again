@@ -165,6 +165,9 @@ public:
     // A message by ts, top-level or in any loaded thread; null if absent.
     Message                    *findMessage(ConvRef c, Ts ts);
     const Message              *findMessage(ConvRef c, Ts ts) const;
+    // A parent fetched via conversations.replies when the channel's history
+    // does not contain it. Stored on its thread, not in the channel timeline.
+    void setThreadRoot(ConvRef c, Message root);
     // Replies of a loaded thread (null if never loaded).
     const std::vector<Message> *replies(ConvRef c, Ts root) const;
     // Position of ts in the top-level list (thread == 0) or in a thread;
