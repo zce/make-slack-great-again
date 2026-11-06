@@ -459,6 +459,10 @@ TEST("proxy: environment precedence, bypass and invalid settings") {
     base::test::setEnv("NO_PROXY", "api.slack.com:8080");
     CHECK(net::detail::proxyFor(http).kind == Kind::Direct);
     CHECK(net::detail::proxyFor(https).kind == Kind::Http);
+    base::test::setEnv("NO_PROXY", "slack.com");
+    CHECK(net::detail::proxyFor(https).kind == Kind::Direct);
+    base::test::setEnv("NO_PROXY", "fake-slack.com");
+    CHECK(net::detail::proxyFor(https).kind == Kind::Http);
     base::test::setEnv("https_proxy", "https://localhost:7890");
     p = net::detail::proxyFor(https);
     CHECK(p.kind == Kind::Invalid);
