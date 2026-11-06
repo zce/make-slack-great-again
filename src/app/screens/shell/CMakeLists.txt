@@ -28,7 +28,6 @@ add_library(msga_screens_shell STATIC
     shortcuts.cpp
     shell.cpp
     shell_agents.cpp
-    shell_links.cpp
     shell_notify.cpp
     shell_text.cpp
     sidebar.cpp
@@ -62,7 +61,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         "extern const unsigned kMsgaIconPngSize = ${_size};\n")
     target_sources(msga_screens_shell PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/msga_icon_png.cpp")
 endif()
-target_link_libraries(msga_screens_shell PUBLIC msga_screens_common msga_app_core msga_app_slack msga_app_claude msga_app_llm msga_app_spell msga_ui msga_screens_settings msga_flags)
+target_link_libraries(msga_screens_shell PUBLIC msga_screens_common msga_app_core msga_app_slack msga_app_llm msga_app_spell msga_ui msga_screens_settings msga_flags)
 if(TARGET msga_screens_messages)
     target_link_libraries(msga_screens_shell PUBLIC msga_screens_messages)
     target_compile_definitions(msga_screens_shell PUBLIC MSGA_HAVE_MESSAGES=1)
@@ -93,7 +92,7 @@ if(MSGA_DEMO)
     # msga's scripted walkthrough (--demo-tour) and the leak soak (--soak):
     # demo builds only.
     target_sources(msga PRIVATE
-        demo/tour.cpp demo/tour_script.cpp demo/soak.cpp demo/claude_demo.cpp)
+        demo/tour.cpp demo/tour_script.cpp demo/soak.cpp)
     target_link_libraries(msga PRIVATE msga_app_fake)
     target_compile_definitions(msga PRIVATE MSGA_DEMO)
     # Demo mode's own checks (the tour parser, ../../../../demo's tour.json and

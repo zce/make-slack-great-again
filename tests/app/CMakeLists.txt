@@ -11,7 +11,6 @@
 #     msga_app_tests test_shell             # what ctest test shell_tests runs
 #     msga_app_tests test_messages image    # one case group (messages_image)
 #
-# Labelled by directory: `ctest -L claude` runs every Claude Code suite.
 add_executable(msga_app_tests main.cpp)
 target_link_libraries(msga_app_tests PRIVATE msga_test)
 target_compile_definitions(msga_app_tests PRIVATE
@@ -19,7 +18,7 @@ target_compile_definitions(msga_app_tests PRIVATE
     MSGA_TEST_ASSETS="${MSGA_TEST_ASSETS}")
 
 add_subdirectory(core)
-foreach(part claude llm spell legacy)
+foreach(part llm spell legacy)
     if(TARGET msga_app_${part})
         add_subdirectory(${part})
     endif()

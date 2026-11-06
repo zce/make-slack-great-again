@@ -3,11 +3,6 @@
 #include "app/cache/workspace_cache.h"
 #include "app/identity.h"
 #include "app/model/jobs.h"
-#include "app/claude/backend.h"
-#include "app/claude/cli.h"
-#include "app/claude/common.h"
-#include "app/claude/links.h"
-#include "app/claude/roles.h"
 #include "app/slack/oauth.h"
 #include "app/slack/session.h"
 #include "app/slack/slack_backend.h"
@@ -40,8 +35,6 @@ constexpr int kRetryMs   = 15000; // offline at start: try again
 // not a burst on top of the others'.
 constexpr int kStaggerMs = 1500;
 
-enum : int { kAddSlack = 1, kAddClaudeCode };
-
 // The server's workspace icon, downloaded once: named by its URL, so a new
 // icon is a new file (and never a stale decoded copy).
 std::string iconCachePath(plat::App &app, const std::string &url) {
@@ -73,7 +66,6 @@ struct Accounts::Running {
     model::Store                    store; // before backend: it outlives it
     std::unique_ptr<model::Backend> backend;
     slack::SlackBackend            *slack      = nullptr; // backend, a Slack workspace
-    claude::Backend                *claude     = nullptr; // backend, a Claude Code workspace
     plat::TimerId                   retryTimer = 0;
     net::RequestId                  iconReq    = 0;
     model::ConvRef                  lastOpen   = model::kNoConv; // shown when it was left
@@ -95,20 +87,6 @@ Accounts::Accounts(
       _saveSettings(std::move(saveSettings)), _proxy(proxy), _client(client),
       _store(std::move(storePath)), _none(none), _blank(ctx.store()) {
     imageAuth();
-    // The links live in the Claude Code workspace's files (links.json) and
-    // fetch the askers' files into its cache.
-    plat::App        &pa    = ctx.app.platform();
-    const std::string data  = identity::dataDir(pa);
-    const std::string cache = identity::cacheDir(pa);
-    _links                  = std::make_unique<claude::Links>(
-        pa,
-        data.empty() ? std::string() : file::join(data, "claude-code/links.json"),
-        cache.empty() ? std::string() : file::join(cache, "claude-code")
-    );
-    _links->plainText = [](const model::Store &st, std::string_view text) {
-        return screens::plainText(st, text, true);
-    };
-    _shell.setAgentLinks(_links.get());
 }
 
 Accounts::~Accounts() {
@@ -123,7 +101,6 @@ Accounts::~Accounts() {
     _proxy.setTarget(_none);
     _ctx.store.setTarget(_blank);
     _active = nullptr;
-    _shell.setAgentLinks(nullptr);
     for (const auto &r : _running)
         shutdown(*r, true);  // quitting: what changed in the last second too
     model::stopBackground(); // the work still under way reports to nobody
@@ -132,18 +109,28 @@ Accounts::~Accounts() {
     if (_migration && _migration->req)
         _client.cancel(_migration->req);
     _running.clear();
-    _links.reset();
 }
 
 void Accounts::start() {
-    if (_store.active().empty())
+    // A previous upstream installation may have left a Claude Code record active.
+    // Ignore it, and open a Slack workspace without deleting stored credentials.
+    std::string selected;
+    if (const auto *r = _store.find(_store.active()); r && r->service == slack::kService)
+        selected = r->key();
+    if (selected.empty())
+        for (const auto &r : _store.all())
+            if (r.service == slack::kService) {
+                selected = r.key();
+                break;
+            }
+    if (selected.empty())
         showSignedOut();
     else
-        activate(_store.active());
+        activate(selected);
     // The rest still connect — badges and notifications must not
     // depend on clicking each one — one at a time after the open one.
     for (const auth::WorkspaceRecord &r : _store.all())
-        if (!r.hasKey(_activeKey))
+        if (r.service == slack::kService && !r.hasKey(_activeKey))
             _pending.push_back(r.key());
     startNext();
 }
@@ -164,35 +151,8 @@ void Accounts::startNext() {
     });
 }
 
-void Accounts::promptAdd(ui::PointF anchor) {
-    // Slack, and Claude Code (a single-workspace service, greyed out once
-    // added). Teams and IMAP are not part of this app.
-    std::vector<ui::MenuItem> items;
-    items.push_back({kAddSlack, "Slack"});
-    ui::MenuItem cc{kAddClaudeCode, "Claude Code"};
-    for (const auto &r : _store.all())
-        cc.enabled = cc.enabled && r.service != claude::kService; // one per machine
-    items.push_back(cc);
-    ui::Menu::popupAt(_win, anchor, std::move(items), [this](int id) {
-        // After the menu has gone, before a browser opens.
-        _ctx.app.platform().post([this, id] {
-            if (id == kAddSlack)
-                connectSlack();
-            else if (id == kAddClaudeCode)
-                connectClaudeCode();
-        });
-    });
-}
-
-void Accounts::connectClaudeCode() {
-    // Accounts lives as long as the app: the answer always finds it.
-    claude::checkSetup(_ctx.app.platform(), [this](claude::Credentials creds, std::string error) {
-        if (!error.empty()) {
-            showMessage(_win, tr("Login failed"), error);
-            return;
-        }
-        adoptRecord(claude::toRecord(creds));
-    });
+void Accounts::promptAdd(ui::PointF) {
+    connectSlack();
 }
 
 void Accounts::connectSlack() {
@@ -315,22 +275,6 @@ bool Accounts::handleUrl(std::string_view url) {
     return _oauth && _oauth->handleCallback(url);
 }
 
-namespace {
-
-// The Claude Code workspace's own files: <dataDir>/claude-code (the team,
-// known sessions, your profile) and <cacheDir>/claude-code — the folders
-// earlier versions used, whose files keep their format (app/identity.h).
-void setClaudeDirs(plat::App &app) {
-    const std::string data  = identity::dataDir(app);
-    const std::string cache = identity::cacheDir(app);
-    claude::Dirs      d;
-    d.data  = data.empty() ? std::string() : file::join(data, "claude-code");
-    d.cache = cache.empty() ? std::string() : file::join(cache, "claude-code");
-    claude::setDirs(std::move(d));
-}
-
-} // namespace
-
 Accounts::Running *Accounts::find(const std::string &key) const {
     for (const auto &r : _running)
         if (r->key == key)
@@ -352,7 +296,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
     if (Running *r = find(key))
         return r;
     const auth::WorkspaceRecord *rec = _store.find(key);
-    if (!rec || (rec->service != slack::kService && rec->service != claude::kService))
+    if (!rec || rec->service != slack::kService)
         return nullptr;
     plat::App &pa          = _ctx.app.platform();
     auto       r           = std::make_unique<Running>();
@@ -369,31 +313,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
         if (Running *x = bySerial(serial); x && x == _active)
             _shell.showError(message);
     };
-    if (rec->service == claude::kService) {
-        setClaudeDirs(pa);
-        auto backend      = std::make_unique<claude::Backend>(st, pa, claude::fromRecord(*rec));
-        backend->onError  = onError;
-        // A message it never sent: back in its composer, whichever workspace is shown.
-        backend->onUnsent = [this, serial](
-                                model::ConvRef                  conv,
-                                model::Ts                       thread,
-                                const std::string              &text,
-                                const std::vector<std::string> &files
-                            ) {
-            if (Running *x = bySerial(serial))
-                _shell.giveBackUnsent(x->key, x->store, conv, thread, text, files);
-        };
-        backend->onCommandsChanged = [this, serial] {
-            if (Running *x = bySerial(serial))
-                _shell.commandsChanged(x->key);
-        };
-        backend->setZenMode(_settings.zenMode(key));
-        backend->setWindowVisible(_shell.windowVisible());
-        r->claude  = backend.get();
-        r->backend = std::move(backend);
-        _links->setAgents(&st, r->claude);
-    } else {
-        const std::string cached = iconCachePath(pa, rec->iconUrl);
+    const std::string cached = iconCachePath(pa, rec->iconUrl);        const std::string cached = iconCachePath(pa, rec->iconUrl);
         st.workspaceIcon         = !cached.empty() && file::exists(cached) ? cached : std::string();
         auto backend =
             std::make_unique<slack::SlackBackend>(st, pa, _client, slack::fromRecord(*rec));
@@ -430,8 +350,6 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
         backend->setWindowVisible(_shell.windowVisible()); // started while hidden: polls slowly
         r->slack   = backend.get();
         r->backend = std::move(backend);
-        _links->attach(st, *r->slack);
-    }
     Running *raw = r.get();
     _running.push_back(std::move(r));
     imageAuth(); // a workspace signing in is the usual cure for a failed picture
@@ -478,12 +396,6 @@ void Accounts::shutdown(Running &r, bool keepCache) {
         _client.cancel(r.iconReq);
     if (r.slack)
         r.slack->closeCache(keepCache);
-    if (r.claude)
-        r.claude->close(); // nothing more goes into the Store it is about to lose
-    if (r.claude)
-        _links->setAgents(nullptr, nullptr);
-    else
-        _links->detach(r.store);
 }
 
 void Accounts::drop(Running *r, bool keepCache) {
@@ -554,7 +466,7 @@ void Accounts::activate(const std::string &key) {
 bool Accounts::restoreLast(Running &r) {
     model::ConvRef last = r.lastOpen;
     if (last == model::kNoConv)
-        last = r.slack ? r.slack->lastConversation() : r.claude->lastConversation();
+        last = r.slack->lastConversation();
     if (last >= r.store.conversationCount() || !r.store.conversation(last).member)
         return false;
     _shell.open(last);
@@ -584,11 +496,6 @@ void Accounts::connect(uint64_t serial) {
                 }
             }
             fetchIcon(*r);
-            // Its links watched (again), turns a restart cut short taken up.
-            if (r->claude)
-                _links->agentsReady();
-            else
-                _links->ready(r->store);
             const bool first = !r->live;
             r->live          = true;
             _shell.setWorkspaceLive(r->key, true);
@@ -827,27 +734,23 @@ void Accounts::refreshRail() {
     plat::App                    &pa = _ctx.app.platform();
     std::vector<Shell::Workspace> list;
     for (const auth::WorkspaceRecord &r : _store.all()) {
+        if (r.service != slack::kService)
+            continue; // Ignore persisted Claude workspaces without deleting their data.
         Shell::Workspace w;
         w.key   = r.key();
         w.id    = r.id;
         w.name  = r.displayName;
         w.muted = r.muted;
-        if (r.service == claude::kService) {
-            setClaudeDirs(pa); // the picture is one of its files
-            w.icon = claude::agentAvatarPath();
-        } else if (
-            const std::string cached = iconCachePath(pa, r.iconUrl);
-            !cached.empty() && file::exists(cached)
-        ) {
+        if (const std::string cached = iconCachePath(pa, r.iconUrl);
+            !cached.empty() && file::exists(cached))
             w.icon = cached; // downloaded while it was open
-        }
         list.push_back(std::move(w));
     }
     _shell.setWorkspaces(std::move(list), _activeKey);
 }
 
 void Accounts::switchTo(const std::string &key) {
-    if (key != _activeKey && _store.find(key))
+    if (key != _activeKey && _store.find(key) && _store.find(key)->service == slack::kService)
         activate(key);
 }
 

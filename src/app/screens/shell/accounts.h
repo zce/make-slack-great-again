@@ -1,4 +1,4 @@
-// Signing in and out (adding a workspace, connecting Slack or Claude Code,
+// Signing in and out (adding Slack workspaces,
 // importing sessions, signing out, switching): owns the workspace store and
 // every signed-in workspace's backend and Store. They all run —
 // the open one behind the screens' BackendProxy and StoreSlot, the others
@@ -19,9 +19,6 @@
 #include <string>
 #include <vector>
 
-namespace claude {
-class Links;
-}
 namespace net {
 class Client;
 }
@@ -57,9 +54,6 @@ public:
     void promptAdd(ui::PointF anchor);
     // Slack's sign-in (the session-import dialog first).
     void connectSlack();
-    // The Claude Code workspace: nothing to sign in to — the CLI must be
-    // there and logged in.
-    void connectClaudeCode();
     // OAuth with app keys ("Use app keys (OAuth) instead").
     void loginWithAppKeys();
     // A msga:// URL from the OS (the OAuth callback). True if consumed.
@@ -82,9 +76,6 @@ public:
     int  oauthSlackWorkspaces() const;
 
     auth::WorkspaceStore &store() { return _store; }
-    // Agent thread links: every running workspace is handed to them (the
-    // shell's robot, menus and chips read and drive them).
-    claude::Links        &links() { return *_links; }
 
 private:
     struct Running; // a signed-in workspace's backend and Store, open or not
@@ -148,7 +139,6 @@ private:
     std::unique_ptr<slack::OAuthFlow>     _oauth;
     std::unique_ptr<slack::TokenDeriver>  _remint;
     std::weak_ptr<slack::SocketMode>      _socketMode; // held by the Slack backends
-    std::unique_ptr<claude::Links>        _links;
 };
 
 } // namespace shell

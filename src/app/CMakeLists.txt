@@ -84,9 +84,6 @@ if(MSGA_SELF_UPDATE)
     target_link_libraries(msga_app_update PUBLIC msga_app_core msga_net msga_flags)
 endif()
 
-# msga_app_claude — the Claude Code workspace (claude/CMakeLists.txt).
-add_subdirectory(claude)
-
 # msga_app_llm — AI providers and what is asked of them (llm/CMakeLists.txt).
 add_subdirectory(llm)
 
