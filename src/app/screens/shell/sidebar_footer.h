@@ -3,10 +3,7 @@
 // profile" / "Manage status"), and on the right the presence toggle —
 // visible (circle-user-round) or hidden (hat-glasses), flipped at once and
 // settled on what the service reports, its tooltip saying why I look away.
-// A service with zen mode (Claude Code, Capabilities::zenMode) and nothing
-// to be away from shows the zen toggle there instead: the leaf while tool
-// calls are hidden, the eye while everything shows. While background jobs
-// run (model::jobs(): downloads, copies, …) a turning cog sits left of the
+// While background jobs run (downloads, copies, …), a cog sits left of the
 // toggle; hovering it lists them ("%n background task(s) running").
 // Below them, behind a separator, "Show workspaces" (panel-left), ticked
 // while the workspace rail shows; unticking it gives a small screen the
@@ -24,7 +21,6 @@ namespace shell {
 
 class Sidebar;
 class PresenceToggle;
-class GhostButton;
 class TaskSpinner;
 
 class SidebarFooter : public ui::View {
@@ -41,13 +37,6 @@ public:
 
     // The avatar menu's items; unset ones show disabled.
     std::function<void()>        onManageProfile, onManageStatus, onOpenSettings;
-    // The zen toggle was clicked; `on` is the new state (already shown).
-    std::function<void(bool on)> onZenToggled;
-    void                         setZenOn(bool on);
-    bool                         zenOn() const { return _zenOn; }
-    void                         toggleZen();
-    ui::Clickable               *zenToggle() const;
-
     // The rail item was picked; `shown` is the new state.
     std::function<void(bool shown)> onRailToggled;
     void                            setRailShown(bool shown) { _railShown = shown; }
@@ -80,11 +69,9 @@ private:
     ui::View               *_spacer       = nullptr;
     Avatar                 *_avatar       = nullptr;
     PresenceToggle         *_toggle       = nullptr;
-    GhostButton            *_zen          = nullptr;
     TaskSpinner            *_tasks        = nullptr;
     ui::Popup              *_tasksPopup   = nullptr;
     model::Jobs::ObserverId _jobsObserver = 0;
-    bool                    _zenOn        = false;
     bool                    _railShown    = true;
     bool                    _inRail       = false;
     bool                    _inTitle      = false;

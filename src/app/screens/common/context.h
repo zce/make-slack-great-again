@@ -57,9 +57,7 @@ struct Context {
     // avatar, name or mention standing for the user, or clicked it (2);
     // the rect is its window rect.
     std::function<void(UserRef, ui::RectF, int mode)>             profileHover;
-    // A profile card's "Message", the member list: the
-    // user's DM, opened (or created) and shown — or, for a teammate (an
-    // agent's avatar in a Claude Code session, which has no DM), its page.
+    // A profile card's "Message": open or create the user's DM.
     std::function<void(UserRef)>                                  messageUser;
     // The Forward dialog for a message, or for one of its files ("Forward
     // this file", from the file bar's Share).
@@ -95,24 +93,6 @@ struct Context {
     // "Open settings"). Set by the shell.
     std::function<void()>                                            openAiSettings;
 
-    // Agent thread links (a Slack thread answered by a Claude Code session):
-    // what the hover toolbar's robot and the message menu offer for a
-    // message, and what their items do. Set by the shell while there are
-    // links to make; unset: nothing of it shows.
-    struct AgentLink {
-        bool offered  = false; // the robot, "Ask agent…" (a Claude Code workspace exists)
-        bool linked   = false; // its thread is linked: they open the agent's thread
-        bool canAllow = false; // linked; its author can't ask yet: "Allow <name> to ask agent"
-        bool root     = false; // linked, and it is the thread's root: "Unlink agent"
-    };
-    enum class AgentLinkAction : uint8_t { Ask, Allow, Unlink, OpenSource };
-    std::function<AgentLink(ConvRef, const model::Message &)> agentLink;
-    // OpenSource: (conv, root) is an agent's thread of a link (a branch of
-    // the session): the Slack thread it answers opens.
-    std::function<void(ConvRef, Ts ts, AgentLinkAction)>      agentLinkAction;
-    // An agent session's thread that answers a link: where its questions
-    // come from ("#general in Lumen", the thread panel's chip); "" = none.
-    std::function<std::string(ConvRef, Ts root)>              agentLinkSource;
 };
 
 } // namespace screens

@@ -13,7 +13,6 @@ const Preset kPresets[] = {
      "claude-haiku-4-5",
      "",
      false,
-     nullptr, // the Messages API has no audio endpoint
      "https://console.anthropic.com/settings/keys",
      {"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-fable-5-1"}},
     {"openai",
@@ -24,14 +23,11 @@ const Preset kPresets[] = {
      "gpt-5.6-luna",
      "none",
      true,
-     "gpt-transcribe",
      "https://platform.openai.com/api-keys",
      {"gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-astra"}},
 };
 
 } // namespace
-
-const char *const kCustomSttModel = "whisper-1";
 
 const Preset *preset(std::string_view id) {
     for (const Preset &p : kPresets)
@@ -56,15 +52,13 @@ Provider fromSettings(
     std::string_view name,
     std::string_view url,
     std::string_view key,
-    std::string_view model,
-    std::string_view sttModel
+    std::string_view model
 ) {
     Provider p;
     p.id       = std::string(id);
     p.name     = std::string(name);
     p.apiKey   = std::string(key);
     p.model    = std::string(model);
-    p.sttModel = std::string(sttModel);
     if (const Preset *pre = preset(id)) {
         p.isPreset             = true;
         p.format               = pre->format;
@@ -74,12 +68,8 @@ Provider fromSettings(
         p.maxCompletionTokens  = pre->maxCompletionTokens;
         if (p.model.empty())
             p.model = pre->defaultModel;
-        if (p.sttModel.empty() && pre->sttModel)
-            p.sttModel = pre->sttModel;
     } else {
         p.baseUrl = std::string(url);
-        if (p.sttModel.empty())
-            p.sttModel = kCustomSttModel;
     }
     return p;
 }

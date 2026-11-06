@@ -191,8 +191,6 @@ public:
         kCopyImage,
         kPreview,    // CSV files; shown disabled (no table viewer yet)
         kDeleteFile, // "Delete image…" / "Delete file…"
-        kAllowAsker, // agent thread links (Context::agentLink)
-        kUnlinkAgent,
         kRemindPreset = 40, // + 0…4: in 20 minutes … next week
         kRemindCustom = 45,
     };
@@ -240,7 +238,7 @@ public:
     // failed); the cards showing it are bound again when it arrives.
     const std::string *canvasPreview(const std::string &fileId, int *state);
 
-    // Something the toolbar shows changed elsewhere (an agent link came).
+    // Reposition the hover toolbar after external state changes.
     void refreshToolbar() { placeToolbar(); }
 
     void      layout() override;
@@ -323,7 +321,7 @@ private:
     std::vector<std::string>   _quickNames;  // what _tbQuick's buttons are for
     std::vector<std::string>   _quickImages; // and their pictures (Store::EmojiGlyph::image)
     ui::Clickable             *_tbEmoji = nullptr, *_tbForward = nullptr, *_tbMore = nullptr;
-    class ActionButton        *_tbSave = nullptr, *_tbAgent = nullptr;
+    class ActionButton        *_tbSave = nullptr;
     ui::View                  *_fileBar = nullptr, *_fileView = nullptr; // the hovered file
     Ts                         _fileTs = 0;
     std::string                _filePath;

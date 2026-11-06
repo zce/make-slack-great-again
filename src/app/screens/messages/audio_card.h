@@ -1,14 +1,9 @@
 // The inline audio player in the message list (the audio file card, its
-// play / pause, transcription and the transcript dialog).
+// play / pause and Slack transcript dialogs).
 //
-// An audio file (File::isAudio) shows as a 380×88 card: a round play/pause
-// button, the name over "0:05 (79 KB)" / "Loading…" / the error, a seek bar
-// with the time, and the "Transcribe with AI" button; under it, when the file
-// has a transcript (Slack's for a voice clip, or the user's own AI one), a
-// quoted line and "View transcript". A click on the card plays or pauses; one
-// file plays at a time (Context::audio, media/audio_player.h) and the
-// bytes come through screens::fetchFile into the audio cache as a background
-// job, from the source this platform can decode.
+// An audio file (File::isAudio) shows a card with playback controls,
+// a seek bar and optional Slack-provided transcript. Files download into
+// the audio cache through the normal background file fetch.
 #pragma once
 
 #include "app/screens/messages/context_fwd.h"
@@ -38,16 +33,8 @@ size_t audioCardLayoutBuilds();
 
 // Play or pause `f`: downloads it first when needed.
 void toggleAudio(Context &ctx, const model::File &f);
-// "Transcribe with AI": the transcript dialog, filled by the speech-to-text
-// provider (a cached result at once); the text then replaces the file's
-// transcript line (Store::setAiTranscript). `m` (may be null) names the
-// author in the subtitle.
-void startTranscription(Context &ctx, const model::File &f, const model::Message *m);
-// "View transcript": Slack's WebVTT cues (or the preview line), or the AI
-// one (`by` its provider, for the subtitle).
-void openTranscript(
-    Context &ctx, const model::File &f, const model::Message *m, const std::string &by = {}
-);
+// "View transcript": Slack's WebVTT cues (or the preview text).
+void openTranscript(Context &ctx, const model::File &f, const model::Message *m);
 
 // One WebVTT cue: start time and its text (speaker dashes/tags stripped).
 struct VttCue {

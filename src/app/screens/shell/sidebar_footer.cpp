@@ -253,10 +253,6 @@ SidebarFooter::SidebarFooter(Sidebar &, screens::Context &ctx, Avatars &avatars)
     };
     _toggle          = add<PresenceToggle>();
     _toggle->onClick = [this] { togglePresence(); };
-    _zen             = add<GhostButton>(Icon::Eye, std::string());
-    _zen->onClick    = [this] { toggleZen(); };
-    _zen->setVisible(false);
-    setZenOn(false);
     _jobsObserver = model::jobs().observe([this] { jobsChanged(); });
     jobsChanged();
 }
@@ -295,7 +291,6 @@ void SidebarFooter::setInTitleBar() {
     _avatar->style().size(30, 30);
     _avatar->setRadius(7);
     _toggle->setVisible(false);
-    _zen->setVisible(false);
     refresh();
 }
 
@@ -340,30 +335,10 @@ void SidebarFooter::hideTasksPopup() {
     }
 }
 
-void SidebarFooter::setZenOn(bool on) {
-    _zenOn = on;
-    _zen->setIcon(on ? Icon::Leaf : Icon::Eye);
-    _zen->setTooltip(
-        on ? tr("Zen mode is on: tool calls are hidden. Click to show everything.")
-           : tr("Zen mode is off. Click to hide tool calls for easier reading.")
-    );
-    _zen->update();
-}
-
-void SidebarFooter::toggleZen() {
-    setZenOn(!_zenOn);
-    if (onZenToggled)
-        onZenToggled(_zenOn);
-}
-
 void SidebarFooter::toggleRail() {
     _railShown = !_railShown;
     if (onRailToggled)
         onRailToggled(_railShown);
-}
-
-Clickable *SidebarFooter::zenToggle() const {
-    return _zen;
 }
 
 SidebarFooter::~SidebarFooter() {
@@ -378,9 +353,8 @@ void SidebarFooter::refresh() {
     const auto  caps  = _ctx.backend.capabilities();
     const auto  sp    = _ctx.backend.selfPresence();
     const auto &me    = store.user(store.me);
-    // Presence is supported with presence && self presence: a zen-mode service
-    // (Claude Code) has presence dots but no self presence to toggle.
-    const bool  self  = caps.presence && !caps.zenMode;
+    // Slack's own presence is available when the backend supports it.
+    const bool self = caps.presence;
     _avatar->setBitmap(_avatars.get(me.avatar, 80));
     _avatar->setInitial(me.label());
     using P           = Avatar::Presence;
@@ -397,8 +371,7 @@ void SidebarFooter::refresh() {
     );
     _avatarBtn->setTooltip(caps.selfStatus ? tr("Profile & status") : tr("Profile"));
     _toggle->setVisible(self && !_inRail);
-    _zen->setVisible(!self && caps.zenMode && !_inRail);
-    _tasks->style().margins(0, 0, !_inRail && (self || caps.zenMode) ? kTaskGap : 0, 0);
+    _tasks->style().margins(0, 0, !_inRail && self ? kTaskGap : 0, 0);
     if (!_confirm)
         _toggle->show(sp.manualAway, false);
     // The presence tooltip: while away only for want of a connected client,
@@ -498,7 +471,7 @@ void SidebarFooter::showAvatarMenu() {
         st.enabled = bool(onManageStatus);
         items.push_back(std::move(st));
     }
-    if (_inRail && caps.presence && !caps.zenMode) {
+    if (_inRail && caps.presence) {
         addMenuSeparator(items);
         MenuItem presence;
         presence.id    = 5;

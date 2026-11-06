@@ -1501,7 +1501,6 @@ void testSvg() {
     for (const char *f :
          {"icon.svg",
           "icon_tray.svg",
-          "claude_code_avatar.svg",
           "roles/designer.svg",
           "roles/engineer.svg",
           "roles/marketer.svg",

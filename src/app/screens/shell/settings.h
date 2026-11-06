@@ -26,7 +26,7 @@ namespace shell {
 // (id "anthropic", "openai"); a preset is connected once it has a key.
 // Custom OpenAI-compatible servers have an id "custom-N" and a URL.
 struct AiProvider {
-    std::string id, name, url, key, model, sttModel;
+    std::string id, name, url, key, model;
     bool        preset() const { return id == "anthropic" || id == "openai"; }
     bool        connected() const { return preset() ? !key.empty() : !url.empty(); }
 };
@@ -70,10 +70,6 @@ struct Settings {
     int                      quickReactions = 0;
     std::vector<std::string> quickReactionNames;
     bool                     customTrayIcon = false;
-    // Claude Code workspaces: the footer's zen toggle (hide the tool-call
-    // cards), per workspace: the keys of the
-    // workspaces with it on ("claude-code:local", auth::WorkspaceRecord::key).
-    std::vector<std::string> zenWorkspaces;
     std::string              trayIconPath; // the picture for the custom tray icon
 
     // ── Composer state ──────────────────────────────────────────────────────
@@ -91,8 +87,6 @@ struct Settings {
     std::vector<AiProvider> ai;            // presets first
     std::string             aiDefault;     // the provider the assistant uses
     std::string             aiLanguage;    // "" = follow the app language
-    std::string             voiceGlossary; // one term per line
-    bool                    voiceCleanup = true;
 
     // ── Storage / System ────────────────────────────────────────────────────
     int         cacheLimitMb    = 250;
@@ -114,23 +108,9 @@ struct Settings {
     std::vector<SectionSortPref> sidebarSorts;
     bool                         trayMonochrome = true; // the custom tray icon turned monochrome
 
-    // ── Claude Code ─────────────────────────────────────────────────────────
-    // The folder the last session started in (claudeCode/lastDir; "" = home),
-    // the recently used ones, newest first (claudeCode/recentDirs, see
-    // recent_folders.h), and each teammate's own pick (claudeCode/lastDir/<id>).
-    struct RecentDir {
-        std::string path;
-        int64_t     usedAt = 0; // epoch seconds
-    };
-    std::string                                      claudeLastDir;
-    std::vector<RecentDir>                           claudeRecentDirs;
-    std::vector<std::pair<std::string, std::string>> claudeTeammateDirs; // role id → folder
-
     float       fontScale() const { return fontSize == 0 ? 0.9f : fontSize == 2 ? 1.15f : 1.f; }
     // The palettes and custom palette into the toolkit (ui::setPalette …).
     void        applyPalettes() const;
-    bool        zenMode(std::string_view workspaceKey) const;
-    void        setZenMode(const std::string &workspaceKey, bool on);
     AiProvider *provider(std::string_view id);
     const AiProvider  *provider(std::string_view id) const;
     // The language AI features answer in: the one picked, else the app

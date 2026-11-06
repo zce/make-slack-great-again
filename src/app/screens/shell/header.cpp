@@ -6,7 +6,7 @@
 #include "gfx/icons_generated.h"
 #include "screens/common/user_search.h"
 #include "screens/shell/nav_chrome.h"
-#include "screens/shell/session_dialogs.h"
+#include "screens/shell/browse_list.h"
 #include "screens/shell/shell_text.h"
 
 #include <algorithm>

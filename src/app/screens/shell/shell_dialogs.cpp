@@ -535,7 +535,6 @@ private:
         _composer->style().padding(0);
         _composer->style().maxH = 120;
         _composer->setPlaceholder(tr("Add a message, if you'd like."));
-        _composer->setVoiceInput(false); // no voice input when forwarding
         if (!cm.empty())
             loadMrkdwn(_composer->edit(), tc.store(), cm);
         _composer->onSendRequest = [this] {

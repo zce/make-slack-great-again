@@ -35,7 +35,6 @@ constexpr ui::MenuDef kDefs[] = {
     {Menus::kUnmute, kNone, N_("Unmute"), nullptr, nullptr},
     {Menus::kRename, kNone, N_("Name conversation…"), nullptr, nullptr},
     {Menus::kLeave, kNone, N_("Leave channel"), N_("Leave conversation"), nullptr},
-    {Menus::kStopSession, kNone, N_("Stop"), nullptr, nullptr},
     {Menus::kNewSection, kNone, N_("New section…"), nullptr, nullptr},
     {Menus::kRemoveFromSection, kNone, N_("Remove from %1"), nullptr, nullptr},
     {Menus::kWorkspaceAdmin, kNone, N_("Workspace admin"), nullptr, nullptr},
@@ -43,12 +42,6 @@ constexpr ui::MenuDef kDefs[] = {
     {Menus::kMuteWorkspace, kNone, N_("Mute"), nullptr, nullptr},
     {Menus::kUnmuteWorkspace, kNone, N_("Unmute"), nullptr, nullptr},
     {Menus::kSignOut, kNone, N_("Log out"), nullptr, nullptr},
-    {Menus::kFindSession, kNone, N_("Find a session"), nullptr, nullptr},
-    {Menus::kCreateSession, kNone, N_("Create a session"), nullptr, nullptr},
-    {Menus::kCreateUnsafeSession, kNone, N_("Create an unsafe session"), nullptr, nullptr},
-    {Menus::kEditTeammate, kNone, N_("Edit teammate…"), nullptr, nullptr},
-    {Menus::kRestoreTeammate, kNone, N_("Restore default"), nullptr, nullptr},
-    {Menus::kRemoveTeammate, kNone, N_("Remove teammate…"), nullptr, nullptr},
     {Menus::kCreateSection, kNone, N_("Create a section…"), nullptr, nullptr},
     {Menus::kRenameSection, kNone, N_("Rename section…"), nullptr, nullptr},
     {Menus::kDeleteSection, kNone, N_("Delete section…"), nullptr, nullptr},
@@ -62,7 +55,7 @@ constexpr ui::MenuDef kDefs[] = {
 
 ui::MenuItem &add(std::vector<ui::MenuItem> &out, int id, bool direct = false, bool on = true) {
     ui::MenuItem &m = ui::addMenuItem(out, kDefs, id, direct, on);
-    m.danger = id == Menus::kLeave || id == Menus::kSignOut || id == Menus::kRemoveTeammate ||
+    m.danger = id == Menus::kLeave || id == Menus::kSignOut ||
                id == Menus::kDeleteSection;
     return m;
 }
@@ -128,15 +121,6 @@ std::vector<ui::MenuItem> Menus::chatItems(ConvRef c) const {
     ui::addMenuSeparator(items);
     if (cv.kind == ConvKind::Dm) { // showDmContextMenu
         add(items, cv.muted ? kUnmute : kMute);
-        if (_ctx.backend.isAgentSession(c)) {
-            // Claude Code: stop a running turn; the session stays in Claude
-            // Code when it leaves the list.
-            if (_ctx.backend.canStopSession(c))
-                add(items, kStopSession);
-            add(items, kRename).label = tr("Rename session…");
-            ui::addMenuSeparator(items);
-            add(items, kLeave).label = tr("Remove from msga");
-        }
         return items;
     }
     notifySection(items, _shell.sidebar().level(cv));
@@ -167,28 +151,6 @@ std::vector<ui::MenuItem> Menus::workspaceItems(const Workspace &w) const {
         name.empty() ? std::string(tr("Log out")) : i18n::arg(tr("Log out from %1"), name);
     return items;
 }
-
-std::vector<ui::MenuItem> Menus::sessionItems() const {
-    std::vector<ui::MenuItem> items;
-    for (int id : {int(kFindSession), int(kCreateSession), int(kCreateUnsafeSession)})
-        add(items, id);
-    return items;
-}
-
-std::vector<ui::MenuItem> Menus::teammateItems(const model::Backend::AgentRole &mate) const {
-    std::vector<ui::MenuItem> items;
-    add(items, kEditTeammate);
-    if (mate.builtIn && mate.edited)
-        add(items, kRestoreTeammate);
-    if (!mate.builtIn) {
-        ui::addMenuSeparator(items);
-        add(items, kRemoveTeammate);
-    }
-    return items;
-}
-
-// The original teammate actions are unavailable in the Slack-only fork.
-void Menus::runTeammate(int, const std::string &) {}
 
 std::vector<ui::MenuItem> Menus::sectionItems(const std::string &section, SectionSort sort) const {
     std::vector<ui::MenuItem> items;
@@ -279,7 +241,7 @@ void Menus::run(int id, uint32_t target) {
             _ctx.backend.moveToSection(target, all[size_t(id - kMoveToSection)].id);
         return;
     }
-    if (id >= kFindSession) // legacy agent menu IDs are inert
+    if (id >= kCreateSection) // section menus use runSection()
         return;
     model::Store   &st = _ctx.store;
     model::Backend &be = _ctx.backend;
@@ -321,9 +283,6 @@ void Menus::run(int id, uint32_t target) {
             be.leave(target);
             break;
         }
-        case kStopSession:
-            be.stopSession(target);
-            break;
         case kNewSection:
             showSectionDialog(_ctx, _win, {}, target);
             break;
@@ -379,24 +338,6 @@ void Menus::showWorkspace(const Workspace &w, ui::PointF at) {
     _ws = w;
     if (ui::Menu *m = show(workspaceItems(w), 0, at))
         m->setMinWidth(140); // at least 140 px, wider for longer labels
-}
-
-void Menus::showSessions(ui::PointF at) {
-    if (!_ctx.backend.capabilities().agentSessions)
-        return;
-    if (ui::Menu *m = show(sessionItems(), 0, at))
-        m->setMinWidth(140); // at least 140 px, wider for longer labels
-}
-
-void Menus::showTeammate(const std::string &role, ui::PointF at) {
-    for (const auto &mate : _ctx.backend.agentRoles())
-        if (mate.id == role) {
-            ui::Menu::popupAt(_win, at, teammateItems(mate), [this, role](int id) {
-                if (id)
-                    runTeammate(id, role);
-            });
-            return;
-        }
 }
 
 } // namespace shell

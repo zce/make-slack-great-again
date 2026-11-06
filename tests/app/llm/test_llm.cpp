@@ -267,7 +267,7 @@ TEST("wire: parse models") {
 // ── Providers ──────────────────────────────────────────────────────────────
 
 TEST("provider: presets and custom servers from the settings") {
-    llm::Provider a = llm::fromSettings("anthropic", "Anthropic", "", "", "", "");
+    llm::Provider a = llm::fromSettings("anthropic", "Anthropic", "", "", "");
     CHECK(a.isPreset);
     CHECK_FALSE(a.connected()); // a preset needs a key
     CHECK_STR(a.model, "claude-opus-5");
@@ -277,19 +277,17 @@ TEST("provider: presets and custom servers from the settings") {
     a.apiKey = "k";
     CHECK(a.connected());
 
-    llm::Provider o = llm::fromSettings("openai", "OpenAI", "", "k", "gpt-6-astra", "");
+    llm::Provider o = llm::fromSettings("openai", "OpenAI", "", "k", "gpt-6-astra");
     CHECK_STR(o.model, "gpt-6-astra");
-    CHECK_STR(o.sttModel, "gpt-transcribe");
     CHECK(o.endpoint(o.summaryModel()).reasoningEffort == "none"); // the light tier
     CHECK(o.endpoint(o.model).reasoningEffort.empty());
     CHECK(o.endpoint().maxCompletionTokens);
 
     llm::Provider c =
-        llm::fromSettings("custom-1", "vLLM", "http://localhost:8000/v1", "", "qwen", "");
+        llm::fromSettings("custom-1", "vLLM", "http://localhost:8000/v1", "", "qwen");
     CHECK_FALSE(c.isPreset);
     CHECK(c.connected()); // the key is optional
     CHECK_STR(c.summaryModel(), "qwen");
-    CHECK_STR(c.sttModel, "whisper-1");
     CHECK(llm::preset("custom-1") == nullptr);
     REQUIRE(llm::preset("openai") != nullptr);
     CHECK_STR(llm::preset("openai")->keyUrl, "https://platform.openai.com/api-keys");
@@ -299,9 +297,9 @@ TEST("service: the active provider") {
     llm::Service s(app());
     CHECK_FALSE(s.available());
     std::vector<llm::Provider> list;
-    list.push_back(llm::fromSettings("anthropic", "Anthropic", "", "", "", ""));
-    list.push_back(llm::fromSettings("openai", "OpenAI", "", "k", "", ""));
-    list.push_back(llm::fromSettings("custom-1", "Box", "http://box/v1", "", "m", ""));
+    list.push_back(llm::fromSettings("anthropic", "Anthropic", "", "", ""));
+    list.push_back(llm::fromSettings("openai", "OpenAI", "", "k", ""));
+    list.push_back(llm::fromSettings("custom-1", "Box", "http://box/v1", "", "m"));
     s.setProviders(list, "anthropic"); // the default is not connected: the first that is
     REQUIRE(s.active());
     CHECK_STR(s.active()->id, "openai");
@@ -344,7 +342,7 @@ TEST("service: the stand-in answers in-process, only while nothing is connected"
     llm::Service s(app());
     std::string  asked;
     s.setStandIn(
-        llm::fromSettings("local", "Local AI", "local:", "", "local-1", ""),
+        llm::fromSettings("local", "Local AI", "local:", "", "local-1"),
         [&](std::string_view req) {
             asked = std::string(req);
             return std::string("canned");
@@ -363,7 +361,7 @@ TEST("service: the stand-in answers in-process, only while nothing is connected"
     CHECK(got.ok);
     CHECK_STR(got.response.text, "canned");
     CHECK(asked.find("Hi \"there\"") != std::string::npos);
-    s.setProviders({llm::fromSettings("openai", "OpenAI", "", "k", "", "")}, "");
+    s.setProviders({llm::fromSettings("openai", "OpenAI", "", "k", "")});
     CHECK_STR(s.active()->id, "openai");
 }
 
@@ -378,9 +376,9 @@ TEST("service: chat over both wires") {
     fakellm::ctl(app(), "POST", "/_ctl/reset");
     llm::Service  s(app());
     // The Anthropic wire, as the preset speaks it, pointed at the fake.
-    llm::Provider a = llm::fromSettings("anthropic", "Anthropic", "", "sk-test", "", "");
+    llm::Provider a = llm::fromSettings("anthropic", "Anthropic", "", "sk-test", "");
     a.baseUrl       = base;
-    llm::Provider c = llm::fromSettings("custom-1", "Fake", base + "/v1", "", "fake-large", "");
+    llm::Provider c = llm::fromSettings("custom-1", "Fake", base + "/v1", "", "fake-large");
 
     llm::ChatResult got;
     bool            done = false;
@@ -429,7 +427,7 @@ TEST("service: errors and the model list from the server") {
         R"([{"__status":401,"error":{"message":"Incorrect API key provided"}}])"
     );
     llm::Service  s(app());
-    llm::Provider c = llm::fromSettings("custom-1", "Fake", base + "/v1", "bad", "m", "");
+    llm::Provider c = llm::fromSettings("custom-1", "Fake", base + "/v1", "bad", "m");
     s.setProviders({c}, "custom-1");
     llm::ChatResult got;
     bool            done = false;
@@ -454,7 +452,7 @@ TEST("service: errors and the model list from the server") {
 
     // Nothing listens on the old port of a stopped server: a transport error.
     llm::Provider dead =
-        llm::fromSettings("custom-2", "Dead", "http://127.0.0.1:9/v1", "", "m", "");
+        llm::fromSettings("custom-2", "Dead", "http://127.0.0.1:9/v1", "", "m");
     done = false;
     s.chat(dead, oneQuestion(), [&](llm::ChatResult r) {
         got  = std::move(r);

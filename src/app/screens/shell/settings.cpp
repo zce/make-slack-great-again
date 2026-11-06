@@ -46,7 +46,6 @@ const struct {
     {"notifyHuddles", &Settings::notifyHuddles},
     {"boldMentionsOnly", &Settings::boldMentionsOnly},
     {"notifySound", &Settings::notifySound},
-    {"voiceCleanup", &Settings::voiceCleanup},
     {"autoUpdates", &Settings::autoUpdates},
     {"minimizeToTray", &Settings::minimizeToTray},
     {"slackSession", &Settings::slackSession},
@@ -84,12 +83,10 @@ const struct {
     {"soundId", &Settings::soundId},
     {"aiDefault", &Settings::aiDefault},
     {"aiLanguage", &Settings::aiLanguage},
-    {"voiceGlossary", &Settings::voiceGlossary},
     {"slackClientId", &Settings::slackClientId},
     {"slackClientSecret", &Settings::slackClientSecret, "credentials/slackClientSecret"},
     {"slackAppToken", &Settings::slackAppToken, "credentials/slackXapp"},
     {"giphyKey", &Settings::giphyKey, "gif/giphy/apiKey"},
-    {"claudeLastDir", &Settings::claudeLastDir},
     {"lastAttachDir", &Settings::lastAttachDir},
 };
 
@@ -101,7 +98,6 @@ const struct {
     {"spellLanguages", &Settings::spellLanguages},
     {"emojiRecent", &Settings::emojiRecent},
     {"quickReactionNames", &Settings::quickReactionNames},
-    {"zenWorkspaces", &Settings::zenWorkspaces},
 };
 
 const struct {
@@ -113,7 +109,6 @@ const struct {
     {"url", &AiProvider::url},
     {"key", &AiProvider::key},
     {"model", &AiProvider::model},
-    {"sttModel", &AiProvider::sttModel},
 };
 
 // An AI provider's key in the secret store.
@@ -153,19 +148,14 @@ const char *themeName(ui::ThemeMode m) {
 } // namespace
 
 Settings::Settings() {
-    ai.push_back({"anthropic", "Anthropic", {}, {}, {}, {}});
-    ai.push_back({"openai", "OpenAI", {}, {}, {}, {}});
+    ai.push_back({"anthropic", "Anthropic", {}, {}, {}});
+    ai.push_back({"openai", "OpenAI", {}, {}, {}});
 }
 
 void Settings::applyPalettes() const {
     ui::setCustomPalette(custom);
     ui::setPalette(false, ui::Palette(paletteLight));
     ui::setPalette(true, ui::Palette(paletteDark));
-}
-
-bool Settings::zenMode(std::string_view workspaceKey) const {
-    return std::find(zenWorkspaces.begin(), zenWorkspaces.end(), workspaceKey) !=
-           zenWorkspaces.end();
 }
 
 std::vector<std::string> Settings::oneClickReactions(const EmojiFilter &usable) const {
@@ -206,12 +196,6 @@ void Settings::keepPlaces(const std::vector<std::string> &before, std::vector<st
             taken[next] = true;
         }
     names = std::move(placed);
-}
-
-void Settings::setZenMode(const std::string &workspaceKey, bool on) {
-    std::erase(zenWorkspaces, workspaceKey);
-    if (on)
-        zenWorkspaces.push_back(workspaceKey);
 }
 
 AiProvider *Settings::provider(std::string_view id) {
@@ -282,19 +266,6 @@ void fromJson(const json::Value r, Settings &s) {
                  std::string(e["section"].str()),
                  std::string(e["sort"].str())}
             );
-    for (const json::Value e : r["claudeRecentDirs"])
-        if (!e["path"].str().empty())
-            s.claudeRecentDirs.push_back({std::string(e["path"].str()), e["usedAt"].integer()});
-    // Earlier builds' one zen toggle: the Claude Code workspace's, the only
-    // one with zen mode (claude::kService:kWorkspaceId).
-    if (r["zenMode"].boolean(false) && s.zenWorkspaces.empty())
-        s.zenWorkspaces.push_back("claude-code:local");
-    for (const json::Value e : r["claudeTeammateDirs"])
-        if (!e["role"].str().empty() && !e["dir"].str().empty())
-            s.claudeTeammateDirs.emplace_back(
-                std::string(e["role"].str()), std::string(e["dir"].str())
-            );
-
     for (const json::Value p : r["ai"]) {
         AiProvider a;
         for (const auto &f : kAiFields)
@@ -375,18 +346,6 @@ std::string Settings::toFile() const {
                 .endObject();
         w.endArray();
     }
-    if (!claudeRecentDirs.empty()) {
-        w.key("claudeRecentDirs").beginArray();
-        for (const RecentDir &d : claudeRecentDirs)
-            w.beginObject().key("path").value(d.path).key("usedAt").value(d.usedAt).endObject();
-        w.endArray();
-    }
-    if (!claudeTeammateDirs.empty()) {
-        w.key("claudeTeammateDirs").beginArray();
-        for (const auto &[role, dir] : claudeTeammateDirs)
-            w.beginObject().key("role").value(role).key("dir").value(dir).endObject();
-        w.endArray();
-    }
     // A removed provider's key goes from the store too (LlmTokenStore::clear).
     std::vector<std::string> gone;
     for (const auto &[key, value] : stored())
@@ -402,7 +361,7 @@ std::string Settings::toFile() const {
     w.key("ai").beginArray();
     for (const AiProvider &p : ai) {
         const bool keyInFile = !saveSecret(aiSecret(p), p.key);
-        if (p.preset() && (p.key.empty() || !keyInFile) && p.model.empty() && p.sttModel.empty())
+        if (p.preset() && (p.key.empty() || !keyInFile) && p.model.empty())
             continue; // an untouched preset: nothing to keep
         w.beginObject();
         for (const auto &f : kAiFields)

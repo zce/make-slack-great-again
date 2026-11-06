@@ -30,22 +30,18 @@ struct Preset {
     // budget would be eaten by it — the light tier turns reasoning off.
     const char *lightModel, *lightReasoningEffort;
     bool        maxCompletionTokens;
-    const char *sttModel; // speech-to-text default; null: the API has none
     const char *keyUrl;   // where to get a key
     const char *models[4];
 };
 
 // The preset with this id, or null.
 const Preset            *preset(std::string_view id);
-// Speech-to-text model a custom server answers to by default.
-extern const char *const kCustomSttModel;
 
 struct Provider {
     std::string id, name, baseUrl, apiKey;
     std::string model;      // never empty on a usable provider
     std::string lightModel; // "" → model
     std::string lightReasoningEffort;
-    std::string sttModel;
     Format      format              = Format::OpenAiChat;
     bool        maxCompletionTokens = false;
     bool        isPreset            = false;
@@ -65,8 +61,7 @@ Provider fromSettings(
     std::string_view name,
     std::string_view url,
     std::string_view key,
-    std::string_view model,
-    std::string_view sttModel
+    std::string_view model
 );
 
 } // namespace llm

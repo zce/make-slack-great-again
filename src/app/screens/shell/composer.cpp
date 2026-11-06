@@ -1,7 +1,5 @@
 #include "screens/shell/composer.h"
 
-#include "app/llm/service.h"
-#include "app/llm/voice_input.h"
 #include "app/model/jobs.h"
 #include "app/mrkdwn/emoji.h"
 #include "app/spell/spell.h"
@@ -17,7 +15,6 @@
 #include "screens/shell/composer_popups.h"
 #include "screens/shell/nav_chrome.h"
 #include "screens/shell/shell_text.h"
-#include "screens/shell/voice_strip.h"
 #include "app/mrkdwn/markdown.h"
 
 #ifdef MSGA_HAVE_MESSAGES
@@ -586,33 +583,8 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     };
     _edit->onFocusChange = [this](bool) { refreshLook(); };
     // Enter is the table's (SendMessage/NewLine), not TextEdit's onSubmit.
-    _edit->onKey         = [this](const Event &e) {
-        // Push-to-talk: letting go of the voice shortcut's key after holding
-        // it stops the recording; a quick tap leaves it running (toggle).
-        // Auto-repeat releases are the key still being held.
-        if (e.type == EventType::KeyUp && _pttArmed) {
-            shortcuts::Keys keys[2];
-            shortcuts::bindings(shortcuts::Id::VoiceInput, keys);
-            if (e.key != keys[0].key)
-                return false;
-            if (e.repeat)
-                return true;
-            _pttArmed = false;
-            if (base::monotonicMs() - _pttPressedMs >= kPushToTalkMs && voiceActiveHere() &&
-                _ctx.ai->voice().stateOf(voiceJobHere()) == llm::VoiceInput::State::Recording)
-                _ctx.ai->voice().stop();
-            return true;
-        }
+    _edit->onKey = [this](const Event &e) {
         return e.type == EventType::KeyDown && keyDown(e);
-    };
-
-    // ── Voice input status (hidden until a dictation starts here) ───────────
-    _voiceStrip           = box->add<VoiceStrip>(_ctx.app.platform());
-    _voiceStrip->onCancel = [this] {
-        if (_voiceStrip->mode() == VoiceStrip::Mode::Error)
-            _voiceStrip->setMode(VoiceStrip::Mode::Hidden);
-        else
-            cancelVoiceHere();
     };
 
     // ── Bottom bar ──────────────────────────────────────────────────────────
@@ -636,12 +608,6 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     _bottom[2] = _gifBtn;
     _bottom[3] = _mentionBtn;
     bottom->add<View>()->style().flex(1);
-    // Voice input, beside the send group: shown while a provider can do
-    // speech-to-text (updateMicVisibility); its icon, tooltip and look follow
-    // the recording (updateVoiceUi).
-    _micBtn = toolButton(bottom, Icon::Mic, 18, shortcuts::tip(tr("Voice input"), Id::VoiceInput));
-    _micBtn->setVisible(false);
-    _micBtn->onClick = [this] { toggleVoiceInput(); };
     _sendGroup       = bottom->add<SendGroup>();
     _sendGroup->style().row().noShrink();
     _sendBtn          = _sendGroup->add<SendPart>(Icon::Send, 38, 18, "", false);
@@ -650,36 +616,9 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     _dropBtn->onClick = [this] { openSchedule(); };
     refreshTips();
     refreshLook();
-
-    if (llm::Service *ai = _ctx.ai) {
-        llm::VoiceInput::Listener l;
-        l.stateChanged = [this](llm::VoiceInput::State) { updateVoiceUi(); };
-        l.level        = [this](float peak) {
-            if (voiceActiveHere())
-                _voiceStrip->pushLevel(peak);
-            else if (_voiceStrip->mode() == VoiceStrip::Mode::Recording)
-                updateVoiceUi(); // another composer took the microphone
-        };
-        l.finished = [this](const void *owner, const std::string &text) {
-            voiceEnded(owner, &text, nullptr);
-        };
-        l.failed = [this](const void *owner, const std::string &error) {
-            voiceEnded(owner, nullptr, &error);
-        };
-        _voiceObserver     = ai->voice().observe(std::move(l));
-        _providersObserver = ai->observeProviders([this] { updateMicVisibility(); });
-    }
-    updateMicVisibility();
-    updateVoiceUi();
 }
 
 Composer::~Composer() {
-    // Its dictations would otherwise end for a composer that no longer exists.
-    cancelAllVoice();
-    if (_ctx.ai) {
-        _ctx.ai->voice().unobserve(_voiceObserver);
-        _ctx.ai->unobserveProviders(_providersObserver);
-    }
     stashNow();
     withdrawUndo();
     spell::Checker::instance().unobserve(_spellObserver);
@@ -707,8 +646,6 @@ GlyphButton *Composer::button(shortcuts::Id id) const {
         return _bottom[0];
     if (id == Id::EmojiPicker)
         return _bottom[1];
-    if (id == Id::VoiceInput)
-        return _micBtn;
     if (id == Id::SendMessage)
         return _sendBtn;
     return nullptr;
@@ -747,9 +684,6 @@ void Composer::refreshLook() {
             b->setTint(tint);
         for (GlyphButton *b : _bottom)
             b->setTint(tint);
-        // A recording mic button wears the stop icon (updateVoiceUi).
-        if (_voiceStrip->mode() != VoiceStrip::Mode::Recording)
-            _micBtn->setTint(tint);
         _box->setBorder(focused ? C::FieldBorderFocus : C::FieldBorder);
     }
     const bool active = !str::trim(_edit->text()).empty() || !_files.empty();
@@ -769,32 +703,14 @@ void Composer::refreshLook() {
     }
 }
 
-// The composer's key handler, in this order. A feature that is off here
-// (voice input without a provider, prompt history without a source) lets
-// the key go on to the editor.
+// The composer's key handler. Optional prompt history shortcuts let
+// unmatched keys pass through to the editor.
 bool Composer::keyDown(const Event &e) {
     using shortcuts::Id;
     using shortcuts::matches;
     if (!_edit->preedit().empty())
         return false; // the IME owns the keyboard while composing (TextEdit's rule)
     const uint32_t mods = e.mods & ui::kModMask;
-    // Voice input first: while a dictation of ours is in flight, Escape
-    // cancels it ahead of every other Escape meaning (popups, edit mode).
-    if (e.key == plat::Key::Escape && !mods && voiceActiveHere()) {
-        cancelVoiceHere();
-        return true;
-    }
-    if (matches(Id::VoiceInput, e) && _micBtn->visible()) {
-        if (!e.repeat) {
-            const bool wasActive = voiceActiveHere();
-            toggleVoiceInput();
-            // Push-to-talk only for a press that started a recording.
-            _pttArmed = !wasActive && voiceActiveHere();
-            if (_pttArmed)
-                _pttPressedMs = base::monotonicMs();
-        }
-        return true;
-    }
     // The pick list takes its navigation keys first.
     if (_pick && _pick->handleKey(e))
         return true;
@@ -919,83 +835,6 @@ void Composer::editLast() {
             return beginEdit(it->ts);
 }
 
-// ── Voice input ─────────────────────────────────────────────────────────────
-
-void Composer::setVoiceInput(bool on) {
-    _voiceOn = on;
-    if (!on)
-        cancelAllVoice();
-    updateMicVisibility();
-    updateVoiceUi();
-}
-
-Composer::VoiceJob *Composer::voiceJobHere() const {
-    if (!_ctx.ai)
-        return nullptr;
-    for (const auto &j : _voiceJobs)
-        if (j->key == _key && j->scope == _drafts.scope() &&
-            _ctx.ai->voice().stateOf(j.get()) != llm::VoiceInput::State::Idle)
-            return j.get();
-    return nullptr;
-}
-
-bool Composer::voiceActiveHere() const {
-    return voiceJobHere() != nullptr;
-}
-
-bool Composer::toggleVoiceInput() {
-    if (!_voiceOn || !_ctx.ai)
-        return false;
-    llm::VoiceInput &vi = _ctx.ai->voice();
-    if (VoiceJob *j = voiceJobHere()) {
-        // Transcription / clean-up can only be cancelled (Esc, ×), not stopped.
-        if (vi.stateOf(j) == llm::VoiceInput::State::Recording)
-            vi.stop();
-        return true;
-    }
-    // Dismissed here rather than left to time out: a new attempt is starting.
-    if (_voiceStrip->mode() == VoiceStrip::Mode::Error)
-        _voiceStrip->setMode(VoiceStrip::Mode::Hidden);
-    // Each dictation is its own VoiceInput owner: one may still be finishing
-    // for a conversation left a moment ago. (One another composer's recording
-    // cancelled ended without a word: forgotten here.)
-    std::erase_if(_voiceJobs, [&vi](const auto &p) {
-        return vi.stateOf(p.get()) == llm::VoiceInput::State::Idle;
-    });
-    _voiceJobs.push_back(std::make_unique<VoiceJob>(VoiceJob{_drafts.scope(), _key}));
-    vi.start(_voiceJobs.back().get(), buildVoiceContext(_ctx, _key.conv, _key.thread));
-    // Keeps Escape (cancel) and the shortcut (stop) within reach.
-    _edit->focus();
-    return true;
-}
-
-void Composer::cancelVoiceHere() {
-    _pttArmed = false;
-    if (VoiceJob *j = voiceJobHere()) {
-        _ctx.ai->voice().cancel(j);
-        std::erase_if(_voiceJobs, [j](const auto &p) { return p.get() == j; });
-    }
-}
-
-void Composer::cancelAllVoice() {
-    _pttArmed = false;
-    // Moved out first: cancel reports Idle, and the listeners look at the list.
-    auto jobs = std::move(_voiceJobs);
-    _voiceJobs.clear();
-    if (_ctx.ai)
-        for (const auto &j : jobs)
-            _ctx.ai->voice().cancel(j.get());
-}
-
-// The user moved on: the dictation is theirs all the same. A recording is
-// stopped and transcribed; the text then lands in its conversation's draft.
-void Composer::finishVoiceInBackground() {
-    _pttArmed = false;
-    if (VoiceJob *j = voiceJobHere();
-        j && _ctx.ai->voice().stateOf(j) == llm::VoiceInput::State::Recording)
-        _ctx.ai->voice().stop();
-}
-
 void DraftStash::putBack(
     const std::string &scope, Key k, std::string_view html, std::vector<std::string> files
 ) {
@@ -1018,99 +857,6 @@ void DraftStash::putBack(
         if (std::find(all.begin(), all.end(), f) == all.end())
             all.push_back(std::move(f));
     s->setDraft(k.conv, k.thread, std::move(merged), std::move(all));
-}
-
-void Composer::voiceEnded(const void *owner, const std::string *text, const std::string *error) {
-    auto it = std::find_if(_voiceJobs.begin(), _voiceJobs.end(), [owner](const auto &p) {
-        return p.get() == owner;
-    });
-    if (it == _voiceJobs.end())
-        return; // another composer's
-    const VoiceJob job = **it;
-    _voiceJobs.erase(it);
-    const bool here = job.key == _key && job.scope == _drafts.scope();
-    if (text) {
-        if (here)
-            insertVoiceText(*text);
-        else
-            _drafts.appendText(job.scope, job.key, str::trim(*text));
-    } else if (error) {
-        if (here) {
-            _pttArmed = false;
-            _voiceStrip->setMode(VoiceStrip::Mode::Error, *error);
-        } else {
-            _voiceErrors.emplace_back(job, *error);
-        }
-    }
-    updateVoiceUi();
-}
-
-void Composer::updateMicVisibility() {
-    _micBtn->setVisible(_voiceOn && _ctx.ai && _ctx.ai->voice().available());
-}
-
-void Composer::updateVoiceUi() {
-    using Mode       = VoiceStrip::Mode;
-    using State      = llm::VoiceInput::State;
-    Mode        mode = Mode::Hidden;
-    const State st   = _ctx.ai ? _ctx.ai->voice().stateOf(voiceJobHere()) : State::Idle;
-    switch (st) {
-    case State::Recording:
-        mode = Mode::Recording;
-        break;
-    case State::Transcribing:
-        mode = Mode::Transcribing;
-        break;
-    case State::Cleaning:
-        mode = Mode::Cleaning;
-        break;
-    case State::Idle:
-        break;
-    }
-    // A failure shown in the strip stays until it times out, is dismissed or
-    // a new recording starts (toggleVoiceInput clears it first), whatever
-    // state changes arrive around it.
-    if (_voiceStrip->mode() != Mode::Error && mode != _voiceStrip->mode())
-        _voiceStrip->setMode(mode);
-    if (st == State::Idle)
-        _pttArmed = false;
-    // The mic: a red round stop button while recording, otherwise one of the
-    // bottom bar's icons (tinted with the rest by refreshLook).
-    using shortcuts::Id;
-    if (_voiceStrip->mode() == Mode::Recording) {
-        _micBtn->setLook({C::DangerFill, C::DangerFillHover, C::DangerFillHover, C::None, 13});
-        _micBtn->setIcon(Icon::MicStop);
-        _micBtn->setTint(C::AccentText);
-        _micBtn->setTooltip(shortcuts::tip(tr("Stop and transcribe"), Id::VoiceInput));
-    } else {
-        _micBtn->setLook({C::None, C::FormHighlightStrong, C::FormHighlightStrong, C::None, 3});
-        _micBtn->setIcon(Icon::Mic);
-        _micBtn->setTint(_focusedLook ? C::ComposerIconActive : C::ComposerIcon);
-        _micBtn->setTooltip(shortcuts::tip(tr("Voice input"), Id::VoiceInput));
-    }
-}
-
-void Composer::insertVoiceText(const std::string &text) {
-    const std::string_view t = str::trim(text);
-    if (t.empty())
-        return;
-    // Judged by the character left of what the text replaces: "hello" +
-    // dictation reads "hello world", not "helloworld".
-    const uint32_t     at   = std::min(_edit->anchor(), _edit->caret());
-    const std::string &all  = _edit->text();
-    bool               glue = false;
-    if (at > 0 && at <= all.size()) {
-        size_t prev = utf8::prevBoundary(all, at);
-        glue        = !utf8::isSpace(utf8::decode(all, prev));
-    }
-    _edit->insertText(glue ? str::concat({" ", t}) : std::string(t));
-    // Not into a composer that went out of sight while it was transcribing.
-    bool shown = window() != nullptr;
-    for (const View *v = this; v && shown; v = v->parent())
-        shown = v->visible();
-    if (shown)
-        _edit->focus();
-    refreshLook();
 }
 
 // ↑ from an empty editor shows the newest prompt,
@@ -1283,10 +1029,6 @@ void Composer::setTarget(model::ConvRef conv, model::Ts thread) {
     if (next == _key)
         return;
     withdrawUndo(); // a conversation switch withdraws the offer
-    // A dictation still running finishes for the conversation being left.
-    finishVoiceInBackground();
-    if (_voiceStrip->mode() == VoiceStrip::Mode::Error)
-        _voiceStrip->setMode(VoiceStrip::Mode::Hidden);
     endEdit();
     stashNow();
     if (_pick)
@@ -1302,15 +1044,6 @@ void Composer::setTarget(model::ConvRef conv, model::Ts thread) {
         _edit->insertHtml(html);
     _files = _drafts.files(next);
     rebuildChips();
-    // Back where a dictation is still finishing (the strip shows it), or one
-    // failed after we left (the strip says why).
-    for (auto it = _voiceErrors.begin(); it != _voiceErrors.end(); ++it)
-        if (it->first.key == _key && it->first.scope == _drafts.scope()) {
-            _voiceStrip->setMode(VoiceStrip::Mode::Error, it->second);
-            _voiceErrors.erase(it);
-            break;
-        }
-    updateVoiceUi();
     _placeholder = !_fixedPlaceholder.empty() ? _fixedPlaceholder
                    : thread                   ? std::string(tr("Reply in thread\xE2\x80\xA6"))
                                               : std::string();
@@ -1464,8 +1197,6 @@ void Composer::offerUndo(const std::string &html, const std::vector<std::string>
 void Composer::visibilityChanged(bool on) {
     if (!on) {
         withdrawUndo(); // the composer being hidden withdraws the offer
-        // A recording stops; its text lands when the transcription is done.
-        finishVoiceInBackground();
     }
 }
 

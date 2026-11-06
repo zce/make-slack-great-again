@@ -1,9 +1,7 @@
 #include "app/llm/wire.h"
 
-#include "base/crypto.h"
 #include "base/i18n.h"
 #include "base/json.h"
-#include "base/mime.h"
 #include "base/str.h"
 #include "base/utf8.h"
 
@@ -77,15 +75,9 @@ std::string jsonError(json::Value o, int status) {
     return {};
 }
 
-// What a 404 means for the endpoint called: the chat URL is the one users
-// mistype; a missing transcription route is a server without STT.
-enum class Route : uint8_t { Chat, Transcription };
-
-std::string httpFailure(const net::Response &r, Route route = Route::Chat) {
+std::string httpFailure(const net::Response &r) {
     if (r.status == 0)
         return transportFailure(r.error);
-    if (r.status == 404 && route == Route::Transcription)
-        return tr("This server has no speech-to-text endpoint (HTTP 404)");
     if (r.status == 404)
         return tr(
             "No chat endpoint at this URL (HTTP 404) \xE2\x80\x94 most servers expect it to "
@@ -98,14 +90,14 @@ std::string httpFailure(const net::Response &r, Route route = Route::Chat) {
 
 // Transport, HTTP and JSON-carried errors; true with `doc` parsed otherwise.
 bool preflight(
-    const net::Response &r, json::Document &doc, std::string &error, Route route = Route::Chat
+    const net::Response &r, json::Document &doc, std::string &error
 ) {
     if (r.status == 0) {
-        error = httpFailure(r, route);
+        error = httpFailure(r);
         return false;
     }
     if (!doc.parse(std::string_view(r.body), nullptr) || !doc.root().isObject()) {
-        error = r.status >= 400 ? httpFailure(r, route)
+        error = r.status >= 400 ? httpFailure(r)
                                 : std::string(tr("Unexpected response from server (not JSON)"));
         return false;
     }
@@ -113,14 +105,10 @@ bool preflight(
     if (!error.empty())
         return false;
     if (r.status >= 400) {
-        error = httpFailure(r, route);
+        error = httpFailure(r);
         return false;
     }
     return true;
-}
-
-bool hasLineBreak(std::string_view s) {
-    return s.find('\r') != std::string_view::npos || s.find('\n') != std::string_view::npos;
 }
 
 } // namespace
@@ -206,109 +194,6 @@ ModelsResult parseModels(const net::Response &r) {
             out.models.emplace_back(m["id"].str());
     out.ok = true;
     return out;
-}
-
-bool supportsTranscription(Format format) {
-    return format == Format::OpenAiChat;
-}
-
-net::Request
-buildTranscription(const Endpoint &ep, const TranscriptionInput &in, std::string_view boundaryIn) {
-    net::Request out;
-    out.method    = "POST";
-    out.timeoutMs = kTimeoutMs;
-    out.url       = joinUrl(ep.baseUrl, "/audio/transcriptions");
-    auth(out, ep);
-    // Random bytes never occur as this text inside compressed audio; no need
-    // to scan the payload.
-    std::string boundary(boundaryIn);
-    if (boundary.empty())
-        boundary = "msga-" + crypto::randomHex(16);
-    net::Multipart form(boundary);
-    out.headers.push_back({"Content-Type", form.contentType()});
-    form.reserve(in.audio.size() + 1024);
-    form.field("model", in.model);
-    form.field("response_format", "json");
-    if (!str::trim(in.prompt).empty())
-        form.field("prompt", in.prompt);
-    if (str::startsWith(in.model, "gpt-")) {
-        for (const std::string &k : sanitizeTranscriptionKeywords(in.keywords))
-            form.field("keywords[]", k);
-        std::vector<std::string> seen;
-        for (const std::string &raw : in.languages) {
-            const std::string lang = str::asciiLower(str::trim(raw));
-            if (lang.empty() || hasLineBreak(lang) ||
-                std::find(seen.begin(), seen.end(), lang) != seen.end())
-                continue;
-            seen.push_back(lang);
-            form.field("languages[]", lang);
-        }
-    }
-    // Quotes in the file name would break the header; the id-based names
-    // callers pass never carry any, but Multipart makes it safe anyway.
-    form.file("file", in.fileName, in.mimeType, in.audio);
-    out.body = form.body();
-    return out;
-}
-
-std::vector<std::string> sanitizeTranscriptionKeywords(const std::vector<std::string> &keywords) {
-    std::vector<std::string> out, seenFolded;
-    for (const std::string &raw : keywords) {
-        if (raw.find_first_of("<>\r\n") != std::string::npos)
-            continue;
-        const std::string_view k = str::trim(raw);
-        if (k.empty())
-            continue;
-        std::string folded = utf8::foldCase(k);
-        if (std::find(seenFolded.begin(), seenFolded.end(), folded) != seenFolded.end())
-            continue;
-        seenFolded.push_back(std::move(folded));
-        out.emplace_back(k);
-    }
-    return out;
-}
-
-TranscriptionResult parseTranscription(const net::Response &r) {
-    TranscriptionResult out;
-    json::Document      doc;
-    if (!preflight(r, doc, out.error, Route::Transcription)) {
-        // Some servers answer a plain-text transcript whatever
-        // response_format says: a 2xx that isn't JSON is that, not a failure.
-        const std::string_view body = str::trim(r.body);
-        if (r.ok() && !body.empty() && body.front() != '{') {
-            out.ok = true;
-            out.error.clear();
-            out.text = std::string(body);
-        }
-        return out;
-    }
-    if (!doc.root().has("text")) {
-        out.error = tr("Unexpected response from server (no text)");
-        return out;
-    }
-    out.text = std::string(str::trim(doc.root()["text"].str()));
-    out.ok   = true;
-    return out;
-}
-
-std::string audioMimeForExtension(std::string_view extIn) {
-    // What the shared table (mime::fromName) lacks or names as video: an
-    // upload for transcription is audio either way.
-    static const char *const kMime[][2] = {
-        {"mpga", "audio/mpeg"},
-        {"mpeg", "audio/mpeg"},
-        {"mp4", "audio/mp4"},
-        {"oga", "audio/ogg"},
-        {"opus", "audio/opus"},
-        {"webm", "audio/webm"},
-        {"aac", "audio/aac"},
-    };
-    const std::string ext = str::asciiLower(extIn);
-    for (const auto &m : kMime)
-        if (ext == m[0])
-            return m[1];
-    const std::string_view known = mime::fromName(str::concat({"a.", ext}));
-    return str::startsWith(known, "audio/") ? std::string(known) : std::string();
 }
 
 // ── Custom servers ──────────────────────────────────────────────────────────

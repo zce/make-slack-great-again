@@ -57,12 +57,6 @@ public:
         Ts      ts;
         int64_t value; // reminders: due; muted threads: 1
     };
-    // A transcript the user's AI made of an audio file: it replaces Slack's
-    // transcript line under the player, `by` naming the provider. The
-    // workspace cache keeps them.
-    struct AiTranscript {
-        std::string text, by;
-    };
     // An unsent composer message: app-local, the workspace cache keeps it.
     struct Draft {
         ConvRef                  conv   = kNoConv;
@@ -337,16 +331,6 @@ public:
     // Grows with every change of the list.
     uint64_t                    sectionsRevision() const { return _sectionsRev; }
 
-    // ── "Transcribe with AI" ────────────────────────────────────────────────
-    // AI transcripts of audio files (app-local: Slack has no write API
-    // for a file's transcript). Setting one fires Update for every loaded
-    // message with the file.
-    const AiTranscript *aiTranscript(const std::string &fileId) const;
-    void setAiTranscript(const std::string &fileId, std::string text, std::string by);
-    const std::unordered_map<std::string, AiTranscript> &aiTranscripts() const {
-        return _aiTranscripts;
-    }
-
     // ── Typing ──────────────────────────────────────────────────────────────
     // sinceMs: an agent "thinking" since then (Typing::sinceMs); 0 = typing.
     void setTyping(ConvRef c, UserRef u, Ts thread, bool on, int64_t sinceMs = 0);
@@ -430,7 +414,6 @@ private:
     int                                          _unreadActivity = 0;
     bool                                         _realNames      = true;
 
-    std::unordered_map<std::string, AiTranscript> _aiTranscripts;
 
     // noteUserRevisions' memory: per user, the hashes last seen and the
     // profile revision of its last change.

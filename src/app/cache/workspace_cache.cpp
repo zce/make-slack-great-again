@@ -641,10 +641,6 @@ bool WorkspaceCache::load(json::Document *meta) {
         for (const json::Value t : r["rem"])
             if (const ConvRef c = _store.findConversation(t[0].str()); c != model::kNoConv)
                 _store.setReminderAt(c, t[1].integer(), t[2].integer());
-        for (const json::Value t : r["ai"])
-            _store.setAiTranscript(
-                std::string(t.key()), std::string(t[0].str()), std::string(t[1].str())
-            );
         for (const json::Value d : r["drafts"])
             if (const ConvRef c = _store.findConversation(d[0].str()); c != model::kNoConv) {
                 std::vector<std::string> files;
@@ -781,7 +777,7 @@ void WorkspaceCache::noteRecord(ConvRef c) {
 
 void WorkspaceCache::onChange(const model::Change &ch) {
     using K = model::ChangeKind;
-    // The app-local marks (muted threads, reminders, AI transcripts) ride
+    // The app-local marks (muted threads and reminders) ride
     // Meta and Update emits; meta.json only when one of them moved.
     if (_store.localRevision() != _localRev && ch.kind != K::Typing) {
         _localRev = _store.localRevision();
@@ -991,10 +987,6 @@ void WorkspaceCache::writePending() {
             }
             w.endArray();
         }
-        w.key("ai").beginObject(); // "Transcribe with AI" results
-        for (const auto &[fileId, t] : s.aiTranscripts())
-            w.key(fileId).beginArray().value(t.text).value(t.by).endArray();
-        w.endObject();
         w.key("drafts").beginArray();
         for (const model::Store::Draft &d : s.drafts()) {
             if (d.conv >= s.conversationCount())

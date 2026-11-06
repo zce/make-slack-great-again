@@ -100,22 +100,21 @@ TEST("old import: settings, workspaces and credentials from an earlier version")
     REQUIRE(file::exists(settingsPath));
     REQUIRE(file::exists(wsPath));
 
-    // Workspaces: Slack + Claude Code in the old order, the open one, mute,
+    // Slack workspaces in their old order, the open one, mute,
     // and the auth read from the old entries (never copied into the file).
     auth::WorkspaceStore ws(wsPath);
-    REQUIRE(ws.all().size() == 3);
+    REQUIRE(ws.all().size() == 2);
     CHECK_STR(ws.all()[0].key(), "slack:T0123");
-    CHECK_STR(ws.all()[1].key(), "claude-code:local");
-    CHECK_STR(ws.all()[2].key(), "slack:T0456");
+    CHECK_STR(ws.all()[1].key(), "slack:T0456");
     CHECK_STR(ws.active(), "slack:T0456");
     CHECK_STR(ws.all()[0].displayName, "Acme, Inc.");
     CHECK_STR(ws.all()[0].iconUrl, "https://a.slack-edge.com/x.png");
     CHECK(ws.all()[0].muted);
-    CHECK_FALSE(ws.all()[2].muted);
+    CHECK_FALSE(ws.all()[1].muted);
     const slack::Credentials c = slack::fromRecord(ws.all()[0]);
     CHECK_STR(c.token, "xoxc-1-2");
     CHECK_STR(c.cookie, "xoxd-a%2Fb=c;d");
-    CHECK(slack::fromRecord(ws.all()[2]).expiresAt == 1767225600);
+    CHECK(slack::fromRecord(ws.all()[1]).expiresAt == 1767225600);
     CHECK(read(wsPath).find("xoxc-1-2") == std::string::npos);
     // The custom icon under the new name in the old folder.
     std::vector<file::DirEntry> icons;
@@ -169,14 +168,6 @@ TEST("old import: settings, workspaces and credentials from an earlier version")
     CHECK_STR(s.emojiRecent[1], "heart");
     CHECK(s.emojiSkinTone == 3);
     CHECK_STR(s.lastAttachDir, "/home/u/Downloads");
-    // Claude Code folders.
-    CHECK_STR(s.claudeLastDir, "/home/u/src");
-    REQUIRE(s.claudeRecentDirs.size() == 2);
-    CHECK_STR(s.claudeRecentDirs[1].path, "/home/u/x,y");
-    CHECK(s.claudeRecentDirs[0].usedAt == 1767225000);
-    REQUIRE(s.claudeTeammateDirs.size() == 1);
-    CHECK_STR(s.claudeTeammateDirs[0].first, "architect");
-    CHECK_STR(s.claudeTeammateDirs[0].second, "/home/u/src/a b");
     // AI: models, the custom server, the default, and the keys from the old
     // entries — not from settings.json.
     CHECK_STR(s.provider("anthropic")->model, "claude-x");
@@ -185,12 +176,9 @@ TEST("old import: settings, workspaces and credentials from an earlier version")
     REQUIRE(custom);
     CHECK_STR(custom->name, "Local");
     CHECK_STR(custom->url, "http://localhost:11434/v1");
-    CHECK_STR(custom->sttModel, "whisper-1");
     CHECK_STR(custom->key, "k2");
     CHECK_STR(s.aiDefault, "custom-ab12cd34");
     CHECK_STR(s.aiLanguage, "sv");
-    CHECK_STR(s.voiceGlossary, "msga\nKubernetes, k8s");
-    CHECK_FALSE(s.voiceCleanup);
     // Slack app keys and GIPHY.
     CHECK_STR(s.slackClientId, "123.456");
     CHECK_STR(s.slackClientSecret, "sec\"ret\\x");
@@ -292,13 +280,12 @@ TEST("old import: every kind of old workspace comes back signed in") {
 
     // The old order without IMAP and Teams, the one that was open, the mute.
     auth::WorkspaceStore ws(wsPath);
-    REQUIRE(ws.all().size() == 4);
+    REQUIRE(ws.all().size() == 3);
     CHECK_STR(ws.all()[0].key(), "slack:T0OAU");
     CHECK_STR(ws.all()[1].key(), "slack:T0AAA");
-    CHECK_STR(ws.all()[2].key(), "claude-code:local");
-    CHECK_STR(ws.all()[3].key(), "slack:T0GRID");
+    CHECK_STR(ws.all()[2].key(), "slack:T0GRID");
     CHECK_STR(ws.active(), "slack:T0AAA");
-    CHECK(ws.all()[3].muted);
+    CHECK(ws.all()[2].muted);
     CHECK_STR(ws.all()[3].displayName, "Grid Corp");
     CHECK_STR(ws.all()[3].iconUrl, "https://avatars.slack-edge.com/grid.png");
     // Each with the credentials it had: the session's token, cookie and host
@@ -316,7 +303,6 @@ TEST("old import: every kind of old workspace comes back signed in") {
     CHECK_STR(oauth.refreshToken, "xoxe-1-REFRESH-old");
     CHECK(oauth.expiresAt == 1790947553);
     CHECK(oauth.cookie.empty());
-    CHECK_STR(ws.all()[2].auth, R"({"claudePath":"/bin/false"})");
     // Nothing secret in the new files; the old store as it was.
     CHECK(read(wsPath).find("xoxc-") == std::string::npos);
     CHECK(read(oldsettings::iniPath()) == kEveryWorkspaceIni);
@@ -421,23 +407,6 @@ TEST("old import: the custom theme's JSON keeps its pins") {
     CHECK(s.custom.itemHover == 0);
 }
 
-TEST("old import: zen mode per workspace") {
-    // The INI file escapes the '%' of the old percent-encoded key once more.
-    shell::Settings s;
-    legacy::importOldSettings(
-        oldsettings::parseIni(
-            "[zenMode]\nslack%253AT0123=true\nclaude-code%253Alocal=true\nslack%253AT9=false\n"
-        ),
-        {},
-        {},
-        {},
-        &s
-    );
-    REQUIRE(s.zenWorkspaces.size() == 2);
-    CHECK_STR(s.zenWorkspaces[0], "claude-code:local");
-    CHECK_STR(s.zenWorkspaces[1], "slack:T0123");
-}
-
 #if !defined(_WIN32) && !defined(__APPLE__)
 namespace {
 
@@ -493,16 +462,6 @@ TEST("old cache: a first start brings the whole old cache along") {
     put(file::join(data, "cache/T0456"),
         "conversations.json",
         R"([{"id":"C7","ki":0,"na":"x","mb":true,"lr":"","un":0,"lm":true}])");
-    // Claude Code: the sessions' star, mute and level.
-    put(file::join(data, "cache/claude-code_local"),
-        "conversations.json",
-        R"([{"id":"s1","ki":2,"na":"A","mb":true,"lr":"","un":0,"st":true,"lm":true,"nl":2},)"
-        R"({"id":"s2","ki":2,"na":"B","mb":true,"lr":"","un":0,"lm":true}])");
-    const std::string known = file::join(data, "claude-code/known-sessions.json");
-    put(file::join(data, "claude-code"),
-        "known-sessions.json",
-        R"({"sessions":[{"id":"s1","sessionId":"s1","name":"A"},)"
-        R"({"id":"s2","sessionId":"s2","muted":true}],"started":["s1"],"open":"s1"})");
     const std::string oldMeta = read(file::join(data, "cache/slack_T0123/meta.json"));
 
     const std::string settingsPath = shell::Settings::defaultPath(pa);
@@ -581,23 +540,10 @@ TEST("old cache: a first start brings the whole old cache along") {
         wc.close(false);
     }
 
-    // Claude Code: added where known-sessions.json had nothing.
-    json::Document k;
-    REQUIRE(k.parse(read(known)));
-    const json::Value ss = k.root()["sessions"];
-    CHECK(ss[0]["starred"].boolean());
-    CHECK(ss[0]["muted"].boolean());
-    CHECK(ss[0]["notify"].integer() == 1);
-    CHECK_STR(ss[0]["name"].str(), "A");
-    CHECK(ss[1]["muted"].boolean());
-    CHECK_FALSE(ss[1].has("starred"));
-    CHECK_STR(k.root()["open"].str(), "s1");
-    CHECK_STR(k.root()["started"][0].str(), "s1");
-
     // The old files as they were; each workspace once, ever.
     CHECK(read(file::join(data, "cache/slack_T0123/meta.json")) == oldMeta);
     const std::string done = read(file::join(identity::configDir(pa), "legacy-imported"));
-    CHECK_STR(done, "slack:T0123\nclaude-code:local\nslack:T0456\n");
+    CHECK_STR(done, "slack:T0123\nslack:T0456\n");
     {
         model::Store          s3;
         cache::WorkspaceCache wc(pa, s3, dir);

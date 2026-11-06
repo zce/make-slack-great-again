@@ -411,7 +411,7 @@ int main(int argc, char **argv) {
 #ifdef MSGA_DEMO
     if (demoBackend) // the fixture's canned answers stand in for an AI server
         ai.setStandIn(
-            llm::fromSettings("demo", "Lumen AI", "demo:", "", "lumen-1", ""),
+            llm::fromSettings("demo", "Lumen AI", "demo:", "", "lumen-1"),
             [&fb = *demoBackend](std::string_view request) {
                 return std::string(fb.aiReply(request));
             }

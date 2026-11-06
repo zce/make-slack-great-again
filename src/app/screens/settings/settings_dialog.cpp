@@ -264,10 +264,6 @@ SettingsDialog::SettingsDialog(screens::Context &ctx, shell::Settings &s, Hooks 
 }
 
 SettingsDialog::~SettingsDialog() {
-    if (_glossaryTimer) {
-        _ctx.app.cancelTimer(_glossaryTimer);
-        saveGlossary();
-    }
     _ctx.app.cancelTimer(_ramTimer);
 #ifdef MSGA_SELF_UPDATE
     if (_hooks.updater)
@@ -278,11 +274,6 @@ SettingsDialog::~SettingsDialog() {
 void SettingsDialog::showPage(Page p) {
     if (p >= Page::Count || p == _page)
         return;
-    if (_glossaryTimer) { // leaving the AI page with an edit pending
-        _ctx.app.cancelTimer(_glossaryTimer);
-        _glossaryTimer = 0;
-        saveGlossary();
-    }
     _ctx.app.cancelTimer(_ramTimer);
     _ramTimer = 0;
     _page     = p;

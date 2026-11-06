@@ -28,7 +28,7 @@ The release workflow needs `contents: write` access to create tags/releases. Rel
 
 ## Customization boundaries
 
-The source tree retains upstream's uncompiled `src/app/claude/` and agent-oriented fixtures to avoid pervasive delete/modify conflicts when synchronizing. The fork does not build or link that module. `src/app/llm/` remains for independent AI assistance.
+The fork removes uncompiled Claude-specific source, tests and assets rather than carrying obsolete code. Upstream syncs may need manual conflict resolution for these deletions. The still-integrated `src/app/llm/` and its screen/settings hooks are a separate removal task; do not claim the binary is AI-free until these references and their tests are removed.
 
 Prefer existing Settings and palette controls before adding new UI systems. Keep new UI changes inside the corresponding screen or view module rather than broad changes in shared primitives. Remove unwanted integration code in a focused PR after identifying all references; merely hiding an entry does not make the binary smaller. Preserve Slack functionality, credentials, notifications and message routing.
 

@@ -16,12 +16,6 @@
 // its conversations in its own order, whatever the filters; a
 // conversation's menu moves it between them.
 //
-// An agent workspace (Capabilities::agentSessions, Claude Code) calls the
-// direct messages "Sessions" and ends them with "Add sessions" (its "+" and
-// that row open the find-or-create menu), and lists the team
-// (Backend::agentRoles) in a "Team" section under them: a teammate's row
-// opens its page, its dot is its user's presence, its "+" adds a teammate.
-//
 // Rows are live: a Store observer restyles a row when its counts change —
 // semibold for unread, a red count for DM unreads and channel mentions, a
 // blue dot for other unread in an "All new posts" channel; muted
@@ -84,7 +78,6 @@ class ConvRow;
 class Menus;
 class SectionHeader;
 class SidebarFooter;
-class TeammateRow;
 
 class Sidebar : public ui::View {
 public:
@@ -160,22 +153,13 @@ public:
     std::function<void()>                    onFindChannel;   // "Add channels" → Find a channel
     std::function<void()>                    onCreateChannel; // "Add channels" → Create a channel
     std::function<void()>                    onBrowsePeople;  // the Direct messages header's "+"
-    // Agent workspace: the Sessions "+" and "Add sessions", a
-    // teammate's row, the Team header's "+".
-    std::function<void(ui::PointF at)>       onSessionMenu;
-    std::function<void(const std::string &)> onTeammate;
-    std::function<void()>                    onAddTeammate;
-    // Highlights a teammate's row as the open page ("" clears it); no
-    // conversation is highlighted meanwhile.
-    void                                     selectTeammate(const std::string &role);
-    const std::string                       &selectedTeammate() const { return _selectedTeammate; }
     // The entries over the sections, each an overview page: Activity,
     // Threads, Saved messages (shown while something is saved,
     // Store::hasSaved), Scheduled messages (while something is scheduled,
     // Store::hasScheduled).
     enum class Nav : uint8_t { None, Activity, Threads, Saved, Scheduled };
     // Highlights an entry as the open page (None: none); opening a
-    // conversation or a teammate clears it.
+    // conversation clears it.
     void selectNav(Nav n);
     Nav  selectedNav() const { return _navSelected; }
     bool threadsUnread() const;  // the Threads entry is bright (Store::unreadThreads)
@@ -183,14 +167,6 @@ public:
     // A click on a row's huddle pill (tests): false when it shows none.
     bool joinHuddle(model::ConvRef conv);
     bool scheduledShown() const; // tests
-    // The Team section's rows, top to bottom (tests): role ids.
-    std::vector<std::string> teammates() const;
-    // A teammate row's look (tests): bold, selected, its avatar's presence.
-    struct TeammateState {
-        bool exists = false, bold = false, selected = false;
-        int  presence = 0; // Avatar::Presence
-    };
-    TeammateState  teammateState(const std::string &role) const;
     int            conversationPresence(model::ConvRef conv) const; // Avatar::Presence of a DM row
     // Context menus (right click, long press, Menu key): a conversation's on
     // its row.
@@ -203,7 +179,6 @@ private:
     friend class ConvRow;
     friend class Menus; // the notify section ticks level()
     friend class SectionHeader;
-    friend class TeammateRow;
     void               refresh(model::ConvRef conv); // one row from the Store
     void               refreshAll();
     void               refreshSections();
@@ -226,7 +201,7 @@ private:
     // reveal: scroll the selected row into view afterwards.
     void               rebuildSoon(bool reveal = true);
     void               usersSoon();
-    void               sectionsSoon(); // refreshSections + refreshTeammates, coalesced
+    void               sectionsSoon(); // coalesced section refresh
     uint64_t           userShape() const;
     void               noteShape(uint64_t shape); // a userShape() and what it was taken at
     void               addChannelsMenu(ui::View *row);
@@ -239,7 +214,6 @@ private:
          sortedOrder(SectionSort sort, const std::vector<model::ConvRef> &rows) const;
     void resortSoon();      // a row may have left its sort's place: check (sectionsSoon)
     bool sortsHold() const; // every sorted section still in its order
-    void refreshTeammates();
 
     screens::Context                      &_ctx;
     Avatars                               &_avatars;
@@ -249,9 +223,6 @@ private:
     Menus                                 *_menus  = nullptr;
     std::vector<ConvRow *>                 _rows;
     std::vector<ConvRow *>                 _rowOf; // by ConvRef: the row, else null
-    std::vector<TeammateRow *>             _teamRows;
-    std::vector<model::Backend::AgentRole> _team; // as last listed (rebuild)
-    std::string                            _selectedTeammate;
     std::vector<SectionHeader *>           _sections;
     std::vector<ui::View *>                _nav; // Activity, Threads, Saved, Scheduled messages
     std::vector<const char *>              _navTitles;

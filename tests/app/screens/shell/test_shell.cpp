@@ -570,7 +570,6 @@ TEST("settings: round trip through the file") {
     s.width = 1300, s.height = 900, s.hasPosition = true, s.x = 40, s.y = 60, s.maximized = true;
     s.theme       = ui::ThemeMode::Dark;
     s.threadWidth = 500;
-    s.setZenMode("claude-code:local", true);
     const std::string d = base::test::makeTempDir("msga_shell_");
     REQUIRE(!d.empty());
     const std::string path = d + "/msga/settings.json";
@@ -580,11 +579,6 @@ TEST("settings: round trip through the file") {
     CHECK(l.maximized);
     CHECK(l.theme == ui::ThemeMode::Dark);
     CHECK(l.threadWidth == 500);
-    CHECK(l.zenMode("claude-code:local")); // per workspace
-    CHECK_FALSE(l.zenMode("slack:T0OTHER"));
-    // Earlier builds' one global toggle goes to the Claude Code workspace.
-    REQUIRE(file::writeAtomic(d + "/old.json", R"({"zenMode":true})"));
-    CHECK(shell::Settings::load(d + "/old.json").zenMode("claude-code:local"));
     const shell::Settings missing = shell::Settings::load(std::string(d) + "/nope.json");
     CHECK(missing.width == 1200);
 }

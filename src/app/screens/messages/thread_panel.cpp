@@ -46,33 +46,12 @@ ThreadPanel::ThreadPanel(Context &ctx) : _ctx(ctx) {
         if (_ctx.closeThread)
             _ctx.closeThread();
     };
-    // The title keeps its width; a narrow header shortens the link chip
-    // ("…") instead of squeezing "Thread".
     header->add<Label>(tr("Thread"), Font::BodyBold)->style().noShrink();
     header->add<View>()->style().flex(1);
-    _linkChip = header->add<Clickable>();
-    _linkChip->style().row().height(32).padding(8, 0).spacing(6).items(Align::Center);
-    _linkChip->setLook({C::None, C::Hover, C::Pressed, C::None, 6});
-    _linkChip->setRole(Role::Button);
-    _linkChip->add<IconView>(gfx::Icon::Link, 14, C::Text)->style().noShrink();
-    _linkText = _linkChip->add<Label>();
-    _linkText->setMaxLines(1);
-    _linkChip->setVisible(false);
-    _linkChip->onClick = [this] {
-        if (_ctx.agentLinkAction && root())
-            _ctx.agentLinkAction(conversation(), root(), Context::AgentLinkAction::OpenSource);
-    };
     _mute          = header->add<RoundButton>(gfx::Icon::Bell, tr("Mute thread"));
     _mute->onClick = [this] { toggleMuted(); };
     _download      = header->add<RoundButton>(gfx::Icon::Download, tr("Download thread as text"));
     _download->onClick = [this] { downloadThread(); };
-    // A branched agent conversation can move to the list as a session.
-    _openSession       = header->add<RoundButton>(gfx::Icon::ExternalLink, tr("Open as session"));
-    _openSession->setVisible(false);
-    _openSession->onClick = [this] {
-        if (onOpenAsSession && root())
-            onOpenAsSession(conversation(), root());
-    };
     _close          = header->add<RoundButton>(gfx::Icon::X, tr("Close thread"));
     _close->onClick = [this] {
         if (_ctx.closeThread)
@@ -100,32 +79,8 @@ void ThreadPanel::show(ConvRef conv, Ts root) {
     if (conv != conversation() || root != this->root())
         _wanted = false;
     _list->showThread(conv, root);
-    // An agent session's thread is a subagent's run, which a reply goes on to
-    // (relayed by the session), or a side conversation branched off it
-    // (/btw), which is also a session of its own. A subagent that hasn't
-    // started yet takes nothing: no composer.
-    const bool agent    = conv != model::kNoConv && _ctx.backend.capabilities().agentSessions;
-    const bool readOnly = agent && !_ctx.backend.threadAcceptsReplies(conv, root);
-    _openSession->setVisible(agent && _ctx.backend.threadOpensAsSession(conv, root));
-    if (_composer) {
-        _composer->setVisible(!readOnly);
-        _composer->setEnabled(!readOnly);
-    }
     refreshMute();
     refreshBroadcast();
-    refreshLink();
-}
-
-void ThreadPanel::refreshLink() {
-    const std::string from = _ctx.agentLinkSource && root()
-                                 ? _ctx.agentLinkSource(conversation(), root())
-                                 : std::string();
-    _linkChip->setVisible(!from.empty());
-    if (from.empty() || from == _linkText->text())
-        return;
-    _linkText->setText(from);
-    // The tooltip names it whole, as the chip may show it shortened.
-    _linkChip->setTooltip(arg(tr("Open the Slack thread: %1"), from));
 }
 
 ui::View *ThreadPanel::setComposer(std::unique_ptr<ui::View> composer) {

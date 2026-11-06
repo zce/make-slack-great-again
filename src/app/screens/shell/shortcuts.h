@@ -48,7 +48,6 @@ enum class Id : uint8_t {
     Quote,
     UndoSend,
     SearchPromptHistory,
-    VoiceInput,
     // ── Documented ──────────────────────────────────────────────────────────
     // SendMessage/NewLine swap with "send with Ctrl+Enter" (setCtrlEnterSends):
     // Enter sends by default, only Ctrl+Enter when it is on, and the other

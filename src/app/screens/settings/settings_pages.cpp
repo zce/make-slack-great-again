@@ -61,7 +61,6 @@ const char *const kGiphyUrl = "https://developers.giphy.com/dashboard/";
 
 // The presets' fixed parts are the LLM layer's table.
 using PresetInfo = llm::Preset;
-using llm::kCustomSttModel;
 
 const PresetInfo *presetInfo(std::string_view id) {
     return llm::preset(id);
@@ -210,13 +209,6 @@ void SettingsDialog::buildAi() {
         _p->aiModel->setText(_p->aiModelPick->options()[size_t(i)]);
     };
 
-    _p->aiSttRow = group(ed, 2);
-    _p->aiStt    = fieldIn(_p->aiSttRow, tr("Speech model"));
-    indented(caption(
-        _p->aiSttRow,
-        tr("Speech-to-text model for voice input and audio transcripts. "
-           "Leave empty for the default.")
-    ));
     _p->aiProbe = caption(ed, {});
     _p->aiProbe->setVisible(false);
 
@@ -240,7 +232,6 @@ void SettingsDialog::buildAi() {
     save->onClick         = [this] { saveAiEditor(); };
     _p->aiKey->onReturn   = [this] { saveAiEditor(); };
     _p->aiModel->onReturn = [this] { saveAiEditor(); };
-    _p->aiStt->onReturn   = [this] { saveAiEditor(); };
     ed->setVisible(false);
 
     _p->aiError               = caption(_content, {}, C::FormError);
@@ -275,38 +266,6 @@ void SettingsDialog::buildAi() {
         };
     }
 
-    heading(_content, tr("Voice input"));
-    caption(
-        _content,
-        tr("Dictate messages with the microphone button in the message box. When you dictate, the "
-           "recording and the conversation's recent messages are sent to your AI provider.\n"
-           "The speech-to-text model is set in each provider's settings above.")
-    );
-    _p->voiceWarn = caption(
-        _content,
-        tr("Voice input needs an OpenAI or OpenAI-compatible provider with speech-to-text."),
-        C::FormError
-    );
-    {
-        auto *g = group(_content, 2);
-        body(g, tr("Glossary"));
-        caption(g, tr("Names, product terms and jargon to spell correctly, one per line."));
-        _p->glossary = g->add<TextField>("gRPC\nTerraform\nnginx", true);
-        _p->glossary->setText(_s.voiceGlossary);
-        _p->glossary->edit().onChange = [this] {
-            // Saved half a second after typing stops (and on leaving the page).
-            _ctx.app.cancelTimer(_glossaryTimer);
-            _glossaryTimer = _ctx.app.addTimer(500, false, [this] {
-                _glossaryTimer = 0;
-                saveGlossary();
-            });
-        };
-    }
-    {
-        auto *g = group(_content, 2);
-        check(g, tr("Clean up with AI"), &_s.voiceCleanup, false);
-        caption(g, tr("Removes filler words and false starts using your AI provider."));
-    }
     refreshAiList();
 }
 
@@ -377,16 +336,6 @@ void SettingsDialog::refreshAiList() {
         auto *dl = caption(r, detail);
         dl->style().margins(18 + 8, 0, 0, 0);
     }
-    refreshVoiceHint();
-}
-
-void SettingsDialog::refreshVoiceHint() {
-    // Speech-to-text needs an OpenAI-format endpoint (not Anthropic).
-    bool stt = false;
-    for (const shell::AiProvider &p : _s.ai)
-        stt |= p.connected() && p.id != "anthropic";
-    if (_p->voiceWarn)
-        _p->voiceWarn->setVisible(!stt);
 }
 
 void SettingsDialog::showAiEditor(const std::string &id) {
@@ -445,11 +394,6 @@ void SettingsDialog::showAiEditor(const std::string &id) {
     }
     _p->aiKeyHint->setText(hint);
     _p->aiKeyHint->setVisible(!hint.empty());
-    // Speech-to-text only on OpenAI-format endpoints.
-    const bool stt = !p || p->id != "anthropic";
-    _p->aiSttRow->setVisible(stt);
-    _p->aiStt->setText(p ? p->sttModel : std::string());
-    _p->aiStt->edit().setPlaceholder(pi && pi->sttModel ? pi->sttModel : kCustomSttModel);
     _p->aiEditor->setVisible(true);
     (preset ? _p->aiKey : _p->aiName)->edit().focus();
 }
@@ -467,7 +411,7 @@ void SettingsDialog::probeAiEditor(bool fillModels) {
         key = saved->key;
     const std::string   id = saved ? saved->id : std::string("custom-new");
     const llm::Provider cfg =
-        llm::fromSettings(id, saved ? saved->name : std::string(), url, key, {}, {});
+        llm::fromSettings(id, saved ? saved->name : std::string(), url, key, {});
     if (cfg.baseUrl.empty()) {
         _p->aiError->setText(tr("Enter the server URL first"));
         return;
@@ -519,7 +463,6 @@ void SettingsDialog::saveAiEditor() {
     const std::string  key(str::trim(_p->aiKey->text()));
     const std::string  url = llm::normalizeOpenAiBaseUrl(_p->aiUrl->text());
     const std::string  model(str::trim(_p->aiModel->text()));
-    std::string        stt(str::trim(_p->aiStt->text()));
     if (p && p->preset()) {
         if (key.empty() && p->key.empty()) {
             _p->aiError->setText(tr("Paste your API key"));
@@ -529,7 +472,6 @@ void SettingsDialog::saveAiEditor() {
         if (!key.empty())
             p->key = key;
         p->model    = model == pi->defaultModel ? std::string() : model;
-        p->sttModel = pi->sttModel && stt == pi->sttModel ? std::string() : stt;
     } else {
         if (url.empty()) {
             _p->aiError->setText(tr("Enter the server URL (for example http://localhost:8000/v1)"));
@@ -543,7 +485,7 @@ void SettingsDialog::saveAiEditor() {
             int n = 1;
             while (_s.provider("custom-" + str::number(n)))
                 ++n;
-            _s.ai.push_back({"custom-" + str::number(n), {}, {}, {}, {}, {}});
+            _s.ai.push_back({"custom-" + str::number(n), {}, {}, {}, {}});
             p = &_s.ai.back();
         }
         std::string name(str::trim(_p->aiName->text()));
@@ -556,7 +498,6 @@ void SettingsDialog::saveAiEditor() {
         p->name     = name;
         p->url      = url;
         p->model    = model;
-        p->sttModel = stt == kCustomSttModel ? std::string() : stt;
         if (!key.empty())
             p->key = key;
     }
@@ -565,28 +506,6 @@ void SettingsDialog::saveAiEditor() {
     _p->aiEditor->setVisible(false);
     changed();
     refreshAiList();
-}
-
-void SettingsDialog::saveGlossary() {
-    std::string out;
-    std::string text = _p && _p->glossary ? _p->glossary->text() : _s.voiceGlossary;
-    std::vector<std::string_view> seen;
-    size_t                        i = 0;
-    while (i <= text.size()) {
-        size_t j = text.find('\n', i);
-        if (j == std::string::npos)
-            j = text.size();
-        const std::string_view term = str::trim(std::string_view(text).substr(i, j - i));
-        if (!term.empty() && std::find(seen.begin(), seen.end(), term) == seen.end()) {
-            seen.push_back(term);
-            out += (out.empty() ? "" : "\n") + std::string(term);
-        }
-        i = j + 1;
-    }
-    if (out != _s.voiceGlossary) {
-        _s.voiceGlossary = out;
-        changed();
-    }
 }
 
 // ── Storage ─────────────────────────────────────────────────────────────────

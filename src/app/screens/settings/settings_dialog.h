@@ -127,8 +127,6 @@ private:
     void showAiEditor(const std::string &id); // "" = a new custom server
     void saveAiEditor();
     void probeAiEditor(bool fillModels); // "Test connection" / "Fetch models"
-    void refreshVoiceHint();
-    void saveGlossary();
     // Storage / System.
     void refreshCache();
     void refreshRam();
@@ -143,7 +141,7 @@ private:
     ui::ScrollView        *_scroll   = nullptr;
     ui::View              *_content  = nullptr;
     std::unique_ptr<Parts> _p;
-    plat::TimerId          _ramTimer = 0, _glossaryTimer = 0;
+    plat::TimerId          _ramTimer = 0;
 #ifdef MSGA_SELF_UPDATE
     int _updListener = 0; // on _hooks.updater (the System page)
 #endif

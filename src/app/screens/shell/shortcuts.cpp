@@ -46,9 +46,6 @@ const Def kDefs[] = {
      false,
      N_("Search earlier prompts"),
      {{K::R, Ctrl}, kNone}},
-    // Only where a speech-to-text provider is connected (the mic button
-    // shows). Clear of the IME toggles (Ctrl+Space, Super+Space, Shift+Space).
-    {Id::VoiceInput, Scope::Composer, false, N_("Voice input"), {{K::Space, Ctrl | Shift}, kNone}},
 
     // ── Not advertised in the panel ─────────────────────────────────────────
     {Id::Underline, Scope::Composer, false, N_("Underline"), {{K::U, Ctrl}, kNone}},

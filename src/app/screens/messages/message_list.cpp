@@ -548,7 +548,7 @@ MessageList::MessageList(Context &ctx)
     _typing = add<ui::Label>("", Font::Small, C::TextMuted);
     _typing->setMaxLines(1);
     // The hover toolbar: the one-click reactions, Add reaction, Forward
-    // message, Save for later, Ask agent (agent thread links), More actions.
+    // message, Save for later and More actions.
     _toolbar = add<ToolbarCard>();
     _tbQuick = _toolbar->add<ui::View>();
     _tbQuick->style().row().spacing(4).items(ui::Align::Center);
@@ -568,11 +568,6 @@ MessageList::MessageList(Context &ctx)
     _tbSave->onClick = [this] {
         if (_toolbarRow)
             toggleSaved(_toolbarRow->ts());
-    };
-    _tbAgent          = _toolbar->add<ActionButton>(gfx::Icon::Bot, tr("Ask agent"));
-    _tbAgent->onClick = [this] {
-        if (_toolbarRow && _ctx.agentLinkAction)
-            _ctx.agentLinkAction(_conv, _toolbarRow->ts(), Context::AgentLinkAction::Ask);
     };
     _tbMore          = _toolbar->add<ActionButton>(gfx::Icon::MoreHorizontal, tr("More actions"));
     _tbMore->onClick = [this] {
@@ -1335,22 +1330,12 @@ void MessageList::placeToolbar() {
         _toolbar->setVisible(false);
         return;
     }
-    const bool agent = _ctx.backend.isAgentSession(_conv);
-    // Emoji: caps.reactions, except on my own messages in an agent session;
-    // Save: caps.messageReminders (not agent sessions).
-    _tbEmoji->setVisible(!(agent && m->user == _ctx.store().me));
-    syncQuickReactions(_tbEmoji->visible());
-    _tbSave->setVisible(!agent && _ctx.backend.capabilities().messageReminders);
+    _tbEmoji->setVisible(true);
+    syncQuickReactions(true);
+    _tbSave->setVisible(_ctx.backend.capabilities().messageReminders);
     const bool saved = m->saved || _ctx.store().reminderAt(_conv, m->ts) != 0;
     _tbSave->setIcon(saved ? gfx::Icon::BookmarkFilled : gfx::Icon::Bookmark);
     _tbSave->setTooltip(saved ? tr("Remove from saved") : tr("Save for later"));
-    // Ask agent: where a Claude Code session can be asked; on a linked
-    // thread it shows active and opens the agent's thread.
-    const Context::AgentLink link =
-        _ctx.agentLink ? _ctx.agentLink(_conv, *m) : Context::AgentLink{};
-    _tbAgent->setVisible(link.offered);
-    _tbAgent->setInk(link.linked ? C::Accent : C::FormIconStrong);
-    _tbAgent->setTooltip(link.linked ? tr("Open agent thread") : tr("Ask agent"));
     const ui::SizeF  sz = _toolbar->measure(ui::kInf, ui::kInf);
     const ui::RectF  rr = _toolbarRow->windowRect();
     const ui::PointF o  = mapFromWindow({rr.x, rr.y});
@@ -1654,8 +1639,7 @@ void MessageList::pressButton(Ts ts, const std::string &buttonId, ui::PointF at)
                     _ctx.openUrl(b.url);
                 return;
             }
-    // The agent answers on its own schedule (a new message, this one
-    // changing): the toast only confirms the press was taken.
+    // The toast confirms that the app button action was accepted.
     std::weak_ptr<char> alive = _alive;
     _ctx.backend.pressButton(
         _conv, ts, buttonId, [this, alive, at](bool ok, const std::string &err) {
@@ -1748,12 +1732,6 @@ constexpr ui::MenuDef kItemDefs[] = {
     {MessageList::kCopyImage, uint16_t(gfx::Icon::Copy), N_("Copy full image"), nullptr, nullptr},
     {MessageList::kPreview, uint16_t(gfx::Icon::Eye), N_("Preview"), nullptr, nullptr},
     {MessageList::kDeleteFile, uint16_t(gfx::Icon::Trash2), N_("Delete file…"), nullptr, nullptr},
-    {MessageList::kAllowAsker,
-     uint16_t(gfx::Icon::Users),
-     N_("Allow %1 to ask agent"),
-     nullptr,
-     nullptr},
-    {MessageList::kUnlinkAgent, uint16_t(gfx::Icon::X), N_("Unlink agent"), nullptr, nullptr},
 };
 
 // Reminder presets, no icons.
@@ -1807,21 +1785,11 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
         return items;
     const Store &st        = _ctx.store;
     const bool   mine      = m->user == st.me && m->user != model::kNoUser;
-    // Agent sessions (Claude Code): no permalinks, pins, reminders, edits or
-    // moves, and a thread only opens where one exists (a subagent run or a
-    // /btw branch) — "Reply in thread" where it takes replies.
-    const bool   agent     = _ctx.backend.isAgentSession(_conv);
-    // Deletable: my own messages, or any as a workspace admin — any
-    // at all in an agent session (deleteAnyMessage) — and only when the
-    // backend can take this one now (not while the session is working).
-    const bool   canDelete = (agent || mine || (st.me != model::kNoUser && st.user(st.me).admin)) &&
+    // Delete requires ownership or workspace administration, plus backend permission.
+    const bool canDelete = (mine || (st.me != model::kNoUser && st.user(st.me).admin)) &&
                              _ctx.backend.canDeleteMessage(_conv, ts);
-    if (_root == 0 && !m->isReply()) {
-        if (!agent)
-            addItem(items, kReply);
-        else if (m->replyCount > 0)
-            addItem(items, _ctx.backend.threadAcceptsReplies(_conv, m->ts) ? kReply : kOpenThread);
-    }
+    if (_root == 0 && !m->isReply())
+        addItem(items, kReply);
     // Mute the thread this message belongs to (a root with replies, a reply);
     // the thread panel has its own toggle.
     if (_root == 0 && (m->replyCount > 0 || m->isReply())) {
@@ -1829,20 +1797,18 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
         addItem(items, st.threadMuted(_conv, root) ? kUnmuteThread : kMuteThread);
     }
     ui::addMenuSeparator(items);
-    if (mine && onEdit && !agent) {
+    if (mine && onEdit) {
         addItem(items, kEdit);
         ui::addMenuSeparator(items);
     }
-    if (!agent)
-        addItem(items, kCopyLink);
+    addItem(items, kCopyLink);
     if (!firstLink(m->text).empty())
         addItem(items, kCopyLinkInText);
     addItem(items, kCopyText);
     ui::addMenuSeparator(items);
-    if (!agent)
-        addItem(items, m->pinned ? kUnpin : kPin);
+    addItem(items, m->pinned ? kUnpin : kPin);
     // Slack's Later list: session-token workspaces only (saved.*).
-    if (!agent && _ctx.backend.capabilities().messageReminders) {
+    if (_ctx.backend.capabilities().messageReminders) {
         const bool reminded = st.reminderAt(_conv, ts) != 0;
         if (m->saved && !reminded)
             addItem(items, kUnsave);
@@ -1854,22 +1820,11 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     addItem(items, kForward, bool(_ctx.forwardMessage));
     // "Move to thread…": a top-level message without replies of its own, and
     // only where the original can be deleted afterwards.
-    if (_root == 0 && canDelete && !agent && !m->isReply() && m->replyCount == 0 && !isSystem(*m))
+    if (_root == 0 && canDelete && !m->isReply() && m->replyCount == 0 && !isSystem(*m))
         addItem(items, kMoveToThread);
     // Always offered where AI is wired: without a provider it says so (and
     // links to Settings → AI assistance).
     addItem(items, kSummarize, _ctx.ai != nullptr);
-    // Agent thread links (asking is the toolbar's robot): let the author
-    // ask too, unlink from the root.
-    if (const Context::AgentLink link =
-            _ctx.agentLink && !isSystem(*m) ? _ctx.agentLink(_conv, *m) : Context::AgentLink{};
-        link.offered) {
-        if (link.canAllow)
-            addItem(items, kAllowAsker).label =
-                arg(tr("Allow %1 to ask agent"), std::string(st.user(m->user).label()));
-        if (link.root)
-            addItem(items, kUnlinkAgent);
-    }
     if (canDelete) {
         ui::addMenuSeparator(items);
         addItem(items, kDelete);
@@ -2053,16 +2008,6 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         summarizeDown(_ctx, conv, std::move(span), threadMode());
         break;
     }
-    case kAllowAsker:
-    case kUnlinkAgent:
-        if (_ctx.agentLinkAction)
-            _ctx.agentLinkAction(
-                conv,
-                ts,
-                id == kAllowAsker ? Context::AgentLinkAction::Allow
-                                  : Context::AgentLinkAction::Unlink
-            );
-        break;
     case kPreview:
         if (const model::File *f = anyFileAt(msg, path))
             openCsvPreview(*f);

@@ -36,7 +36,6 @@ add_library(msga_screens_shell STATIC
     status_dialog.cpp
     swipe_nav.cpp
     typing_indicator.cpp
-    voice_strip.cpp
 )
 target_include_directories(msga_screens_shell PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 if(MSGA_SELF_UPDATE)

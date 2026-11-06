@@ -44,14 +44,11 @@ struct SettingsDialog::Parts {
     // AI
     ui::View                    *aiList = nullptr, *aiEditor = nullptr;
     ui::Label                   *aiTitle = nullptr, *aiError = nullptr, *aiProbe = nullptr;
-    ui::View                    *aiNameRow = nullptr, *aiUrlRow = nullptr, *aiSttRow = nullptr;
+    ui::View                    *aiNameRow = nullptr, *aiUrlRow = nullptr;
     ui::TextField *aiName = nullptr, *aiUrl = nullptr, *aiKey = nullptr, *aiModel = nullptr;
-    ui::TextField *aiStt       = nullptr;
     ui::Label     *aiCleartext = nullptr, *aiKeyLink = nullptr, *aiKeyHint = nullptr;
     ui::Dropdown  *aiModelPick = nullptr;
     std::string    aiEditing; // provider id; "" = adding a custom server
-    ui::Label     *voiceWarn = nullptr;
-    ui::TextField *glossary  = nullptr;
     // Storage / System
     ui::Label     *cacheSize = nullptr, *ramLabel = nullptr, *updStatus = nullptr;
     int            cacheSeq    = 0; // refreshCache's newest walk

@@ -1,6 +1,6 @@
 # msga sources
 
-msga (Slack + Claude Code), built on its own platform layer `plat/`. The
+msga (native Slack client), built on its own platform layer `plat/`. The
 **first goal is the smallest possible binary and resource use**; every choice
 below serves that. Design record: `../docs/platform-layer-plan.md` (the plat
 layer) and `docs/` here as modules land.

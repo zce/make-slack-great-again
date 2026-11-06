@@ -12,8 +12,6 @@
 //                      API — its OpenAI-compatibility layer is documented as
 //                      not production-ready.
 //
-// Speech-to-text rides the OpenAI wire only (POST <base>/audio/transcriptions,
-// multipart): Anthropic's Messages API has no audio endpoint.
 #pragma once
 
 #include "app/llm/types.h"
@@ -45,50 +43,6 @@ constexpr int kTimeoutMs = 120000;
 
 net::Request buildChat(const Endpoint &ep, const Request &req);
 net::Request buildListModels(const Endpoint &ep);
-
-// ── Speech-to-text ──────────────────────────────────────────────────────────
-struct TranscriptionInput {
-    std::string              audio;
-    std::string              fileName; // with the real extension: servers sniff the format by it
-    std::string              mimeType; // the part's Content-Type ("audio/mpeg"); "" → octet-stream
-    std::string              model;    // "gpt-transcribe", "whisper-1", …
-    // Context that steers recognition. `prompt` goes to every server (Whisper
-    // reads it as the transcript preceding the audio; the gpt-* transcribe
-    // family follows it as instructions). `keywords` (terms to spell
-    // exactly) and `languages` (ISO 639-1 hints) exist only on OpenAI's
-    // gpt-* models, so they are sent for those alone.
-    std::string              prompt;
-    std::vector<std::string> keywords;
-    std::vector<std::string> languages;
-};
-
-struct TranscriptionResult {
-    bool        ok = false;
-    std::string text;
-    std::string error;
-};
-
-// Whether the format has a transcription endpoint at all (OpenAiChat only).
-bool         supportsTranscription(Format format);
-// Multipart POST <base>/audio/transcriptions with `model`, `file` and
-// `response_format=json`, plus `prompt` when set and — gpt-* models only —
-// one `keywords[]` field per sanitised keyword and one `languages[]` field
-// per language. `boundary` is generated when empty (tests pin it).
-// Precondition: supportsTranscription(ep.format).
-net::Request buildTranscription(
-    const Endpoint &ep, const TranscriptionInput &in, std::string_view boundary = {}
-);
-// Speech-to-text keywords as OpenAI accepts them: trimmed, empty and
-// case-insensitive duplicates dropped (first spelling wins), and any term
-// containing '<', '>', CR or LF dropped — one such term makes OpenAI reject
-// the whole request.
-std::vector<std::string> sanitizeTranscriptionKeywords(const std::vector<std::string> &keywords);
-// {"text": …} on success; a 2xx that isn't JSON is taken as the plain text
-// (servers that ignore response_format). A 404 is a server without STT.
-TranscriptionResult      parseTranscription(const net::Response &r);
-// The part Content-Type for an audio file extension ("mp3" → "audio/mpeg");
-// "" when unknown.
-std::string              audioMimeForExtension(std::string_view ext);
 
 // ── Custom servers ──────────────────────────────────────────────────────────
 

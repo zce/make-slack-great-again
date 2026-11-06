@@ -1,7 +1,7 @@
 // The composer (channel and thread share it): in a
 // rounded box the formatting toolbar, the "Editing message" banner, the
 // attachment chips, the editor and the bottom bar (attach, emoji, GIF,
-// mention … voice, send + schedule).
+// mention … send + schedule).
 //
 // The editor is plain text: the toolbar and the format keys
 // type Slack's markers ("*bold*", "> quote", "```"), and a link is typed as
@@ -35,7 +35,6 @@
 namespace shell {
 
 class GlyphButton;
-class VoiceStrip;
 
 // TextEdit runs → mrkdwn. Marks hug the words (leading/trailing spaces move
 // outside, as Slack requires), never cross a line break, nest without
@@ -221,20 +220,6 @@ public:
     std::function<std::string()>             attachDir;
     std::function<void(const std::string &)> setAttachDir;
 
-    // ── Voice input ─────────────────────────────────────────────────────────
-    // Dictation (llm::VoiceInput): the mic beside Send — shown while a
-    // provider can do speech-to-text — records, the strip above the bottom
-    // bar shows the level, time and progress, and the text lands at the
-    // caret. The voice shortcut toggles it (held past 400 ms: push-to-talk),
-    // Escape cancels. Leaving the conversation (or the composer hidden) stops
-    // a recording and lets it finish: the text lands in that conversation's
-    // draft, a failure shows when it is back. On by default; off for a
-    // composer that is not a conversation's (the forward dialog's).
-    void                 setVoiceInput(bool on);
-    VoiceStrip          *voiceStrip() const { return _voiceStrip; }
-    bool                 voiceActiveHere() const;
-    static constexpr int kPushToTalkMs = 400;
-
     // The toolbar and bottom bar buttons (tests).
     GlyphButton *button(shortcuts::Id id) const;
     GlyphButton *sendButton() const { return _sendBtn; }
@@ -277,13 +262,6 @@ private:
     bool keyDown(const ui::Event &e); // the composer-scope shortcuts
     void formatAction(shortcuts::Id id);
     void editLast();
-    bool toggleVoiceInput();
-    void cancelVoiceHere();
-    void cancelAllVoice();
-    void finishVoiceInBackground(); // a leave path: stop recording, keep going
-    void updateMicVisibility();
-    void updateVoiceUi();
-    void insertVoiceText(const std::string &text);
     bool openPromptSearch();
     bool stepPromptHistory(bool older);
     void resetPromptHistory();
@@ -298,15 +276,6 @@ private:
     void offerUndo(const std::string &html, const std::vector<std::string> &files);
     void withdrawUndo();
 
-    // A dictation started here, for the target it was started on (its
-    // VoiceInput owner).
-    struct VoiceJob {
-        std::string     scope;
-        DraftStash::Key key;
-    };
-    VoiceJob *voiceJobHere() const;
-    void      voiceEnded(const void *owner, const std::string *text, const std::string *error);
-
     screens::Context        &_ctx;
     DraftStash              &_drafts;
     Avatars                 *_avatars = nullptr;
@@ -315,7 +284,7 @@ private:
     GlyphButton             *_tools[10] = {};
     GlyphButton             *_bottom[4] = {}; // attach, emoji, GIF, mention
     GlyphButton             *_gifBtn = nullptr, *_mentionBtn = nullptr, *_emojiBtn = nullptr;
-    GlyphButton             *_sendBtn = nullptr, *_dropBtn = nullptr, *_micBtn = nullptr;
+    GlyphButton             *_sendBtn = nullptr, *_dropBtn = nullptr;
     ui::View                *_sendGroup = nullptr;
     ui::View                *_seps[2]   = {};
     ui::View                *_editBar   = nullptr;
@@ -393,14 +362,6 @@ private:
     plat::TimerId            _spellTimer    = 0;
     uint32_t                 _spellSeq      = 0; // the newest check; older answers are dropped
     uint32_t                 _spellObserver = 0;
-    VoiceStrip              *_voiceStrip    = nullptr;
-    uint32_t                 _voiceObserver = 0, _providersObserver = 0;
-    bool                     _voiceOn = true, _pttArmed = false;
-    int64_t                  _pttPressedMs = 0; // when the voice shortcut went down
-
-    std::vector<std::unique_ptr<VoiceJob>>        _voiceJobs; // in flight
-    // Failures of dictations finished elsewhere, shown when their target is.
-    std::vector<std::pair<VoiceJob, std::string>> _voiceErrors;
 };
 
 } // namespace shell

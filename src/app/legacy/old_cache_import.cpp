@@ -297,11 +297,6 @@ bool importSlackCache(plat::App &app, const std::string &from, const std::string
         if (c != kNoConv && t.ts && !s.threadMuted(c, t.ts))
             s.setThreadMuted(c, t.ts, true);
     }
-    for (const json::Value t : m["aiTranscripts"])
-        if (!t.key().empty() && !t["text"].str().empty() && !s.aiTranscript(std::string(t.key())))
-            s.setAiTranscript(
-                std::string(t.key()), std::string(t["text"].str()), std::string(t["by"].str())
-            );
 
     const json::Value x = cur.root()["x"];
     wc.saveExtras       = [&](json::Writer &w) {
@@ -321,59 +316,6 @@ bool importSlackCache(plat::App &app, const std::string &from, const std::string
         warm ? "local state only" : "whole"
     );
     return true;
-}
-
-bool importClaudeCodeCache(const std::string &from, const std::string &knownPath) {
-    json::Document convs, known;
-    if (!convs.parseFile(file::join(from, "conversations.json")) || !known.parseFile(knownPath) ||
-        !known.root().isObject())
-        return false;
-    model::Store dummy; // toConversation interns the DM peer somewhere
-    struct Local {
-        std::string        id;
-        bool               starred, muted;
-        model::NotifyLevel notify;
-    };
-    std::vector<Local> local;
-    for (const json::Value o : convs.root()) {
-        const model::Conversation c = toConversation(o, dummy);
-        if (!c.id.empty() && (c.starred || c.muted || c.notify != model::NotifyLevel::Default))
-            local.push_back({c.id, c.starred, c.muted, c.notify});
-    }
-    bool         changed = false;
-    json::Writer w;
-    w.beginObject();
-    for (const json::Value v : known.root()) {
-        if (v.key() != "sessions") {
-            w.key(v.key()).value(v);
-            continue;
-        }
-        w.key("sessions").beginArray();
-        for (const json::Value o : v) {
-            w.beginObject();
-            for (const json::Value f : o)
-                w.key(f.key()).value(f);
-            for (const Local &l : local)
-                if (l.id == o["id"].str()) {
-                    if (l.starred && !o.has("starred")) {
-                        w.key("starred").value(true);
-                        changed = true;
-                    }
-                    if (l.muted && !o.has("muted")) {
-                        w.key("muted").value(true);
-                        changed = true;
-                    }
-                    if (l.notify != model::NotifyLevel::Default && !o.has("notify")) {
-                        w.key("notify").value(int64_t(l.notify));
-                        changed = true;
-                    }
-                }
-            w.endObject();
-        }
-        w.endArray();
-    }
-    w.endObject();
-    return changed && file::writeAtomic(knownPath, w.take(), 0600);
 }
 
 void importOldCaches(
@@ -401,10 +343,6 @@ void importOldCaches(
             continue;
         if (service == "slack")
             importSlackCache(app, from, cache::WorkspaceCache::dirFor(app, key));
-        else if (service == "claude-code")
-            importClaudeCodeCache(
-                from, file::join(identity::dataDir(app), "claude-code/known-sessions.json")
-            );
     }
     if (done.size() == had)
         return;

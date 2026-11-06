@@ -49,7 +49,6 @@ const struct {
     {"notifications/huddles", &Settings::notifyHuddles},
     {"notifications/boldMentionsOnly", &Settings::boldMentionsOnly},
     {"notifications/sound", &Settings::notifySound},
-    {"voice/cleanup", &Settings::voiceCleanup},
     {"updates/autoCheck", &Settings::autoUpdates},
     {"window/minimizeToTray", &Settings::minimizeToTray},
     {"tray/customIcon", &Settings::customTrayIcon},
@@ -76,7 +75,6 @@ const struct {
     {"llm/defaultProvider", &Settings::aiDefault},
     {"llm/nativeLanguage", &Settings::aiLanguage},
     {"credentials/slackClientId", &Settings::slackClientId},
-    {"claudeCode/lastDir", &Settings::claudeLastDir},
 };
 
 // The stored theme presets' ids, in ui::Palette order.
@@ -124,7 +122,7 @@ void windowGeometry(std::string_view b, Settings *s) {
 }
 
 bool isKnownService(std::string_view key) {
-    return str::startsWith(key, "slack:") || str::startsWith(key, "claude-code:");
+    return str::startsWith(key, "slack:");
 }
 
 } // namespace
@@ -203,7 +201,6 @@ void importOldSettings(
         if (AiProvider *p = s->provider(id)) {
             const std::string base = str::concat({"llm/providers/", id, "/"});
             p->model               = at(old, base + "model").text();
-            p->sttModel            = at(old, base + "sttModel").text();
         }
     for (const std::string &id : at(old, "llm/customProviders").toList()) {
         const std::string base = "llm/providers/" + id + "/";
@@ -212,35 +209,10 @@ void importOldSettings(
         p.name     = at(old, base + "name").text();
         p.url      = at(old, base + "baseUrl").text();
         p.model    = at(old, base + "model").text();
-        p.sttModel = at(old, base + "sttModel").text();
         if (id.empty() || p.url.empty() || s->provider(id))
             continue; // a half-written entry: skipped
         s->ai.push_back(std::move(p));
     }
-    std::string glossary;
-    for (const std::string &term : at(old, "voice/glossary").toList())
-        if (!str::trim(term).empty())
-            glossary += glossary.empty() ? term : "\n" + term;
-    s->voiceGlossary = glossary;
-
-    // Claude Code folders: claudeCode/recentDirs is an INI array
-    // (<key>/size, <key>/<1-based index>/path|usedAt); claudeCode/lastDir/<role>
-    // each teammate's own pick.
-    s->claudeRecentDirs.clear();
-    const int64_t n = at(old, "claudeCode/recentDirs/size").toInt(0);
-    for (int64_t i = 1; i <= n && i <= 100; ++i) {
-        const std::string base = "claudeCode/recentDirs/" + str::number(i) + "/";
-        const std::string path = at(old, base + "path").text();
-        if (!path.empty())
-            s->claudeRecentDirs.push_back({path, at(old, base + "usedAt").toInt(0)});
-    }
-    s->claudeTeammateDirs.clear();
-    constexpr std::string_view kTeammate = "claudeCode/lastDir/";
-    for (auto it = old.lower_bound(kTeammate);
-         it != old.end() && str::startsWith(it->first, kTeammate);
-         ++it)
-        if (const std::string dir = it->second.text(); !dir.empty())
-            s->claudeTeammateDirs.emplace_back(it->first.substr(kTeammate.size()), dir);
 
     if (s->emojiSkinTone == 1)
         s->emojiSkinTone = 0; // only 2-6 are tones
@@ -253,13 +225,6 @@ void importOldSettings(
             if (!e.key().empty() && e.integer() > 0)
                 s->visitedAt.emplace_back(std::string(e.key()), e.integer());
     s->emojiRecent = at(old, "emoji/recent").toList();
-    // zenMode/<percent-encoded workspace key>: the footer's zen toggle, per
-    // workspace.
-    s->zenWorkspaces.clear();
-    constexpr std::string_view kZen = "zenMode/";
-    for (auto it = old.lower_bound(kZen); it != old.end() && str::startsWith(it->first, kZen); ++it)
-        if (it->second.toBool(false))
-            s->zenWorkspaces.push_back(str::percentDecode(it->first.substr(kZen.size())));
     s->lastAttachDir = at(appStore, "composer/lastAttachDir").text();
 }
 
@@ -324,7 +289,7 @@ std::vector<auth::WorkspaceRecord> oldWorkspaces(const Map &old, std::string *ac
     for (const std::string &handle : at(old, "workspaces").toList()) {
         const size_t colon = handle.find(':');
         if (colon == std::string::npos || !isKnownService(handle))
-            continue; // Teams and IMAP are gone from this app (the old store keeps them)
+            continue; // Only Slack workspaces belong in this fork; ignore old integrations
         const std::string base = "workspace/" + handle + "/";
         if (!has(old, base + "displayName") && !has(old, base + "iconUrl") &&
             !has(old, base + "auth"))

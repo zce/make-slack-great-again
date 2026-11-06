@@ -13,7 +13,6 @@
 #include "screens/shell/nav_chrome.h"
 #include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar_footer.h"
-#include "screens/shell/teammate_page.h"
 
 #include <algorithm>
 #include <cmath>
@@ -283,37 +282,17 @@ public:
         label->setMaxLines(1);
         label->style().shrink = 1;
         add<View>()->style().flex(1);
-        // Channels: "+" → find or create one; Direct messages: the browse
-        // dialog's People tab; Sessions: find or create one (a right click
-        // too); Team: add a teammate.
-        const bool agents = sb._ctx.backend.capabilities().agentSessions;
-        if (k == 1 || k == 2 || k == 4) {
-            plus = add<HeaderButton>(
-                Icon::Plus,
-                k == 1   ? tr("Add channels")
-                : k == 4 ? tr("Add teammate")
-                : agents ? tr("Add sessions")
-                         : tr("Open a direct message")
-            );
+        // Channels: "+" finds/creates a channel; DMs: "+" opens a direct message.
+        if (k == 1 || k == 2) {
+            plus = add<HeaderButton>(Icon::Plus,
+                k == 1 ? tr("Add channels") : tr("Open a direct message"));
             plus->setVisible(false);
-            plus->onClick = [this, k, agents] {
+            plus->onClick = [this, k] {
                 if (k == 1)
                     sidebar.addChannelsMenu(plus->at);
-                else if (k == 4) {
-                    if (sidebar.onAddTeammate)
-                        sidebar.onAddTeammate();
-                } else if (agents) {
-                    if (sidebar.onSessionMenu)
-                        sidebar.onSessionMenu(plus->at);
-                } else if (sidebar.onBrowsePeople) {
+                else if (sidebar.onBrowsePeople)
                     sidebar.onBrowsePeople();
-                }
             };
-            if (k == 2 && agents)
-                plus->onRightClick = [this] {
-                    if (sidebar.onSessionMenu)
-                        sidebar.onSessionMenu(plus->at);
-                };
         }
         // More actions: the section menu (sort, the user's sections); not
         // on the Team, which lists no conversations.
@@ -391,7 +370,7 @@ public:
         gfx::drawIcon(p, i, {kPadH, y, 14, 14}, color(labelInk()));
     }
     Sidebar                      &sidebar;
-    // 0 starred, 1 channels, 2 direct messages, 3 agents & apps, 4 team,
+    // 0 starred, 1 channels, 2 direct messages, 3 Slack agents & apps,
     // 5 a custom section (sectionId)
     int                           kind;
     Icon                          icon;
@@ -646,7 +625,7 @@ public:
         unread        = sidebar.paintsUnread(cv);
         // DMs count every unread message (an agent session only what needs
         // me: Session counts those as mentions); channels their mentions.
-        const int red = cv.isDirect() && !caps.agentSessions ? int(cv.unread) : int(cv.mentions);
+        const int red = cv.isDirect() ? int(cv.unread) : int(cv.mentions);
         count         = !stale && !quiet && red > 0 ? red : 0;
         dot = !stale && !quiet && sidebar.level(cv) == model::NotifyLevel::All && !cv.isDirect() &&
               cv.mentions == 0 && cv.unread > 0;
@@ -691,66 +670,6 @@ public:
     size_t         base    = 0; // its place in the section as listed (before the sort)
     bool           unread = false, dot = false;
     int            count = 0, huddleCount = 0;
-};
-
-// A teammate in the Team section: the pill of a
-// conversation row, its user's avatar and presence, its name — bright while
-// any of its sessions has something unread (the sessions carry the badges).
-class TeammateRow final : public SidebarRow {
-public:
-    TeammateRow(Sidebar &sb, const model::Backend::AgentRole &mate) : sidebar(sb), role(mate.id) {
-        pillRow(this);
-        const auto &store = sb._ctx.store();
-        user              = mate.user;
-        avatar            = smallAvatar(this);
-        avatar->style().margins(0, 0, 8, 0);
-        const std::string &pic = user < store.userCount() && !store.user(user).avatar.empty()
-                                     ? store.user(user).avatar
-                                     : mate.avatar;
-        avatar->setBitmap(sb._avatars.get(pic, kAvatarPx));
-        avatar->setInitial(mate.name);
-        label = add<Label>(mate.name, Font::Body, C::SidebarTextMuted);
-        label->setMaxLines(1);
-        label->style().shrink = 1;
-        add<View>()->style().flex(1);
-        onClick = [this] {
-            // Again on a re-click: back to the page from anywhere in it.
-            sidebar.selectTeammate(role);
-            if (sidebar.onTeammate)
-                sidebar.onTeammate(role);
-        };
-    }
-    bool showMenu(PointF at) override {
-        if (sidebar._menus)
-            sidebar._menus->showTeammate(role, at);
-        return sidebar._menus != nullptr;
-    }
-    // `unread` as Sidebar::refreshTeammates found it.
-    void refresh() override {
-        const auto &store = sidebar._ctx.store();
-        const bool  sel   = sidebar._selectedTeammate == role;
-        label->setFont(unread ? Font::BodySemibold : Font::Body);
-        label->setColor(
-            sel      ? C::SidebarSelectedText
-            : unread ? C::SidebarText
-                     : C::SidebarTextMuted
-        );
-        const model::User *u = user < store.userCount() ? &store.user(user) : nullptr;
-        avatar->setPresence(
-            Avatar::presenceOf(u, sidebar._ctx.backend.capabilities().presence),
-            sel         ? C::SidebarSelected
-            : hovered() ? C::SidebarHover
-                        : C::Sidebar,
-            sel
-        );
-        setChecked(sel);
-    }
-
-    Sidebar       &sidebar;
-    std::string    role;
-    model::UserRef user   = model::kNoUser;
-    Avatar        *avatar = nullptr;
-    bool           unread = false; // any of its sessions is (set by the sidebar)
 };
 
 // ── Sidebar ─────────────────────────────────────────────────────────────────
@@ -899,7 +818,7 @@ void Sidebar::clearVisited() {
 // channel nothing is known about yet. Agent sessions are always listed.
 bool Sidebar::relevant(ConvRef ref) const {
     const auto &c = _ctx.store().conversation(ref);
-    if (c.unread > 0 || ref == _selected || _ctx.backend.capabilities().agentSessions)
+    if (c.unread > 0 || ref == _selected)
         return true;
     const int64_t cutoff =
         _ctx.backend.nowSecs() - int64_t(std::max(1, _filters.relevantDays)) * 86400;
@@ -923,7 +842,6 @@ void Sidebar::rebuild() {
     _items->clearChildren();
     _rows.clear();
     _rowOf.assign(_ctx.store().conversationCount(), nullptr);
-    _teamRows.clear();
     _sections.clear();
     _nav.clear();
     _navTitles.clear();
@@ -1023,8 +941,6 @@ void Sidebar::rebuild() {
     _hiddenChannels = _showAllChannels ? 0 : int(hiddenCh.size());
     if (_showAllChannels)
         lists[1].insert(lists[1].end(), hiddenCh.begin(), hiddenCh.end());
-    const bool agents = caps.agentSessions;
-    _team = agents ? _ctx.backend.agentRoles() : std::vector<model::Backend::AgentRole>{};
     struct Def {
         Icon        icon;
         const char *title;
@@ -1032,7 +948,7 @@ void Sidebar::rebuild() {
     const Def defs[] = {
         {Icon::Star, tr("Starred")},
         {Icon::Hash, tr("Channels")},
-        {Icon::MessagesSquare, agents ? tr("Sessions") : tr("Direct messages")},
+        {Icon::MessagesSquare, tr("Direct messages")},
         {Icon::Bot, tr("Agents & apps")},
     };
     // A header and its rows (a click on the header collapses them).
@@ -1073,7 +989,7 @@ void Sidebar::rebuild() {
             }
         // No Starred section until something is starred, no Agents & apps
         // without an app DM, and an agent workspace drops an empty Channels.
-        if (lists[s].empty() && (s == 0 || s == 3 || (s == 1 && agents && hiddenCh.empty())))
+        if (lists[s].empty() && (s == 0 || s == 3))
             continue;
         auto *h = section(s, defs[s].icon, defs[s].title, lists[s]);
         if (s == 1 && _hiddenChannels > 0) {
@@ -1088,39 +1004,13 @@ void Sidebar::rebuild() {
             more->onClick = [this] { showAllChannels(); };
             h->extras.push_back(more);
         }
-        if (s == 1 || (s == 2 && agents)) {
-            auto *add =
-                _items->add<ActionRow>(s == 1 ? tr("Add channels") : tr("Add sessions"), true);
-            add->onClick = [this, add, s] {
-                if (s == 1) {
-                    addChannelsMenu(add);
-                } else if (onSessionMenu) { // Sessions: find one or create one
-                    const RectF r = add->windowRect();
-                    onSessionMenu({r.x + kContentX, r.y + r.h / 2});
-                }
-            };
+        if (s == 1) {
+            auto *add = _items->add<ActionRow>(tr("Add channels"), true);
+            add->onClick = [this, add] { addChannelsMenu(add); };
             h->extras.push_back(add);
         }
         applyCollapse(h);
-        // The team, under the sessions (the fourth section): the roles sessions
-        // are started with.
-        if (s == 2 && !_team.empty()) {
-            auto *t      = _items->add<SectionHeader>(*this, 4, Icon::Users, tr("Team"));
-            t->collapsed = _collapsed[4];
-            _sections.push_back(t);
-            t->onClick = [this, t] {
-                t->collapsed = !t->collapsed;
-                applyCollapse(t);
-            };
-            for (const auto &mate : _team) {
-                auto *row = _items->add<TeammateRow>(*this, mate);
-                t->extras.push_back(row);
-                _teamRows.push_back(row);
-            }
-            applyCollapse(t);
-        }
     }
-    refreshTeammates();
     refreshAll();
     _footer->refresh();
     noteShape(userShape());
@@ -1163,15 +1053,6 @@ uint64_t Sidebar::userShape() const {
             mix(g.image);
         }
     }
-    if (_ctx.backend.capabilities().agentSessions)
-        for (const auto &mate : _ctx.backend.agentRoles()) {
-            mix(mate.id);
-            mix(mate.name);
-            mix(mate.avatar);
-            mix(str::number(int64_t(mate.user)));
-            if (mate.user < store.userCount())
-                mix(store.user(mate.user).avatar);
-        }
     return h;
 }
 
@@ -1191,7 +1072,7 @@ void Sidebar::usersSoon() {
         // a presence round, which only moves the dots. An agent workspace
         // (its team may change with its users) always takes the long way.
         const auto &st = _ctx.store();
-        if (!_ctx.backend.capabilities().agentSessions && _shapeStore == &st && _shapeMe == st.me &&
+        if (_shapeStore == &st && _shapeMe == st.me &&
             _shapeProfileRev == st.profileRevision() && _shapeTextRev == st.textRevision()) {
             for (ConvRow *r : _rows)
                 r->refreshPresence();
@@ -1204,8 +1085,7 @@ void Sidebar::usersSoon() {
             return;
         }
         noteShape(shape);
-        refreshTeammates();
-        refreshAll();
+            refreshAll();
         _footer->refresh();
     });
 }
@@ -1228,8 +1108,7 @@ void Sidebar::sectionsSoon() {
             return;
         _sectionsTimer = 0;
         refreshSections();
-        refreshTeammates();
-        if (std::exchange(_resort, false) && !sortsHold())
+            if (std::exchange(_resort, false) && !sortsHold())
             rebuildSoon(false);
     });
 }
@@ -1383,8 +1262,6 @@ void Sidebar::applyCollapse(SectionHeader *h) {
 // The section under the pointer: its header, its rows, the rows' extras.
 SectionHeader *Sidebar::sectionAt(PointF windowPos) const {
     for (SectionHeader *h : _sections) {
-        if (h->kind == 4) // the Team lists teammates, not conversations
-            continue;
         RectF span = h->windowRect();
         for (View *v : h->rows)
             if (v->visible())
@@ -1513,63 +1390,6 @@ void Sidebar::refreshAll() {
     refreshSections();
 }
 
-void Sidebar::refreshTeammates() {
-    if (_teamRows.empty())
-        return;
-    // The roles with an unread session, in one pass over the conversations.
-    const auto              &store = _ctx.store();
-    std::vector<std::string> roles;
-    for (ConvRef c = 0; c < store.conversationCount(); ++c) {
-        const auto &cv = store.conversation(c);
-        if (cv.member && paintsUnread(cv))
-            if (std::string role = _ctx.backend.agentSessionRole(c);
-                std::find(roles.begin(), roles.end(), role) == roles.end())
-                roles.push_back(std::move(role));
-    }
-    for (TeammateRow *r : _teamRows) {
-        r->unread = std::find(roles.begin(), roles.end(), r->role) != roles.end();
-        r->refresh();
-    }
-}
-
-void Sidebar::selectTeammate(const std::string &role) {
-    if (!role.empty()) {
-        select(kNoConv);
-        if (_navSelected != Nav::None)
-            selectNav(Nav::None);
-    }
-    _selectedTeammate = role;
-    refreshTeammates();
-    for (TeammateRow *r : _teamRows)
-        if (r->role == role) {
-            for (SectionHeader *h : _sections)
-                if (h->kind == 4 && h->collapsed) {
-                    h->collapsed = false;
-                    applyCollapse(h);
-                }
-            _scroll->ensureVisible(r, 8);
-        }
-}
-
-std::vector<std::string> Sidebar::teammates() const {
-    std::vector<std::string> out;
-    for (const TeammateRow *r : _teamRows)
-        out.push_back(r->role);
-    return out;
-}
-
-Sidebar::TeammateState Sidebar::teammateState(const std::string &role) const {
-    TeammateState s;
-    for (const TeammateRow *r : _teamRows)
-        if (r->role == role) {
-            s.exists   = true;
-            s.bold     = r->unread;
-            s.selected = r->checked();
-            s.presence = int(r->avatar->presence());
-        }
-    return s;
-}
-
 int Sidebar::conversationPresence(ConvRef conv) const {
     const ConvRow *r = rowFor(conv);
     return r && r->avatar ? int(r->avatar->presence()) : 0;
@@ -1632,7 +1452,6 @@ void Sidebar::selectNav(Nav n) {
     _navSelected = navRow(n) ? n : Nav::None;
     if (_navSelected != Nav::None) {
         select(kNoConv);
-        selectTeammate({});
     }
     showNavSelection();
 }
@@ -1650,10 +1469,6 @@ void Sidebar::select(ConvRef conv) {
     _selected         = conv;
     if (conv != kNoConv && _navSelected != Nav::None)
         selectNav(Nav::None);                            // the overview page is left
-    if (conv != kNoConv && !_selectedTeammate.empty()) { // the teammate's page is left
-        _selectedTeammate.clear();
-        refreshTeammates();
-    }
     if (conv < _ctx.store().conversationCount()) { // a visit keeps it relevant for the whole window
         if (const std::string &id = _ctx.store().conversation(conv).id; !id.empty()) {
             _visited[id] = _ctx.backend.nowSecs();

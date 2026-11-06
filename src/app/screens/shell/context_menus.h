@@ -1,13 +1,5 @@
-// The shell's context menus — sidebar conversations and section headers, an
-// agent workspace's session "+" and teammates, and the workspace tile on the
-// rail — and what their items do.
-//
-// Items, order and wording are fixed per menu (channel, group DM, DM,
-// teammate, workspace and agent session). Every
-// state change goes through the Backend (or the
-// Store for app-local state), copies through plat's clipboard. The menus are
-// data first (…Items) and actions second (run), so tests check both without
-// a pointer.
+// Slack conversation, section and workspace context menus.
+// Actions go through the Backend; menus are data-first for easy testing.
 #pragma once
 
 #include "screens/common/context.h"
@@ -50,9 +42,8 @@ public:
         kNotifyMute, // "Mute and hide"
         kMute,       // DMs
         kUnmute,
-        kRename, // group DMs, agent sessions
+        kRename, // group DMs
         kLeave,
-        kStopSession,
         kNewSection,        // "Move to section" → "New section…"
         kRemoveFromSection, // "Remove from <section>"
         // The workspace (no target)
@@ -61,14 +52,6 @@ public:
         kMuteWorkspace,
         kUnmuteWorkspace,
         kSignOut,
-        // An agent workspace's Sessions "+" / "Add sessions" (no target)
-        kFindSession = 60,
-        kCreateSession,
-        kCreateUnsafeSession,
-        // A teammate's row in the Team section (target: its role id)
-        kEditTeammate = 70,
-        kRestoreTeammate,
-        kRemoveTeammate,
         // A section header in the sidebar (target: the section's id, "" for
         // one of the built-in sections)
         kCreateSection = 80,
@@ -91,9 +74,6 @@ public:
     // The active workspace's menu, or `w`'s (a rail tile's).
     std::vector<ui::MenuItem> workspaceItems() const;
     std::vector<ui::MenuItem> workspaceItems(const Workspace &w) const;
-    // An agent session's "+" menu, and a teammate's menu.
-    std::vector<ui::MenuItem> sessionItems() const;
-    std::vector<ui::MenuItem> teammateItems(const model::Backend::AgentRole &mate) const;
     // A sidebar section header's menu (its More actions): `section` is a
     // custom section's id, "" a built-in section (Channels, Direct
     // messages…); `sort` is the section's, ticked in the menu.
@@ -103,13 +83,10 @@ public:
     static SectionSort        sortAfter(int id, SectionSort sort);
     // `target` is the ConvRef the item's menu was built for (0: workspace).
     void                      run(int id, uint32_t target);
-    void                      runTeammate(int id, const std::string &role);
 
     void showChat(model::ConvRef c, ui::PointF at);
     void showWorkspace(ui::PointF at);
     void showWorkspace(const Workspace &w, ui::PointF at);
-    void showSessions(ui::PointF at);
-    void showTeammate(const std::string &role, ui::PointF at);
     // onSort: a sort item was picked (the new sort).
     void showSection(
         const std::string               &section,

@@ -1,7 +1,5 @@
 #include "app/screens/messages/audio_card.h"
 
-#include "app/llm/audio_transcriber.h"
-#include "app/llm/service.h"
 #include "app/media/audio_player.h"
 #include "app/model/jobs.h"
 #include "app/screens/common/downloads.h"
@@ -39,8 +37,6 @@ constexpr float kBtn      = 36; // play/pause circle
 constexpr float kKnob     = 12;
 constexpr float kBarH     = 4;
 constexpr float kRadius   = 8;
-constexpr float kAction   = 28; // "Transcribe" button (square hit area, round hover)
-constexpr float kLabelGap = 6;  // time label → action button
 constexpr float kGlyph    = 16;
 constexpr float kBodyMaxH = 360; // the transcript dialog's text
 
@@ -102,17 +98,14 @@ bool live(AudioPlayer::State s) {
            s == AudioPlayer::State::Ended;
 }
 
-// "Mira at 2:34 PM" (the transcript subtitle), "· transcribed by X" added
-// for an AI transcript.
-std::string subtitleFor(Context &ctx, const model::Message *m, const std::string &by) {
+// "Mira at 2:34 PM" in a transcript subtitle.
+std::string subtitleFor(Context &ctx, const model::Message *m) {
     std::string s;
     if (m) {
         const std::string who(authorName(ctx.store(), *m));
         const std::string when = base::formatTime(model::tsSecs(m->ts));
         s                      = who.empty() ? when : arg(tr("%1 at %2"), who, when);
     }
-    if (!by.empty())
-        s = arg(tr("%1 \xC2\xB7 transcribed by %2"), s, by);
     return s;
 }
 
@@ -164,10 +157,6 @@ public:
         _copy->setEnabled(!cues.empty());
     }
     void setText(const std::string &text) { setCues({VttCue{0, text}}); }
-    void setFailed(const std::string &error) {
-        setBody({}, error);
-        _copy->setEnabled(false);
-    }
     std::weak_ptr<char> alive() const { return _alive; }
 
     // The dialog owns this: it lives exactly as long as the card is open.
@@ -235,22 +224,6 @@ private:
     AudioCard &_card;
 };
 
-// "Transcribe with AI": muted glyph, accent on hover / while the AI works.
-class TranscribeButton final : public ui::Clickable {
-public:
-    explicit TranscribeButton(AudioCard &card) : _card(card) {
-        setLook({C::None, C::None, C::None, C::None, 0});
-        setTooltip(tr("Transcribe with AI"));
-        setHoverRepaint(true);
-    }
-    bool tooltipImmediate() const override { return true; }
-    void paint(gfx::Painter &p) override;
-    void activate() override;
-
-private:
-    AudioCard &_card;
-};
-
 // "View transcript" after the quoted line.
 class TranscriptLink final : public ui::Clickable {
 public:
@@ -289,16 +262,8 @@ public:
     AudioCard(Context &ctx, MessageList *list, Ts ts, const model::File &f)
         : _ctx(ctx), _list(list), _ts(ts), _file(f) {
         setLook({C::None, C::None, C::None, C::None, kRadius});
-        // A transcript the user's AI produced replaces Slack's line (and its
-        // cues, which describe Slack's words).
-        if (const auto *ai = ctx.store().aiTranscript(f.id)) {
-            _file.transcript = ai->text;
-            _file.transcriptVtt.clear();
-            _by = ai->by;
-        }
         _simpleTranscript = str::simplified(_file.transcript);
         _play             = add<PlayButton>(*this);
-        _transcribe       = add<TranscribeButton>(*this);
         if (hasTranscript())
             _link = add<TranscriptLink>(*this);
         if (ctx.audio)
@@ -306,29 +271,20 @@ public:
                 if (key == _file.id)
                     update();
             });
-        if (ctx.ai)
-            _aiObs = ctx.ai->transcriber().observe([this](const std::string &key) {
-                if (key == _file.id)
-                    update();
-            });
     }
     ~AudioCard() override {
         if (_ctx.audio)
             _ctx.audio->unobserve(_audioObs);
-        if (_ctx.ai)
-            _ctx.ai->transcriber().unobserve(_aiObs);
     }
 
     bool                  hasTranscript() const { return !_file.transcript.empty(); }
     const model::File    &file() const { return _file; }
-    const std::string    &by() const { return _by; }
     Context              &ctx() { return _ctx; }
     const model::Message *message() const { return _list && _ts ? _list->message(_ts) : nullptr; }
     bool                  playing() const {
         return _ctx.audio && _ctx.audio->isCurrent(_file.id) &&
                _ctx.audio->status().state == AudioPlayer::State::Playing;
     }
-    bool transcribing() const { return _ctx.ai && _ctx.ai->transcriber().inFlight(_file.id); }
     std::string accessibleName() const override { return _file.name; }
 
     ui::SizeF measureContent(float aw, float) override {
@@ -339,7 +295,6 @@ public:
     }
     void layout() override {
         _play->setFrame({kPad, kPad, kBtn, kBtn});
-        _transcribe->setFrame(actionRect());
         if (_link) {
             const ui::RectF tl = transcriptText();
             const ui::SizeF ls = _link->measure(ui::kInf, ui::kInf);
@@ -459,9 +414,8 @@ public:
         else if (dur > 0)
             label = formatDuration(dur, true);
         if (!label.empty()) {
-            const ui::RectF     action = actionRect();
             const text::Layout &l      = _time.get(label, subFont(), 1e9f, k);
-            const float         right  = action.x - kLabelGap;
+            const float         right  = width() - kPad;
             p.save();
             p.clipRect({bar.x + bar.w + 1, 0, std::max(0.f, right - bar.x - bar.w - 1), chip.h});
             l.paint(
@@ -512,9 +466,6 @@ private:
     }
     // Vertical centre of the slider row: centred in the band under the title.
     static float rowMid() { return kAudioCardH - kPad - kBtn / 2 + 4; }
-    ui::RectF    actionRect() const {
-        return {width() - kPad + 4 - kAction, rowMid() - kAction / 2, kAction, kAction};
-    }
     // Sized from the duration so its right edge doesn't move as the time
     // ticks: the clip's length, or the widest "m:ss" when unknown.
     ui::RectF barRect(int64_t durationMs) const {
@@ -530,7 +481,7 @@ private:
             );
         }
         const float x     = kPad + kKnob / 2;
-        const float right = actionRect().x - kLabelGap - std::ceil(_barLw) - 12;
+        const float right = width() - kPad - std::ceil(_barLw) - 12;
         return {x, std::round(rowMid() - kBarH / 2), std::max(20.f, right - x), kBarH};
     }
     // The quoted preview's box: after the 3-px quote bar, as wide as the text
@@ -553,12 +504,9 @@ private:
     MessageList            *_list;
     Ts                      _ts;
     model::File             _file;
-    std::string             _by; // the provider of an AI transcript
     PlayButton             *_play       = nullptr;
-    TranscribeButton       *_transcribe = nullptr;
     TranscriptLink         *_link       = nullptr;
     AudioPlayer::ObserverId _audioObs   = 0;
-    uint32_t                _aiObs      = 0;
     int64_t                 _scrubMs    = -1; // ≥ 0 while dragging the slider
     bool                    _scrubbing  = false;
     std::string             _simpleTranscript; // str::simplified(_file.transcript)
@@ -578,24 +526,8 @@ void PlayButton::activate() {
     toggleAudio(_card.ctx(), _card.file());
 }
 
-void TranscribeButton::paint(gfx::Painter &p) {
-    const bool  lit = hovered() || _card.transcribing();
-    const float r   = width() / 2;
-    if (lit)
-        p.fillCircle({r, height() / 2}, r, ui::color(C::AccentSubtle));
-    gfx::drawIcon(
-        p,
-        gfx::Icon::Captions,
-        {std::floor((width() - kGlyph) / 2), std::floor((height() - kGlyph) / 2), kGlyph, kGlyph},
-        ui::color(lit ? C::Accent : C::FormTextMuted)
-    );
-}
-void TranscribeButton::activate() {
-    startTranscription(_card.ctx(), _card.file(), _card.message());
-}
-
 void TranscriptLink::activate() {
-    openTranscript(_card.ctx(), _card.file(), _card.message(), _card.by());
+    openTranscript(_card.ctx(), _card.file(), _card.message());
 }
 
 // The local file to play or transcribe for `url` ("" = it has to come down
@@ -685,112 +617,8 @@ void toggleAudio(Context &ctx, const model::File &f) {
     });
 }
 
-void startTranscription(Context &ctx, const model::File &f, const model::Message *m) {
-    llm::Service        *ai   = ctx.ai;
-    // The provider that will actually transcribe: an OpenAI-compatible one
-    // can while the default chat provider (Anthropic) cannot.
-    const llm::Provider *prov = ai ? ai->sttProvider() : nullptr;
-    TranscriptDialog    *dlg =
-        TranscriptDialog::open(ctx, subtitleFor(ctx, m, prov ? prov->name : ""));
-    if (ai)
-        if (const std::string *hit = ai->transcriber().cached(f.id)) {
-            dlg->setText(*hit);
-            return;
-        }
-    // Fail fast: no download when nothing could consume it.
-    if (!prov) {
-        const llm::Provider *active = ai ? ai->active() : nullptr;
-        if (active && !ai->isStandIn(active))
-            dlg->setFailed(
-                arg(tr("%1 does not support speech-to-text. Pick an OpenAI-compatible provider in "
-                       "Settings \xE2\x86\x92 AI assistance."),
-                    active->name)
-            );
-        else
-            dlg->setFailed(
-                tr("Transcription needs an AI provider. Connect one in Settings "
-                   "\xE2\x86\x92 AI assistance.")
-            );
-        return;
-    }
-
-    std::weak_ptr<char> guard    = dlg->alive();
-    const std::string   provider = prov->name;
-    // Reads the bytes off the UI thread and hands them over. The dialog is
-    // the listener; a closed one still lets the result be adopted.
-    auto run = [&ctx, guard, dlg, provider, f](const std::string &path, const std::string &source) {
-        auto bytes = std::make_shared<std::string>();
-        auto ok    = std::make_shared<bool>(false);
-        model::runInBackground(
-            ctx.app.platform(),
-            [bytes, ok, path] { *ok = file::readAll(path, bytes.get()); },
-            [&ctx, guard, dlg, provider, f, bytes, ok, source] {
-                if (!*ok) {
-                    if (!guard.expired())
-                        dlg->setFailed(tr("Could not read the file"));
-                    return;
-                }
-                std::string ext = AudioPlayer::extensionOf(source);
-                if (ext.empty())
-                    ext = AudioPlayer::extensionOf(f.name);
-                llm::TranscriptionInput in;
-                in.audio    = std::move(*bytes);
-                in.fileName = f.id + (ext.empty() ? "" : "." + ext);
-                in.mimeType = llm::audioMimeForExtension(ext);
-                if (in.mimeType.empty())
-                    in.mimeType = f.mime;
-                // One listener per dialog: adopt the text even if the dialog
-                // is gone (it replaces the transcript line under the player
-                // from now on — for this workspace only), then fill the
-                // dialog if it is still open.
-                const std::string ws = ctx.store().workspaceId;
-                ctx.ai->transcriber().transcribe(
-                    f.id,
-                    std::move(in),
-                    [&ctx, ws, guard, dlg, fileId = f.id, provider](
-                        const llm::TranscriptionResult &r
-                    ) {
-                        if (r.ok && !r.text.empty() && ctx.store().workspaceId == ws)
-                            ctx.store().setAiTranscript(fileId, r.text, provider);
-                        if (guard.expired())
-                            return;
-                        if (!r.ok)
-                            dlg->setFailed(arg(tr("Couldn't transcribe: %1"), r.error));
-                        else if (r.text.empty())
-                            dlg->setFailed(tr("No speech was recognised"));
-                        else
-                            dlg->setText(r.text);
-                    }
-                );
-            }
-        );
-    };
-
-    AudioPlayer      *pl  = ctx.audio;
-    const std::string url = pl ? pl->sourceFor(f) : f.path;
-    if (url.empty()) {
-        dlg->setFailed(tr("Download failed"));
-        return;
-    }
-    // The same bytes the player uses: a clip already played needs no fetch.
-    std::string       cache;
-    const std::string local = localCopy(ctx, f, url, &cache);
-    if (!local.empty()) {
-        run(local, url);
-        return;
-    }
-    download(ctx, f, url, cache, [run, guard, dlg, cache, url](bool ok) {
-        if (ok)
-            run(cache, url);
-        else if (!guard.expired())
-            dlg->setFailed(tr("Download failed"));
-    });
-}
-
-void openTranscript(
-    Context &ctx, const model::File &f, const model::Message *m, const std::string &by
-) {
-    TranscriptDialog *dlg = TranscriptDialog::open(ctx, subtitleFor(ctx, m, by));
+void openTranscript(Context &ctx, const model::File &f, const model::Message *m) {
+    TranscriptDialog *dlg = TranscriptDialog::open(ctx, subtitleFor(ctx, m));
     if (f.transcriptVtt.empty()) {
         dlg->setText(f.transcript);
         return;

@@ -1,7 +1,6 @@
 #include "screens/shell/shell.h"
 
 #include "app/llm/service.h"
-#include "app/llm/voice_input.h"
 #include "app/media/sounds.h"
 #include "app/mrkdwn/emoji.h"
 #include "app/spell/spell.h"
@@ -2048,7 +2047,6 @@ void Shell::workspaceChanged() {
     refreshWorkspaceIcon();
     rebuildTrayMenu();
     updateHeader();
-    _sidebar->footer().setZenOn(_settings.zenMode(_activeKey)); // its own
     loadSorts();
 }
 
@@ -3652,19 +3650,9 @@ void Shell::applySettings() {
     if (_ctx.ai) {
         std::vector<llm::Provider> providers;
         for (const AiProvider &p : _settings.ai)
-            providers.push_back(llm::fromSettings(p.id, p.name, p.url, p.key, p.model, p.sttModel));
+            providers.push_back(llm::fromSettings(p.id, p.name, p.url, p.key, p.model));
         _ctx.ai->setProviders(std::move(providers), _settings.aiDefault);
         _ctx.ai->setLanguage(_settings.effectiveAiLanguage());
-        // …and Voice input's glossary (one term per line) and clean-up.
-        std::vector<std::string> glossary;
-        for (std::string_view rest = _settings.voiceGlossary; !rest.empty();) {
-            const size_t nl = rest.find('\n');
-            if (const std::string_view t = str::trim(rest.substr(0, nl)); !t.empty())
-                glossary.emplace_back(t);
-            rest = nl == std::string_view::npos ? std::string_view() : rest.substr(nl + 1);
-        }
-        _ctx.ai->voice().setGlossary(std::move(glossary));
-        _ctx.ai->voice().setCleanup(_settings.voiceCleanup);
     }
 #ifdef MSGA_HAVE_MESSAGES
     // The cache limit bounds the decoded-image cache too, which never grows

@@ -3,7 +3,6 @@
 // row actions, thread mode, URL images (RemoteImages) and the loading /
 // empty states.
 #include "app/fake/fake_backend.h"
-#include "app/llm/audio_transcriber.h"
 #include "app/llm/service.h"
 #include "app/media/audio_player.h"
 #include "support/fake_llm_server.h"
@@ -1160,49 +1159,6 @@ TEST("actions: one-click reactions go in my skin tone and find mine under any to
     CHECK((names() == V{"raised_hands"}));
 }
 
-TEST("thread: an agent's thread of a link has a chip back to the Slack thread") {
-    Env           e(true);
-    const ConvRef design = e.conv("C0DESIGN");
-    Ts            root   = 0;
-    for (const model::Message &m : e.store.conversation(design).messages)
-        if (m.replyCount > 0)
-            root = m.ts;
-    REQUIRE(root != 0);
-    std::vector<Context::AgentLinkAction> actions;
-    e.ctx.agentLinkSource = [&](ConvRef, Ts r) {
-        return r == root ? std::string("#general in Lumen") : std::string();
-    };
-    e.ctx.agentLinkAction = [&](ConvRef, Ts r, Context::AgentLinkAction a) {
-        CHECK(r == root);
-        actions.push_back(a);
-    };
-    auto *panel = e.win->root().add<ThreadPanel>(e.ctx);
-    panel->show(design, root);
-    REQUIRE(panel->linkChip()->visible());
-    CHECK_STR(panel->linkChipText(), "#general in Lumen");
-    panel->linkChip()->activate();
-    CHECK(actions == std::vector<Context::AgentLinkAction>{Context::AgentLinkAction::OpenSource});
-    // A long name in a narrow panel: the chip gives way ("…", the whole
-    // name in its tooltip), "Thread" stays one line at its own width.
-    const std::string longName = "Vladimir Osipov in CityCity Consulting";
-    e.ctx.agentLinkSource = [&](ConvRef, Ts r) { return r == root ? longName : std::string(); };
-    panel->refreshLink();
-    CHECK_STR(panel->linkChipText(), longName);
-    CHECK(panel->linkChip()->tooltip().find(longName) != std::string::npos);
-    panel->style().width(360);
-    pump(4);
-    ui::View   *title = panel->child(0)->child(1); // after the back arrow
-    const float tw    = title->measure(ui::kInf, ui::kInf).w;
-    CHECK(title->width() >= tw - 1);
-    CHECK(title->height() < 2 * title->measure(ui::kInf, ui::kInf).h);
-    CHECK(panel->linkChip()->width() > 0);
-    CHECK(panel->linkChip()->width() < panel->linkChip()->measure(ui::kInf, ui::kInf).w);
-    // Another thread: none.
-    e.ctx.agentLinkSource = [](ConvRef, Ts) { return std::string(); };
-    panel->refreshLink();
-    CHECK_FALSE(panel->linkChip()->visible());
-}
-
 TEST("rich: a list item's bullet sits on its first line, however many lines it wraps to") {
     Env   e(false);
     auto *col = e.win->root().add<ui::View>();
@@ -1928,66 +1884,6 @@ TEST("actions: the hover toolbar — react, forward, save, more; save toggles") 
         pump(2);
         CHECK_FALSE(card->visible());
     }
-}
-
-TEST("actions: the robot asks an agent, active on a linked thread; its menu items") {
-    Env                                                  e(true);
-    const ConvRef                                        design     = e.conv("C0DESIGN");
-    // The shell's links, stood in for: the newest message's thread linked.
-    Ts                                                   linkedRoot = 0;
-    std::vector<std::pair<Ts, Context::AgentLinkAction>> actions;
-    e.ctx.agentLink = [&](ConvRef, const model::Message &m) {
-        Context::AgentLink a;
-        a.offered  = true;
-        a.linked   = (m.isReply() ? m.threadTs : m.ts) == linkedRoot;
-        a.root     = a.linked && m.ts == linkedRoot;
-        a.canAllow = a.linked;
-        return a;
-    };
-    e.ctx.agentLinkAction = [&](ConvRef, Ts ts, Context::AgentLinkAction a) {
-        actions.push_back({ts, a});
-    };
-    e.list->showConversation(design);
-    pump(10);
-    const model::Message &last = e.store.conversation(design).messages.back();
-    ui::View             *row  = e.row(last.ts);
-    REQUIRE(row != nullptr);
-    auto           *h  = app().platform().testHooks();
-    const ui::RectF rr = row->windowRect();
-    h->injectPointerMove(e.win->native(), {rr.x + 300, rr.y + 20});
-    pump(4);
-    // Hovering the message shows the robot before More actions.
-    auto *robot = static_cast<IconButton *>(findByTooltip(e.win->root().child(0), "Ask agent"));
-    REQUIRE(robot != nullptr);
-    REQUIRE(robot->visible());
-    CHECK(robot->icon() == gfx::Icon::Bot);
-    CHECK(robot->parent()->child(5) == findByTooltip(e.win->root().child(0), "More actions"));
-    CHECK(robot->ink() != ui::C::Accent);
-    robot->activate();
-    REQUIRE(actions.size() == 1);
-    CHECK(actions[0].first == last.ts && actions[0].second == Context::AgentLinkAction::Ask);
-    // Asking is the robot's alone; the menu doesn't repeat it.
-    std::string labels = menuLabels(e.list->menuItems(last.ts));
-    CHECK(labels.find("Ask agent") == std::string::npos);
-    CHECK(labels.find("Unlink agent") == std::string::npos);
-    // Linked: active, "Open agent thread"; the menu lets its author ask and
-    // the root unlink.
-    linkedRoot = last.ts;
-    e.list->refreshToolbar();
-    CHECK(robot->ink() == ui::C::Accent);
-    CHECK_STR(robot->tooltip(), "Open agent thread");
-    labels = menuLabels(e.list->menuItems(last.ts));
-    CHECK(labels.find("Allow ") != std::string::npos);
-    CHECK(labels.find(" to ask agent") != std::string::npos);
-    CHECK(labels.find("Unlink agent") != std::string::npos);
-    e.list->runMenuAction(last.ts, MessageList::kUnlinkAgent);
-    REQUIRE(actions.size() == 2);
-    CHECK(actions[1].second == Context::AgentLinkAction::Unlink);
-    // Nothing offered (no Claude Code workspace): hidden.
-    e.ctx.agentLink = [](ConvRef, const model::Message &) { return Context::AgentLink{}; };
-    e.list->refreshToolbar();
-    CHECK_FALSE(robot->visible());
-    CHECK(menuLabels(e.list->menuItems(last.ts)).find("agent") == std::string::npos);
 }
 
 TEST("actions: the file bar on hovered files; right click on them does nothing") {
@@ -2778,8 +2674,8 @@ TEST(
     Env          e(true);
     llm::Service ai(app().platform());
     ai.setProviders(
-        {llm::fromSettings("anthropic", "Anthropic", "", "", "", ""),
-         llm::fromSettings("custom-1", "Fake", base + "/v1", "", "fake-large", "")},
+        {llm::fromSettings("anthropic", "Anthropic", "", "", ""),
+         llm::fromSettings("custom-1", "Fake", base + "/v1", "", "fake-large")},
         "anthropic" // not connected: the custom server answers
     );
     ai.setLanguage("ja");
@@ -2847,7 +2743,7 @@ TEST("actions: Summarize down in a thread, and when the provider fails") {
     );
     Env           e(true);
     llm::Service  ai(app().platform());
-    llm::Provider a = llm::fromSettings("anthropic", "Anthropic", "", "sk-test", "", "");
+    llm::Provider a = llm::fromSettings("anthropic", "Anthropic", "", "sk-test", "");
     a.baseUrl       = base; // the native wire, at the fake
     ai.setProviders({a}, "anthropic");
     e.ctx.ai             = &ai;
@@ -4015,7 +3911,6 @@ TEST("audio: a voice clip is a card: size, transcript line, play / pause / seek"
     CHECK(card->width() == kAudioCardMaxW);
     CHECK(card->height() == kAudioCardH + kAudioTranscriptH);
     CHECK(findNamed(card, "View transcript") != nullptr);
-    CHECK(findByTooltip(card, "Transcribe with AI") != nullptr);
 
     // Play: a local file plays as it is (no download); then pause, resume.
     auto *play = static_cast<ui::Clickable *>(findNamed(card, "Play"));
@@ -4101,83 +3996,20 @@ TEST("audio: a remote clip downloads once into the audio cache as a job; one pla
     file::remove(cached);
 }
 
-TEST("audio: View transcript shows Slack's line; Transcribe with AI replaces it") {
-    const std::string &base = fakellm::server();
-    if (base.empty()) {
-        std::printf("skip: no python3 for the fake AI provider\n");
-        return;
-    }
-    fakellm::ctl(app().platform(), "POST", "/_ctl/reset");
-    llm::Service ai(app().platform()); // outlives the cards that observe it
-    AudioEnv     e;
-    e.ctx.ai       = &ai;
+TEST("audio: View transcript shows Slack's transcript") {
+    AudioEnv e;
     ui::View *card = e.card();
     REQUIRE(card != nullptr);
-
-    // Slack's transcript (no cues in the fixture): the preview line.
-    static_cast<ui::Clickable *>(findNamed(card, "View transcript"))->activate();
+    auto *link = static_cast<ui::Clickable *>(findNamed(card, "View transcript"));
+    REQUIRE(link != nullptr);
+    link->activate();
     ui::Popup *dlg = e.win->topPopup();
     REQUIRE(dlg != nullptr);
     CHECK(findNamed(dlg, "Transcript (auto-generated)") != nullptr);
     CHECK(findNamed(dlg, "Okay so the queue is about twenty people") != nullptr);
-    CHECK(findNamed(dlg, "Ravi") != nullptr); // "Ravi … at 12:48"
+    CHECK(findNamed(dlg, "Ravi") != nullptr);
     static_cast<ui::Dialog *>(dlg)->reject();
     pump(4);
-
-    // No speech-to-text provider: the dialog says so, nothing is fetched.
-    auto *tb = static_cast<ui::Clickable *>(findByTooltip(card, "Transcribe with AI"));
-    REQUIRE(tb != nullptr);
-    tb->activate();
-    dlg = e.win->topPopup();
-    REQUIRE(dlg != nullptr);
-    CHECK(findNamed(dlg, "Transcription needs an AI provider.") != nullptr);
-    static_cast<ui::Dialog *>(dlg)->reject();
-    pump(4);
-    ai.setProviders({llm::fromSettings("anthropic", "Anthropic", "", "k", "", "")}, "anthropic");
-    tb->activate();
-    dlg = e.win->topPopup();
-    REQUIRE(dlg != nullptr);
-    CHECK(findNamed(dlg, "Anthropic does not support speech-to-text.") != nullptr);
-    static_cast<ui::Dialog *>(dlg)->reject();
-    pump(4);
-
-    // An OpenAI-compatible server beside the Anthropic default transcribes.
-    ai.setProviders(
-        {llm::fromSettings("anthropic", "Anthropic", "", "k", "", ""),
-         llm::fromSettings("custom-1", "Fake", base + "/v1", "", "m", "")},
-        "anthropic"
-    );
-    tb->activate();
-    dlg = e.win->topPopup();
-    REQUIRE(dlg != nullptr);
-    CHECK(findNamed(dlg, "transcribed by Fake") != nullptr);
-    CHECK(findNamed(dlg, "Loading") != nullptr);
-    REQUIRE(
-        until([&] { return findNamed(dlg, "um so the deploy is uh ready") != nullptr; }, 10000)
-    );
-    CHECK(ai.transcriber().cached(e.file.id) != nullptr);
-    // Adopted: the Store keeps it, and the card shows it in Slack's place.
-    REQUIRE(e.store.aiTranscript(e.file.id) != nullptr);
-    CHECK_STR(e.store.aiTranscript(e.file.id)->by, "Fake");
-    static_cast<ui::Dialog *>(dlg)->reject();
-    pump(6);
-    card = e.card();
-    REQUIRE(card != nullptr);
-    static_cast<ui::Clickable *>(findNamed(card, "View transcript"))->activate();
-    dlg = e.win->topPopup();
-    REQUIRE(dlg != nullptr);
-    CHECK(findNamed(dlg, "um so the deploy is uh ready") != nullptr);
-    CHECK(findNamed(dlg, "transcribed by Fake") != nullptr);
-    static_cast<ui::Dialog *>(dlg)->reject();
-    pump(4);
-
-    json::Document log;
-    REQUIRE(log.parse(fakellm::ctl(app().platform(), "GET", "/_ctl/log").body, nullptr));
-    REQUIRE(log.root().size() == 1);
-    const std::string body(log.root()[0]["body"].str());
-    CHECK(body.find("filename=\"" + e.file.id + ".mp3\"") != std::string::npos);
-    CHECK(body.find("Content-Type: audio/mpeg") != std::string::npos);
-    CHECK(body.find("whisper-1") != std::string::npos);
 }
 
 TEST("audio: WebVTT cues and duration labels") {
