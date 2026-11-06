@@ -58,6 +58,17 @@ void releaseLater(plat::App &app, std::unique_ptr<T> &p) {
     app.post([dying] {});
 }
 
+// Legacy Claude records may still exist in the workspace store. Never
+// activate them or let them hide another signed-in Slack workspace.
+std::string selectedSlackWorkspace(const auth::WorkspaceStore &store) {
+    if (const auto *active = store.find(store.active()); active && active->service == slack::kService)
+        return active->key();
+    for (const auto &record : store.all())
+        if (record.service == slack::kService)
+            return record.key();
+    return {};
+}
+
 } // namespace
 
 struct Accounts::Running {
@@ -112,17 +123,7 @@ Accounts::~Accounts() {
 }
 
 void Accounts::start() {
-    // A previous upstream installation may have left a Claude Code record active.
-    // Ignore it, and open a Slack workspace without deleting stored credentials.
-    std::string selected;
-    if (const auto *r = _store.find(_store.active()); r && r->service == slack::kService)
-        selected = r->key();
-    if (selected.empty())
-        for (const auto &r : _store.all())
-            if (r.service == slack::kService) {
-                selected = r.key();
-                break;
-            }
+    const std::string selected = selectedSlackWorkspace(_store);
     if (selected.empty())
         showSignedOut();
     else
@@ -783,10 +784,14 @@ void Accounts::signOut(const std::string &key) {
     _shell.purgeHistory(k);
     _store.remove(k);
     std::erase(_pending, k);
-    if (open && !_store.active().empty())
-        activate(_store.active());
-    else
+    if (open) {
+        if (const std::string next = selectedSlackWorkspace(_store); !next.empty())
+            activate(next);
+        else
+            refreshRail();
+    } else {
         refreshRail();
+    }
 }
 
 void Accounts::signOut() {
