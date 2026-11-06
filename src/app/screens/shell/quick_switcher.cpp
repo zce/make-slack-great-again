@@ -351,7 +351,7 @@ QuickSwitcher::QuickSwitcher(
         _tabName->style().flex(1).margins(4, 0, 0, 0);
     }
     _field = add<TextEdit>();
-    _field->setPlaceholder(tr("Search\xE2\x80\xA6"));
+    _field->setPlaceholder(tr("Search"));
     _field->setMaxLines(1);
     _field->setBackground(C::InputBg, 6);
     _field->setBorder(C::InputBorderFocus);
@@ -550,7 +550,7 @@ void QuickSwitcher::refreshResults() {
     _list->setVisible(total > 0);
     _empty->setVisible(total == 0);
     if (total == 0) {
-        _empty->setText(_searching ? tr("Searching messages\xE2\x80\xA6")
+        _empty->setText(_searching ? tr("Searching\xE2\x80\xA6")
                                    : tr("No results found."));
     }
 }
