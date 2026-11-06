@@ -1,12 +1,13 @@
 name: Release
 
-# Each reviewed merge to master publishes a new fork build.
+# A successful master CI run is required before publishing.
 # The upstream updater must NEVER be enabled in this fork: it downloads
 # official msga.app binaries, which would replace our custom version.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [master]
-  workflow_dispatch:
+    types: [completed]
 
 permissions:
   contents: write
@@ -17,9 +18,13 @@ concurrency:
 
 jobs:
   linux:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -59,6 +64,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: linux-release
@@ -71,12 +79,12 @@ jobs:
           set -euo pipefail
           upstream_version="$(sed -nE 's/^[[:space:]]*set\(MSGA_VERSION[[:space:]]+([0-9]+)\).*/\1/p' version.cmake | head -n1)"
           test -n "$upstream_version"
-          tag="v${upstream_version}-zce.${GITHUB_RUN_NUMBER}"
+          tag="v${upstream_version}-zce.${{ github.event.workflow_run.run_number }}"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber
           else
             gh release create "$tag" dist/* \
-              --target "$GITHUB_SHA" \
+              --target "${{ github.event.workflow_run.head_sha }}" \
               --title "msga ${upstream_version} (zce build ${GITHUB_RUN_NUMBER})" \
-              --notes "Automated fork build from \`master\` (commit \`${GITHUB_SHA}\`). Linux x86_64 dynamic binary; upstream in-app updater disabled. See docs/FORK.md for dependencies and supported platforms."
+              --notes "Automated fork build from \`master\` (commit \`${{ github.event.workflow_run.head_sha }}\`). Linux x86_64 dynamic binary; upstream in-app updater disabled. See docs/FORK.md for dependencies and supported platforms."
           fi
