@@ -933,6 +933,15 @@ void Window::scrollBlit(View *area, int dy) {
     const RectF rect = intersect(area->windowRect(), {0, 0, ws.w, ws.h});
     if (dy == 0 || empty(rect))
         return;
+    if (_transparentBackground) {
+        // Opaque scroll contents can be copied by the usual fast path, but
+        // moving pixels inside an ARGB CSD window can carry stale alpha and
+        // pre-composited overlays across partial damage. Repaint just this
+        // scroll viewport from the retained view tree instead. Do not fall
+        // back to repainting the entire (potentially 4K) window.
+        damage(rect);
+        return;
+    }
     bool merged = false;
     for (Blit &b : _blits) {
         if (sameRect(b.rect, rect)) {
