@@ -294,7 +294,7 @@ public:
             r.icon->setVisible(false);
             r.avatar->setInitial(u.label());
             r.avatar->setBitmap(_q._avatars.get(u.avatar, 40));
-            r.name->setText(u.label());
+            r.name->setText(std::string(u.label()));
         } else {
             const auto &hit = _q._hits[index - conversations - people];
             r.avatar->setVisible(false);
