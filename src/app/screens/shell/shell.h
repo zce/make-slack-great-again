@@ -411,6 +411,9 @@ private:
     void loadSorts();
     void storeSorts();
     void applyComposerAccess();
+    void runCommand(
+        model::ConvRef conv, model::Ts thread, const std::string &name, const std::string &args
+    );
     // The workspace whose Store is `st` comes on screen (switched to when
     // it isn't); true once its Store is the open one.
     bool showWorkspaceOf(const model::Store *st);
