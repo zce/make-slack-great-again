@@ -12,7 +12,7 @@
 
 #include "screens/common/context.h"
 #include "screens/shell/avatars.h"
-#include "screens/shell/session_dialogs.h"
+#include "screens/shell/browse_list.h"
 #include "ui/ui.h"
 
 #include <functional>
