@@ -849,7 +849,14 @@ TEST("slack features: custom sidebar sections — the list, moves, create, a ref
     e.be->createSection("Ops", "", e.conv("C1"));
     REQUIRE(pumpUntil([&] { return e.store.sectionOf("C1") != nullptr; }));
     CHECK_STR(e.store.sections()[0].id, "L9");
-    CHECK_STR(std::string(Log().get("users.channelSections.create")["form"]["name"].str()), "Ops");
+    {
+        // Slack returns invalid_arguments if the emoji field is omitted,
+        // even when a section is created without an icon.
+        const json::Value form = Log().get("users.channelSections.create")["form"];
+        CHECK_STR(std::string(form["name"].str()), "Ops");
+        CHECK(form.has("emoji"));
+        CHECK_STR(std::string(form["emoji"].str()), "");
+    }
 
     // Refused: the banner says so, and Slack's list puts it back.
     ctl("POST",
