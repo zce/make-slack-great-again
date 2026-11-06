@@ -47,7 +47,7 @@ jobs:
       - name: Verify regression-sensitive tests
         run: ctest --test-dir build-ci --output-on-failure --parallel 1 -R '^(text_ink_lean|ui_popup|messages_actions|shell_ui_tests|settings_tests)$'
       - name: Test
-        run: ctest --test-dir build-ci --output-on-failure --parallel 2
+        run: ctest --test-dir build-ci --output-on-failure --parallel 1
 
       - name: Package pull request test build
         if: github.event_name == 'pull_request'
