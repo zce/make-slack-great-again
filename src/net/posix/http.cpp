@@ -2,6 +2,7 @@
 // Stream, with a small keep-alive pool of idle connections (see transport.h).
 #include "base/str.h"
 #include "net/posix/posix.h"
+#include "net/posix/proxy.h"
 #include "net/transport.h"
 
 #include <cstring>
@@ -425,7 +426,7 @@ void perform(
     w.cancel               = &cancel.flag();
     w.wakeFd               = int(cancel.os()); // -1 without one: sliced waits
     w.deadline             = req.timeoutMs > 0 ? nowMs() + req.timeoutMs : 0;
-    const std::string key  = str::concat({url.scheme, "://", url.host, ":", str::number(url.port)});
+    const std::string key  = str::concat({url.scheme, "://", url.host, ":", str::number(url.port), "|", proxyFor(url).key()});
     const std::string head = requestHead(url, req);
     std::string       error;
     // A kept-alive connection the server has meanwhile dropped fails before
