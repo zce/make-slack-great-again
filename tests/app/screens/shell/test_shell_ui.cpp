@@ -345,8 +345,10 @@ TEST("sidebar footer: the presence toggle flips at once and settles on the servi
     CHECK(f.toggle()->tooltip().find("no official Slack app is connected") != std::string::npos);
     f.togglePresence();
     CHECK(f.showsHidden()); // optimistic
-    // The fake service keeps reporting automatic presence: back it goes.
-    REQUIRE(until([&] { return !f.showsHidden(); }));
+    // When the presence control lives inside the top avatar menu, it is
+    // invisible between interactions. The service response or the existing
+    // five-second confirmation fallback must still restore the snapshot.
+    REQUIRE(until([&] { return !f.showsHidden(); }, 7000));
     CHECK_STR(f.avatarButton()->tooltip(), "Profile & status");
 }
 

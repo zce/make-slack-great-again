@@ -60,6 +60,14 @@ void pump(int n = 10) {
         app().pump(2);
 }
 
+template <class F>
+bool until(F done, int ms = 3000) {
+    const int64_t deadline = base::monotonicMs() + ms;
+    while (!done() && base::monotonicMs() < deadline)
+        app().pump(5);
+    return done();
+}
+
 std::string testPath() {
     const char *h = std::getenv("XDG_CONFIG_HOME");
     return file::join(h ? h : "/tmp", "msga-settings-test.json");
@@ -512,7 +520,10 @@ TEST("settings: color mode and theme cards apply and persist at once") {
     CHECK(h.settings.paletteLight == int(ui::Palette::Green));
     CHECK(ui::color(ui::C::Rail) != purple);
     CHECK(ui::color(ui::C::Rail) == ui::paletteColors(ui::Palette::Green, false).rail);
-    CHECK(shell::Settings::load(path).paletteLight == int(ui::Palette::Green));
+    // Settings are persisted asynchronously; don't race the background writer.
+    CHECK(until([&] {
+        return shell::Settings::load(path).paletteLight == int(ui::Palette::Green);
+    }));
     const ui::Color rail = ui::color(ui::C::Rail);
     h.click(d.find("Dark Blue"));
     CHECK(h.settings.paletteDark == int(ui::Palette::Blue));
@@ -529,7 +540,9 @@ TEST("settings: color mode and theme cards apply and persist at once") {
     CHECK(d.find("Theme imported") != nullptr);
     CHECK(h.settings.custom.primary == 0xff1a2b3cu);
     CHECK(ui::color(ui::C::Rail) == 0xff1a2b3cu);
-    CHECK(shell::Settings::load(path).custom.primary == 0xff1a2b3cu);
+    CHECK(until([&] {
+        return shell::Settings::load(path).custom.primary == 0xff1a2b3cu;
+    }));
     // A 10-colour string pins what it names outright.
     imp->setText("#1A2B3C,#222222,#1164A3,#EEEEEE,#333333,#DDDDDD,#2BAC76,#CD2553,#101010,#C0C0C0");
     h.click(d.find("Import"));
