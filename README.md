@@ -33,6 +33,24 @@ Grab a [fork release](https://github.com/zce/make-slack-great-again/releases) an
 
 Both are covered step by step in the **[Slack setup guide](https://github.com/punarinta/make-slack-great-again/blob/master/docs/SETUP_SLACK.md)**. Most people want session sign-in, because it needs no setup at all.
 
+## Network proxy on Linux
+
+MSGA automatically uses proxy settings without a separate settings page:
+
+1. Environment variables take precedence: `https_proxy`/`HTTPS_PROXY` for HTTPS and WSS, `http_proxy`/`HTTP_PROXY` for HTTP and WS, then `all_proxy`/`ALL_PROXY` as a fallback. Lowercase takes precedence over uppercase.
+2. `no_proxy`/`NO_PROXY` bypasses the proxy for matching hosts, domain suffixes, IP addresses, IP CIDR ranges, and optional ports.
+3. If no matching environment proxy is set, MSGA reads the current user's GNOME GSettings manual proxy configuration, including its ignored hosts. If neither source specifies a proxy, the connection is direct.
+
+HTTP proxies (`http://127.0.0.1:7890`) and unauthenticated SOCKS5 proxies (`socks5://127.0.0.1:1080`, `socks5h://...`) are supported for HTTP, HTTPS, WS and WSS. SOCKS5 resolves the destination hostname through the proxy. HTTPS and WSS connections always retain the original destination's TLS certificate validation. Proxy failures **do not** silently fall back to direct connections.
+
+Example using a local Mihomo mixed port:
+
+```sh
+ALL_PROXY=http://127.0.0.1:7890 msga
+```
+
+When started from a desktop launcher, MSGA inherits the desktop session's environment, which may differ from a terminal shell's environment. GNOME GSettings is used when no proxy environment variable applies. Restart MSGA after changing GNOME proxy settings. Automatic PAC/WPAD and proxy authentication are not implemented. Other platforms retain their native OS network proxy handling.
+
 ## Coming from slk?
 
 [slk](https://github.com/gammons/slk) is a great Slack client if you live in a terminal. If you want the same speed in a desktop window, msga is the closest thing:
