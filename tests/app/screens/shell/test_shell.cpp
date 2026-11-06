@@ -612,6 +612,53 @@ std::string titles(shell::Sidebar &sb) {
 }
 } // namespace
 
+TEST("sections: Externals groups Slack Connect channels and DMs, with manual overrides") {
+    Harness         h;
+    shell::Sidebar &sb   = h.sh->sidebar();
+    const ConvRef   eng  = h.conv("C0ENG"), mira = h.conv("D0MIRA");
+    const ConvRef   rel  = h.conv("C0RELEASES");
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Channels|Direct messages");
+
+    h.store.updateConversation(eng, [](Conversation &c) { c.extShared = true; });
+    h.store.updateConversation(mira, [](Conversation &c) { c.extShared = true; });
+    pump();
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Externals|Channels|Direct messages");
+    const auto order = sb.order();
+    const auto pos = [&](ConvRef c) { return std::find(order.begin(), order.end(), c); };
+    REQUIRE(pos(eng) != order.end() && pos(mira) != order.end() && pos(rel) != order.end());
+    CHECK(pos(eng) < pos(rel));  // external channel precedes regular channels
+    CHECK(pos(mira) < pos(rel)); // external DM is in the same section
+
+    REQUIRE(sb.toggleSection("Externals"));
+    pump();
+    CHECK_FALSE(sb.rowState(eng).visible);
+    CHECK_FALSE(sb.rowState(mira).visible);
+    REQUIRE(sb.toggleSection("Externals"));
+    pump();
+    CHECK(sb.rowState(eng).visible);
+
+    // Explicit user placements win; regular channels cannot be dropped into
+    // Externals and external ones cannot be dropped into regular Channels.
+    CHECK_FALSE(sb.dropOnSection(rel, "Externals"));
+    CHECK_FALSE(sb.dropOnSection(mira, "Channels"));
+    h.backend.createSection("Projects", "", eng);
+    pump();
+    CHECK_STR(sb.rowSection(eng), h.store.sections()[0].id);
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Projects|Externals|Channels|Direct messages");
+    REQUIRE(sb.dropOnSection(mira, "Starred"));
+    pump();
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Projects|Channels|Direct messages");
+
+    // Removing an explicit placement falls back to automatic grouping.
+    h.backend.deleteSection(h.store.sections()[0].id);
+    pump();
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Externals|Channels|Direct messages");
+    h.store.updateConversation(eng, [](Conversation &c) { c.extShared = false; });
+    pump();
+    CHECK_STR(titles(sb), "Activity|Threads|Starred|Channels|Direct messages");
+    CHECK(sb.rowState(eng).exists);
+}
+
 TEST("sections: a new section sits under Starred and takes its rows out of the others") {
     Harness         h;
     shell::Sidebar &sb  = h.sh->sidebar();
