@@ -3706,9 +3706,9 @@ TEST("workspaces: the quick switcher has a tab per workspace; ←/→ and typing
     press(*w.win, plat::Key::Left);
     CHECK(qs->tab() == 0);
     CHECK(qs->results().empty());
-    CHECK_STR(qs->emptyText(), "Searching messages\\xE2\\x80\\xA6");
+    CHECK_STR(qs->emptyText(), "Searching messages\xE2\x80\xA6");
     qs->field().insertText("zzz");
-    CHECK_STR(qs->emptyText(), "Searching messages\\xE2\\x80\\xA6");
+    CHECK_STR(qs->emptyText(), "Searching messages\xE2\x80\xA6");
     // A pick in another workspace's tab switches there and opens it.
     qs->field().setText("second-des"); // runs dry here: the tab moves on
     CHECK(qs->tab() == 1);
