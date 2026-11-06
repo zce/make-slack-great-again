@@ -18,21 +18,16 @@ add_library(msga_screens_shell STATIC
     nav_history.cpp
     desktop_entry.cpp
     profile_card.cpp
-    recent_folders.cpp
-    session_dialogs.cpp
-    session_status_dialog.cpp
     shell_dialogs.cpp
     signin_dialogs.cpp
     message_search.cpp
     quick_switcher.cpp
     shortcuts.cpp
     shell.cpp
-    shell_agents.cpp
     shell_notify.cpp
     shell_text.cpp
     sidebar.cpp
     sidebar_footer.cpp
-    teammate_page.cpp
     overview_page.cpp
     saved_page.cpp
     scheduled_page.cpp

@@ -35,7 +35,6 @@ namespace shell {
 class CanvasPage;
 class ConvHeader;
 class OverviewPage;
-class TeammatePage;
 class SavedPage;
 class ActivityPage;
 class ScheduledPage;
@@ -183,22 +182,6 @@ public:
     void           openBrowseDialog(int tab);
     // "Create a channel": the two-step dialog, then the backend creates it.
     void           openCreateChannel();
-
-    // ── Agent workspace: sessions and the team (shell_agents.cpp) ──
-    void openSessionFinder();
-    // The directory picker, then a new session there (opened, composer focused).
-    void startAgentSession(bool skipPermissionChecks);
-    // The teammate's page in the content area; its composer starts a session.
-    void openTeammate(const std::string &role);
-    // A message forwarded to a teammate: its page,
-    // `text` (mrkdwn) after what was typed there and the files added — the
-    // user picks the folder and sends.
-    void prefillTeammate(const std::string &role, std::string text, std::vector<std::string> paths);
-    bool teammateOpen() const;
-    TeammatePage *teammatePage() const { return _teammatePage; }
-    void          editTeammate(const std::string &role); // "" adds one
-    void          restoreTeammate(const std::string &role);
-    void          removeTeammate(const std::string &role);
 
     // The sidebar's entries over the sections, each an overview page in the
     // content area in the conversation's place, no composer, refilled on
@@ -375,7 +358,6 @@ private:
     void       resetWindowGeometry();
     uint64_t   _fitMonitor = 0; // the monitor the window was last fitted on
     ui::Popup *topDialog() const;
-    bool       removeIdleSession(const ui::Event &e); // the window's key filter
     void       typeIntoComposer(const ui::Event &e);  // the key filter too
     bool       navInput(const plat::Event &e);        // the window's input filter
     // A workspace's tray item is kTrayWorkspace + its index on the rail.
@@ -390,25 +372,16 @@ private:
     // message list.
     bool          reading() const;
     void          updateReading();
-    // Agent workspace (shell_agents.cpp): the teammate page's wiring, leaving
-    // it (its draft kept), its composer's lock, sending to it.
-    void          buildTeammatePage(ui::View *stack);
     void          buildThreadsPage(ui::View *stack);
     void          buildSavedPage(ui::View *stack);
     void          buildActivityPage(ui::View *stack);
     void          buildScheduledPage(ui::View *stack);
-    // What the overview pages and the teammate page take away: the
-    // conversation's chrome and, unless kept (the teammate page writes to
-    // the teammate), the composer; its draft is stashed.
+    // The overview pages hide the conversation's chrome and composer.
     void          leaveConversationChrome(bool keepComposer);
     OverviewPage *pageView(Page p) const; // null: not built
     void          leavePage(Page p);
     void          leavePages();               // whichever overview page is open
     void          setupComposer(Composer &c); // the avatars, GIF key and tips every composer gets
-    void          leaveTeammate();
-    void          refreshTeammates();
-    void          applyTeammateComposer();
-    bool          startSessionWithTeammate();
     void          saveSettingsNow(); // what saveSettingsSoon has waiting, written at once
     // The same without the wait on the UI thread: asked for now, written
     // on a worker (in order with every other settings write).
@@ -437,14 +410,7 @@ private:
     // and back when the section menu changed one.
     void loadSorts();
     void storeSorts();
-    // Claude Code UI for agent sessions: the
-    // composer's lock and suggestion, slash commands that msga runs itself,
-    // the footer's zen toggle, the thread panel's "Open as session".
     void applyComposerAccess();
-    void runCommand(
-        model::ConvRef conv, model::Ts thread, const std::string &name, const std::string &args
-    );
-    void                        wireAgentUi();
     // The workspace whose Store is `st` comes on screen (switched to when
     // it isn't); true once its Store is the open one.
     bool showWorkspaceOf(const model::Store *st);
@@ -541,19 +507,11 @@ private:
     // last state asked for is drawn once the picture is in.
     bool                               _trayDecoding = false, _trayUnread = false;
     int                                _trayMentions  = 0;
-    // The teammate page and what was typed to each teammate (the
-    // "teammate:<role>" drafts); guards the agent flows' callbacks.
-    TeammatePage                      *_teammatePage  = nullptr;
     ActivityPage                      *_activityPage  = nullptr;
     ThreadsPage                       *_threadsPage   = nullptr;
     SavedPage                         *_savedPage     = nullptr;
     ScheduledPage                     *_scheduledPage = nullptr;
-    struct TeammateDraft {
-        std::string              role, html;
-        std::vector<std::string> files;
-    };
-    std::vector<TeammateDraft> _teammateDrafts;
-    std::shared_ptr<int>       _agentAlive       = std::make_shared<int>(0);
+    std::shared_ptr<int>               _alive = std::make_shared<int>(0);
     // The error banner (5 s), and what the composer was last given
     // (applyComposerAccess hands changes on only).
     ui::Label                 *_errorBanner      = nullptr;

@@ -187,19 +187,8 @@ std::vector<ui::MenuItem> Menus::teammateItems(const model::Backend::AgentRole &
     return items;
 }
 
-void Menus::runTeammate(int id, const std::string &role) {
-    switch (id) {
-    case kEditTeammate:
-        _shell.editTeammate(role);
-        break;
-    case kRestoreTeammate:
-        _shell.restoreTeammate(role);
-        break;
-    case kRemoveTeammate:
-        _shell.removeTeammate(role);
-        break;
-    }
-}
+// The original teammate actions are unavailable in the Slack-only fork.
+void Menus::runTeammate(int, const std::string &) {}
 
 std::vector<ui::MenuItem> Menus::sectionItems(const std::string &section, SectionSort sort) const {
     std::vector<ui::MenuItem> items;
@@ -290,13 +279,8 @@ void Menus::run(int id, uint32_t target) {
             _ctx.backend.moveToSection(target, all[size_t(id - kMoveToSection)].id);
         return;
     }
-    if (id >= kFindSession) { // ── an agent workspace's "+" ──
-        if (id == kFindSession)
-            _shell.openSessionFinder();
-        else if (id == kCreateSession || id == kCreateUnsafeSession)
-            _shell.startAgentSession(id == kCreateUnsafeSession);
+    if (id >= kFindSession) // legacy agent menu IDs are inert
         return;
-    }
     model::Store   &st = _ctx.store;
     model::Backend &be = _ctx.backend;
     if (id < kWorkspaceAdmin) { // ── conversations ──
