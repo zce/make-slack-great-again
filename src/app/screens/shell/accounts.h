@@ -147,6 +147,7 @@ private:
     Running                              *_active = nullptr; // the one the screens show
     std::string                           _activeKey;
     mrkdwn::MessageRef                    _link;
+    mrkdwn::NativeLink                     _nativeLink;
     std::string                           _linkKey;
     model::Store                         *_linkStore = nullptr;
     model::Store::ObserverId              _linkObserver = 0;
