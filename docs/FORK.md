@@ -28,11 +28,13 @@ The release workflow needs `contents: write` access to create tags/releases. Rel
 
 ## Customization boundaries
 
+The source tree retains upstream's uncompiled `src/app/claude/` and agent-oriented fixtures to avoid pervasive delete/modify conflicts when synchronizing. The fork does not build or link that module. `src/app/llm/` remains for independent AI assistance.
+
 Prefer existing Settings and palette controls before adding new UI systems. Keep new UI changes inside the corresponding screen or view module rather than broad changes in shared primitives. Remove unwanted integration code in a focused PR after identifying all references; merely hiding an entry does not make the binary smaller. Preserve Slack functionality, credentials, notifications and message routing.
 
 Planned follow-on work (not part of this infrastructure PR):
 
-1. Remove the Claude Code workspace, roles, process handling and agent-specific UI without removing ordinary Slack bot messages.
+1. **Removed from the fork build:** Claude Code workspace, roles, process handling, agent UI and linked threads; ordinary Slack bot messages remain.
 2. Route external message permalinks to the existing message/thread jump logic with multi-workspace handling.
 3. Probe Slack Lists APIs under both session and OAuth credentials before implementing a native Lists UI.
 4. Iterate on visual customizations as independent, reviewable changes.
