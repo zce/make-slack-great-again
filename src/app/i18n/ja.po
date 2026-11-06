@@ -232,7 +232,7 @@ msgstr "考え中…"
 msgid "Reading files…"
 msgstr "ファイルを読んでいます…"
 
-#: src/app/claude/backend_branch.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/message_search.cpp
+#: src/app/claude/backend_branch.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/message_search.cpp src/app/screens/shell/quick_switcher.cpp
 msgid "Searching…"
 msgstr "検索中…"
 
@@ -3012,7 +3012,7 @@ msgstr "メッセージを検索…"
 msgid "Close search"
 msgstr "検索を閉じる"
 
-#: src/app/screens/shell/message_search.cpp
+#: src/app/screens/shell/message_search.cpp src/app/screens/shell/quick_switcher.cpp
 msgid "No results found."
 msgstr "結果が見つかりませんでした。"
 
@@ -3036,13 +3036,9 @@ msgstr "現地時間 %1"
 msgid "Message"
 msgstr "メッセージ"
 
-#: src/app/screens/shell/quick_switcher.cpp
-msgid "Jump to a conversation…"
-msgstr "会話にジャンプ…"
-
-#: src/app/screens/shell/quick_switcher.cpp
-msgid "No conversations match."
-msgstr "一致する会話がありません。"
+#: src/app/screens/shell/quick_switcher.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/shortcuts.cpp
+msgid "Search"
+msgstr ""
 
 #: src/app/screens/shell/quick_switcher.cpp
 msgid "%1 to move · %2 to switch workspace · %3 to open"
@@ -3051,10 +3047,6 @@ msgstr "%1 で移動 · %2 でワークスペースを切り替え · %3 で開�
 #: src/app/screens/shell/quick_switcher.cpp
 msgid "%1 to move · %2 to open"
 msgstr "%1 で移動 · %2 で開く"
-
-#: src/app/screens/shell/quick_switcher.cpp
-msgid "No matches in %1. Other workspaces have some."
-msgstr "%1 には一致する会話がありません。他のワークスペースにはあります。"
 
 #: src/app/screens/shell/saved_page.cpp
 msgid "Reminder set for %1"
@@ -3173,20 +3165,8 @@ msgid "Log in to workspace"
 msgstr "ワークスペースにログイン"
 
 #: src/app/screens/shell/shell.cpp
-msgid "Switch workspace"
-msgstr ""
-
-#: src/app/screens/shell/shell.cpp
 msgid "msga"
 msgstr "msga"
-
-#: src/app/screens/shell/shell.cpp
-msgid "Quick switch"
-msgstr ""
-
-#: src/app/screens/shell/shell.cpp
-msgid "Search"
-msgstr ""
 
 #: src/app/screens/shell/shell.cpp
 msgid "Help"
@@ -3404,10 +3384,6 @@ msgstr "ハドルを開始しました"
 #: src/app/screens/shell/shell_notify.cpp
 msgid "You asked to be reminded about a message."
 msgstr "メッセージのリマインダーを設定していました。"
-
-#: src/app/screens/shell/shortcuts.cpp
-msgid "Jump to a conversation"
-msgstr "会話にジャンプ"
 
 #: src/app/screens/shell/shortcuts.cpp
 msgid "New line in message"
@@ -4152,6 +4128,18 @@ msgstr "ダウンロードに失敗しました: %1"
 #: src/app/update/updater.cpp
 msgid "Downloaded update is corrupt (checksum mismatch)."
 msgstr "ダウンロードした更新ファイルが破損しています（チェックサム不一致）。"
+
+#~ msgid "Jump to a conversation…"
+#~ msgstr "会話にジャンプ…"
+
+#~ msgid "No conversations match."
+#~ msgstr "一致する会話がありません。"
+
+#~ msgid "No matches in %1. Other workspaces have some."
+#~ msgstr "%1 には一致する会話がありません。他のワークスペースにはあります。"
+
+#~ msgid "Jump to a conversation"
+#~ msgstr "会話にジャンプ"
 
 #~ msgid "Remove idle session from msga"
 #~ msgstr "待機中のセッションをmsgaから削除"
