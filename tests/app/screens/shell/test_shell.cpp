@@ -2007,7 +2007,6 @@ TEST("workspace switch: the open chat and thread are left before the Store empti
 
 // ── Workspace rail ──────────────────────────────────────────────────────────
 
-#ifdef __APPLE__
 namespace {
 
 const std::string kSlackKey = "slack:T0LUMEN", kClaudeKey = "claude-code:local";
@@ -2039,6 +2038,7 @@ void button(Harness &h, plat::Button b, bool down) {
 
 } // namespace
 
+#ifdef __APPLE__
 TEST("workspace rail: a tile per workspace; a click or its tray item switches") {
     Harness h;
     twoWorkspaces(h);
