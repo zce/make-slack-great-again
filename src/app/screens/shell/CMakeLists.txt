@@ -4,6 +4,7 @@ add_library(msga_screens_shell STATIC
     accounts.cpp
     activity_page.cpp
     avatars.cpp
+    browse_list.cpp
     canvas_page.cpp
     canvas_viewer.cpp
     channel_dialogs.cpp
