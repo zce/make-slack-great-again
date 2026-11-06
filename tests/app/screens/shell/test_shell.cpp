@@ -2691,7 +2691,7 @@ TEST("settings: the AI providers reach the LLM layer; Summarize's notice opens t
     CHECK_FALSE(ai.available()); // the presets, no keys
     REQUIRE(ai.providers().size() == 2);
     h.settings.provider("openai")->key = "sk-test";
-    h.settings.ai.push_back({"custom-1", "Box", "http://localhost:8000/v1", {}, "qwen", {}});
+    h.settings.ai.push_back({"custom-1", "Box", "http://localhost:8000/v1", {}, "qwen"});
     h.settings.aiDefault = "custom-1";
     h.settings.language  = "ja";
     h.sh->applySettings();
