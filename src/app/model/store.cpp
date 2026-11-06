@@ -348,6 +348,7 @@ bool sameMeta(const Conversation &a, const Conversation &b) {
             c.starred,
             c.muted,
             c.member,
+            c.extShared,
             c.notify,
             c.canvasTitle,
             c.canvasId,
