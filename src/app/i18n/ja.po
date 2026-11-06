@@ -946,7 +946,7 @@ msgstr "画像を読み込み中…"
 msgid "Download"
 msgstr "ダウンロード"
 
-#: src/app/screens/messages/message_list.cpp src/app/screens/shell/shell_dialogs.cpp
+#: src/app/screens/messages/message_list.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/shell_dialogs.cpp
 msgid "Forward"
 msgstr "転送"
 
@@ -2529,7 +2529,7 @@ msgstr "招待されたメンバーのみ閲覧・参加できます"
 msgid "Step 2 of 2"
 msgstr "ステップ 2/2"
 
-#: src/app/screens/shell/channel_dialogs.cpp
+#: src/app/screens/shell/channel_dialogs.cpp src/app/screens/shell/shell.cpp
 msgid "Back"
 msgstr "戻る"
 
@@ -3173,8 +3173,24 @@ msgid "Log in to workspace"
 msgstr "ワークスペースにログイン"
 
 #: src/app/screens/shell/shell.cpp
+msgid "Switch workspace"
+msgstr ""
+
+#: src/app/screens/shell/shell.cpp
 msgid "msga"
 msgstr "msga"
+
+#: src/app/screens/shell/shell.cpp
+msgid "Quick switch"
+msgstr ""
+
+#: src/app/screens/shell/shell.cpp
+msgid "Search"
+msgstr ""
+
+#: src/app/screens/shell/shell.cpp
+msgid "Help"
+msgstr ""
 
 #: src/app/screens/shell/shell.cpp
 msgid "Pin window on top"
@@ -3239,6 +3255,10 @@ msgstr "終了"
 #: src/app/screens/shell/shell.cpp
 msgid "Notification status: %1"
 msgstr "通知の状態: %1"
+
+#: src/app/screens/shell/shell.cpp
+msgid "Workspace options"
+msgstr ""
 
 #: src/app/screens/shell/shell_agents.cpp
 msgid "That session is gone: Claude Code no longer has it."
