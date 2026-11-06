@@ -329,6 +329,8 @@ void Accounts::tryOpenLink() {
     if (conv == model::kNoConv)
         return; // The initial roster may still be loading.
     if (!_active->store.conversation(conv).member) {
+        if (!_active->live)
+            return; // A placeholder can precede the first full roster.
         clearLink();
         return;
     }
@@ -359,7 +361,7 @@ bool Accounts::handleUrl(std::string_view url) {
         if (record.service != slack::kService)
             continue;
         const Running *running = find(record.key());
-        const std::string url = running && !running->store.workspaceUrl.empty()
+        const std::string workspaceUrl = running && !running->store.workspaceUrl.empty()
                                     ? running->store.workspaceUrl
                                     : slack::fromRecord(record).workspaceUrl;
         if (ref.host.empty()) {
@@ -367,12 +369,12 @@ bool Accounts::handleUrl(std::string_view url) {
                 key = record.key();
             continue;
         }
-        if (url.empty()) {
+        if (workspaceUrl.empty()) {
             ++unknown;
             loneUnknown = record.key();
             continue;
         }
-        std::string_view host = url;
+        std::string_view host = workspaceUrl;
         const size_t scheme = host.find("://");
         if (scheme != std::string_view::npos)
             host.remove_prefix(scheme + 3);
