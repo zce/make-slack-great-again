@@ -765,32 +765,18 @@ TEST("shortcuts: Up in an empty composer edits my last message, Escape leaves th
 
 // ── Documented keys ─────────────────────────────────────────────────────────
 
-TEST("shortcuts: Shift+Del removes an idle Claude Code session, and only that") {
-    Harness       h;
+TEST("shortcuts: Shift+Del never removes a Slack conversation") {
+    Harness h;
     const ConvRef dm = h.conv("D0JONAS");
     REQUIRE(dm != kNoConv);
-    const UserRef peer = h.store.conversation(dm).dmUser;
     h.sh->open(dm);
     pump();
-    // Not a session: nothing.
     h.chord(kShift, K::Delete);
-    CHECK(h.sh->sidebar().rowState(dm).exists);
-    // A working session (green dot) stays too.
-    h.backend.agent           = dm;
-    h.store.user(peer).active = true;
-    h.chord(kShift, K::Delete);
-    CHECK(h.sh->sidebar().rowState(dm).exists);
-    // With a selection in the composer the key is the editor's.
-    h.store.user(peer).active = false;
+    CHECK(h.store.conversation(dm).member);
     h.edit().insertText("keep");
     h.edit().selectAll();
     h.chord(kShift, K::Delete);
     CHECK(h.store.conversation(dm).member);
-    // Idle, nothing selected: removed.
-    h.edit().clear();
-    h.chord(kShift, K::Delete);
-    pump();
-    CHECK_FALSE(h.store.conversation(dm).member);
 }
 
 // ── The shortcuts panel ─────────────────────────────────────────────────────
