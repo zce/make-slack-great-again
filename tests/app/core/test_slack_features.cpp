@@ -926,7 +926,7 @@ TEST("slack features: external sharing is not ordinary Grid sharing") {
         {"id": "D1", "is_im": true, "user": "UMIRA"}],
         "response_metadata": {"next_cursor": ""}}})");
     const int calls = count("users.conversations");
-    e.be->reloadConversations();
+    e.be->reloadConversationsForTest();
     REQUIRE(pumpUntil([&] { return count("users.conversations") > calls; }));
     pumpFor(100);
     CHECK(e.store.conversation(e.conv("C1")).extShared.value_or(false));
@@ -937,7 +937,7 @@ TEST("slack features: external sharing is not ordinary Grid sharing") {
         {"id": "D1", "is_im": true, "user": "UMIRA", "is_ext_shared": false}],
         "response_metadata": {"next_cursor": ""}}})");
     const int calls2 = count("users.conversations");
-    e.be->reloadConversations();
+    e.be->reloadConversationsForTest();
     REQUIRE(pumpUntil([&] {
         return count("users.conversations") > calls2 &&
                !e.store.conversation(e.conv("C1")).extShared.value_or(true);
