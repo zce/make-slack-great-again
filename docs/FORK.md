@@ -18,7 +18,7 @@ The repository setting **Actions → General → Workflow permissions → Allow 
 
 ## CI and releases
 
-`ci.yml` builds and runs tests for Linux PRs. `release.yml` builds and **publishes a GitHub Release automatically on every push to `master`**, after its release build succeeds. The release tag is `v<upstream MSGA_VERSION>-zce.<release workflow run number>`. The upstream version remains an integer in `version.cmake`; do not invent a second CMake version source.
+`ci.yml` builds and runs tests for Linux PRs. `release.yml` builds and **publishes a GitHub Release automatically on every push to `master`**, after a successful CI run on `master` and its own release build succeeds. The release tag is `v<upstream MSGA_VERSION>-zce.<release workflow run number>`. The upstream version remains an integer in `version.cmake`; do not invent a second CMake version source.
 
 The first release pipeline produces **Linux x86_64 only**. It uses Ubuntu 24.04's shared libraries, **not** upstream's static-musl release build, so the asset should not be claimed to work without dependencies on every Linux distro. Verify its runtime dependencies on the target distribution before replacing a daily driver. macOS and Windows packaging can be added later using their respective platform runners.
 
