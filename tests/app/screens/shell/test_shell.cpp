@@ -791,7 +791,7 @@ TEST("sections: the conversation and section header menus") {
     CHECK_STR(labels(m.sectionItems("", {})), "Create a section…" + sort);
     CHECK_STR(
         labels(m.sectionItems("", {}, std::pair{true, false})),
-        "Create a section…|-|Move section up|Move section down(off)|-" + sort.substr(1)
+        "Create a section…|-|Move section up|Move section down(off)" + sort
     );
     h.backend.createSection("Projects", "", eng);
     h.backend.createSection("Later", "", kNoConv);
