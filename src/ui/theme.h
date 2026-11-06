@@ -193,7 +193,7 @@ float       metric(M m);
 text::Style font(Font f, C color = C::Text);
 
 // A style for a size given in pixels (13, 14, …):
-// Body scaled by px / 15, so it follows the text-size preference too.
+// Absolute logical size, scaled only by OS/app text preferences.
 text::Style pxFont(float px, text::Weight w, Color c);
 
 // Sentinel colours for text::AttributedText handed to Label/TextEdit:
