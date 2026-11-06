@@ -65,7 +65,7 @@ TEST("desktop entry: the launcher earlier versions installed") {
     CHECK(e.find("Icon=/d/icons/msga.png\n") != std::string::npos);
     CHECK(e.find("Name=MSGA\n") != std::string::npos);
     CHECK(e.find("StartupWMClass=msga\n") != std::string::npos);
-    CHECK(e.find("MimeType=x-scheme-handler/msga;\n") != std::string::npos);
+    CHECK(e.find("MimeType=x-scheme-handler/msga;x-scheme-handler/slack;\n") != std::string::npos);
     CHECK(
         shell::desktopEntry("/usr/bin/msga", "msga").find("Exec=/usr/bin/msga %u\n") !=
         std::string::npos
