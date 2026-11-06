@@ -1,4 +1,4 @@
-// Ctrl/Cmd+K: a popup with a filter field over every conversation.
+// Ctrl/Cmd+K: integrated search of conversations, people and Slack messages.
 #pragma once
 
 #include "screens/common/context.h"
@@ -57,6 +57,7 @@ struct QuickSwitchTab {
     // quickSwitchNames(order), and the store's metaRevision they were made at.
     std::vector<QuickSwitchName> names;
     uint64_t                     namesRev = UINT64_MAX;
+    model::Backend              *backend = nullptr; // search/open DM for this workspace
 };
 
 // With several workspaces a strip of their bubbles sits above the field,
@@ -75,6 +76,7 @@ public:
     ~QuickSwitcher() override;
     ui::TextEdit                      &field() { return *_field; }
     const std::vector<model::ConvRef> &results() const { return _results; }
+    const std::vector<model::Backend::SearchHit> &messageResults() const { return _hits; }
     void                               choose(int index); // opens results[index] and closes
     int                                tab() const { return _tab; }
     void                               setTab(int index); // a click on its bubble
@@ -83,6 +85,9 @@ public:
     std::string                        emptyText() const;
     // A pick in another workspace's tab: switch there, then open it.
     std::function<void(const std::string &key, model::ConvRef conv)> onChooseIn;
+    std::function<void(const std::string &key, model::UserRef)> onChoosePersonIn;
+    std::function<void(const std::string &key, model::ConvRef, model::Ts, model::Ts)>
+        onChooseMessageIn;
 
     // Matches with their scores, in the tab's order (best first once ranked).
     using Scored = std::vector<std::pair<double, model::ConvRef>>;
@@ -94,6 +99,8 @@ private:
     // `scored`: the tab's matches for the query already (taken).
     void                                       refilter(Scored *scored = nullptr);
     void                                       highlight(int index);
+    void                                       refreshResults();
+    void                                       queueSearch();
     void                                       refreshStrip();
     std::optional<double>                      bestScore(QuickSwitchTab &t, std::string_view query);
     static const std::vector<QuickSwitchName> &names(QuickSwitchTab &t); // brought up to date
@@ -104,6 +111,12 @@ private:
     int                         _tab       = 0;
     bool                        _manualTab = false; // picked by hand since typing began
     std::vector<model::ConvRef> _results;
+    std::vector<model::UserRef> _people;
+    std::vector<model::Backend::SearchHit> _hits;
+    uint32_t                    _searchGeneration = 0;
+    plat::TimerId               _searchTimer = 0;
+    bool                        _searching = false;
+    std::shared_ptr<int>        _alive = std::make_shared<int>(0);
     std::vector<bool>           _dimmed;
     ui::TextEdit               *_field   = nullptr;
     ui::View                   *_strip   = nullptr;

@@ -6,10 +6,12 @@
 #include "gfx/icons_generated.h"
 #include "screens/common/avatar_initial.h"
 #include "screens/shell/shortcuts.h"
+#include "screens/shell/message_search.h"
 #include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar.h"
 
 #include <algorithm>
+#include <utility>
 
 using namespace ui;
 using gfx::Icon;
@@ -229,6 +231,7 @@ std::vector<ConvRef> quickSwitchFilter(
 class QuickSwitcher::Rows final : public VirtualList::Adapter {
 public:
     explicit Rows(QuickSwitcher &q) : _q(q) {}
+
     class Row final : public Clickable {
     public:
         Row() {
@@ -239,45 +242,72 @@ public:
             avatar->setRadius(5);
             icon = add<IconView>(Icon::Hash, 16, C::TextMuted);
             icon->style().size(20, 20);
-            name = add<Label>("", Font::Body);
+            auto *body = add<View>();
+            body->style().column().flex(1).spacing(2);
+            name = body->add<Label>("", Font::Body);
             name->setMaxLines(1);
-            name->style().flex(1);
+            snippet = body->add<Label>("", Font::Small, C::TextMuted);
+            snippet->setMaxLines(1);
+            snippet->setVisible(false);
         }
-        Avatar   *avatar = nullptr;
-        IconView *icon   = nullptr;
-        Label    *name   = nullptr;
-        int       index  = -1;
+        Avatar   *avatar  = nullptr;
+        IconView *icon    = nullptr;
+        Label    *name    = nullptr;
+        Label    *snippet = nullptr;
+        int       index   = -1;
     };
-    int                   count() const override { return int(_q._results.size()); }
+    int                   count() const override {
+        return int(_q._results.size() + _q._people.size() + _q._hits.size());
+    }
     std::unique_ptr<View> create(int) override {
         auto r     = std::make_unique<Row>();
         Row *raw   = r.get();
         r->onClick = [this, raw] { _q.choose(raw->index); };
         return r;
     }
+
     void bind(View &v, int i) override {
-        Row                &r      = static_cast<Row &>(v);
-        const model::Store &st     = *_q._tabs[size_t(_q._tab)].store;
-        const ConvRef       c      = _q._results[size_t(i)];
-        const auto         &cv     = st.conversation(c);
-        const std::string   nm     = st.displayName(c);
-        const bool          person = cv.isDirect();
-        r.index                    = i;
-        r.avatar->setVisible(person);
-        r.icon->setVisible(!person);
-        if (person) {
-            r.avatar->setInitial(nm);
-            r.avatar->setBitmap(
-                cv.kind == model::ConvKind::Dm ? _q._avatars.get(st.user(cv.dmUser).avatar, 40)
-                                               : nullptr
-            );
+        Row &r = static_cast<Row &>(v);
+        const model::Store &st = *_q._tabs[size_t(_q._tab)].store;
+        const size_t index = size_t(i), conversations = _q._results.size();
+        const size_t people = _q._people.size();
+        r.index = i;
+        r.snippet->setVisible(index >= conversations + people);
+        r.style().height(index >= conversations + people ? 52 : 32);
+        if (index < conversations) {
+            const ConvRef c = _q._results[index];
+            const auto &cv = st.conversation(c);
+            const std::string nm = st.displayName(c);
+            const bool person = cv.isDirect();
+            r.avatar->setVisible(person);
+            r.icon->setVisible(!person);
+            if (person) {
+                r.avatar->setInitial(nm);
+                r.avatar->setBitmap(
+                    cv.kind == model::ConvKind::Dm ? _q._avatars.get(st.user(cv.dmUser).avatar, 40)
+                                                   : nullptr);
+            } else r.icon->setIcon(convIcon(cv));
+            r.name->setText(nm);
+        } else if (index < conversations + people) {
+            const auto &u = st.user(_q._people[index - conversations]);
+            r.avatar->setVisible(true);
+            r.icon->setVisible(false);
+            r.avatar->setInitial(u.label());
+            r.avatar->setBitmap(_q._avatars.get(u.avatar, 40));
+            r.name->setText(u.label());
         } else {
-            r.icon->setIcon(convIcon(cv));
+            const auto &hit = _q._hits[index - conversations - people];
+            r.avatar->setVisible(false);
+            r.icon->setVisible(true);
+            r.icon->setIcon(Icon::Search);
+            r.name->setText(searchConvLabel(st, hit.conv));
+            r.snippet->setText(searchPreview(st, hit.text));
         }
-        r.name->setText(nm);
         r.setChecked(i == _q._current);
     }
-    float estimateHeight(int) const override { return 32; }
+    float estimateHeight(int i) const override {
+        return size_t(i) < _q._results.size() + _q._people.size() ? 32 : 52;
+    }
 
 private:
     QuickSwitcher &_q;
@@ -321,7 +351,7 @@ QuickSwitcher::QuickSwitcher(
         _tabName->style().flex(1).margins(4, 0, 0, 0);
     }
     _field = add<TextEdit>();
-    _field->setPlaceholder(tr("Jump to a conversation\xE2\x80\xA6"));
+    _field->setPlaceholder(tr("Search conversations, people and messages\xE2\x80\xA6"));
     _field->setMaxLines(1);
     _field->setBackground(C::InputBg, 6);
     _field->setBorder(C::InputBorderFocus);
@@ -334,7 +364,7 @@ QuickSwitcher::QuickSwitcher(
         if (e.type != EventType::KeyDown)
             return false;
         if (e.key == plat::Key::Down || e.key == plat::Key::Up) {
-            const int n = int(_results.size());
+            const int n = int(_results.size() + _people.size() + _hits.size());
             if (n)
                 highlight((_current + (e.key == plat::Key::Down ? 1 : n - 1)) % n);
             return true;
@@ -359,7 +389,7 @@ QuickSwitcher::QuickSwitcher(
     _list->setGap(1);
     _list->style().height(kListH);
     // In the list's place when nothing matches.
-    _empty = add<Label>(tr("No conversations match."), Font::Body, C::TextMuted);
+    _empty = add<Label>(tr("No results found."), Font::Body, C::TextMuted);
     _empty->setAlign(text::LayoutOptions::Align::Center);
     _empty->style().height(kListH);
     _empty->setVisible(false);
@@ -433,10 +463,12 @@ void QuickSwitcher::applyFilter() {
             _tab = best;
         refreshStrip();
         refilter(&all[size_t(_tab)]);
+        queueSearch();
         return;
     }
     refreshStrip();
     refilter();
+    queueSearch();
 }
 
 void QuickSwitcher::setTab(int index) {
@@ -448,6 +480,7 @@ void QuickSwitcher::setTab(int index) {
     _manualTab = !str::trim(_field->text()).empty();
     refreshStrip();
     refilter();
+    queueSearch();
 }
 
 void QuickSwitcher::stepTab(int delta) {
@@ -469,60 +502,141 @@ std::string QuickSwitcher::emptyText() const {
     return _empty->visible() ? std::string(_empty->text()) : std::string();
 }
 
-QuickSwitcher::~QuickSwitcher() = default;
+QuickSwitcher::~QuickSwitcher() {
+    _alive.reset();
+    if (_searchTimer) _ctx.app.cancelTimer(_searchTimer);
+}
+
 
 void QuickSwitcher::refilter(Scored *scored) {
     QuickSwitchTab &tab = _tabs[size_t(_tab)];
-    _results            = scored ? ranked(std::move(*scored))
-                                 : quickSwitchFilter(_field->text(), tab.order, names(tab));
-    // Preselect the top match so Enter always opens something.
-    _current            = 0;
+    _results = scored ? ranked(std::move(*scored))
+                      : quickSwitchFilter(_field->text(), tab.order, names(tab));
+    _people.clear();
+    const std::string query = utf8::foldCase(str::trim(_field->text()));
+    if (!query.empty()) {
+        const model::Store &store = *tab.store;
+        // A DM already found above represents its peer. Everyone else is
+        // searchable here, including teammates with no existing DM.
+        for (model::UserRef u = 0; u < store.userCount(); ++u) {
+            const auto &person = store.user(u);
+            if (person.deleted || person.label().empty()) continue;
+            bool represented = false;
+            for (ConvRef conv : _results) {
+                const auto &c = store.conversation(conv);
+                if (c.kind == model::ConvKind::Dm && c.dmUser == u) {
+                    represented = true;
+                    break;
+                }
+            }
+            if (represented) continue;
+            const std::string names = utf8::foldCase(
+                str::concat({person.label(), " ", person.name, " ", person.realName}));
+            if (names.find(query) != std::string::npos) {
+                _people.push_back(u);
+                if (_people.size() >= 30) break; // bound the results list
+            }
+        }
+    }
+    _current = 0;
+    refreshResults();
+}
+
+void QuickSwitcher::refreshResults() {
+    const int total = int(_results.size() + _people.size() + _hits.size());
+    if (_current >= total) _current = 0;
     _list->reset();
     _list->scrollTo(0);
-    // Point at the other tabs when they hold what this
-    // one doesn't.
-    const bool any = !_results.empty();
-    _list->setVisible(any);
-    _empty->setVisible(!any);
-    if (any)
-        return;
-    bool              elsewhere = false;
+    _list->setVisible(total > 0);
+    _empty->setVisible(total == 0);
+    if (total == 0) {
+        _empty->setText(_searching ? tr("Searching messages\xE2\x80\xA6")
+                                   : tr("No results found."));
+    }
+}
+
+void QuickSwitcher::queueSearch() {
+    ++_searchGeneration;
+    if (_searchTimer) {
+        _ctx.app.cancelTimer(_searchTimer);
+        _searchTimer = 0;
+    }
+    _hits.clear();
     const std::string query(str::trim(_field->text()));
-    // The dimming says it for this query already (applyFilter scored them).
-    const bool        known = _dimmed.size() == _tabs.size();
-    if (_tabs.size() > 1 && !query.empty())
-        for (size_t i = 0; i < _tabs.size() && !elsewhere; ++i)
-            elsewhere =
-                int(i) != _tab && (known ? !_dimmed[i] : bestScore(_tabs[i], query).has_value());
-    _empty->setText(
-        elsewhere ? i18n::arg(tr("No matches in %1. Other workspaces have some."), tab.name)
-                  : std::string(tr("No conversations match."))
-    );
+    _searching = !query.empty();
+    refreshResults();
+    if (query.empty()) return;
+    const uint32_t generation = _searchGeneration;
+    const int tabIndex = _tab;
+    std::weak_ptr<int> alive = _alive;
+    _searchTimer = _ctx.app.addTimer(250, false, [this, generation, tabIndex, query, alive] {
+        if (alive.expired() || generation != _searchGeneration) return;
+        _searchTimer = 0;
+        model::Backend *backend = _tabs[size_t(tabIndex)].backend;
+        if (!backend && _tabs[size_t(tabIndex)].store == &_ctx.store())
+            backend = &_ctx.backend;
+        if (!backend) {
+            _searching = false;
+            refreshResults();
+            return;
+        }
+        backend->search(query, [this, generation, tabIndex, alive](
+            std::vector<model::Backend::SearchHit> results) {
+            if (alive.expired() || generation != _searchGeneration || tabIndex != _tab)
+                return;
+            const auto &store = *_tabs[size_t(tabIndex)].store;
+            std::erase_if(results, [&](const auto &hit) {
+                return hit.conv >= store.conversationCount();
+            });
+            _hits = std::move(results);
+            _searching = false;
+            refreshResults();
+        });
+    });
 }
 
 void QuickSwitcher::highlight(int index) {
     const int prev = _current;
     _current       = index;
-    if (prev >= 0 && prev < int(_results.size()))
+    if (prev >= 0 && prev < int(_results.size() + _people.size() + _hits.size()))
         _list->itemsChanged(prev, 1); // rebinds its checked state
     _list->itemsChanged(index, 1);
     _list->scrollToItem(index, VirtualList::ItemAlign::Nearest, false);
 }
 
+
 void QuickSwitcher::choose(int index) {
-    if (index < 0 || size_t(index) >= _results.size())
-        return;
-    const ConvRef         c    = _results[size_t(index)];
-    const QuickSwitchTab &tab  = _tabs[size_t(_tab)];
-    const std::string     key  = tab.key;
-    const bool            here = tab.store == &_ctx.store();
-    const auto            open = here ? _ctx.openConversation : std::function<void(ConvRef)>();
-    const auto            in   = onChooseIn;
-    close();
-    if (open)
-        open(c);
-    else if (!here && in)
-        in(key, c); // opened in its own workspace
+    const size_t conversations = _results.size(), people = _people.size();
+    if (index < 0 || size_t(index) >= conversations + people + _hits.size()) return;
+    const QuickSwitchTab &tab = _tabs[size_t(_tab)];
+    const std::string key = tab.key;
+    const bool here = tab.store == &_ctx.store();
+    if (size_t(index) < conversations) {
+        const ConvRef c = _results[size_t(index)];
+        const auto open = here ? _ctx.openConversation : std::function<void(ConvRef)>();
+        const auto in = onChooseIn;
+        close();
+        if (open) open(c);
+        else if (!here && in) in(key, c);
+    } else if (size_t(index) < conversations + people) {
+        const model::UserRef user = _people[size_t(index) - conversations];
+        const auto open = _ctx.openConversation;
+        const auto in = onChoosePersonIn;
+        model::Backend *backend = tab.backend ? tab.backend : &_ctx.backend;
+        close();
+        if (here) {
+            backend->openDm(user, [open](ConvRef conv) {
+                if (conv != model::kNoConv && open) open(conv);
+            });
+        } else if (in) in(key, user);
+    } else {
+        const model::Backend::SearchHit hit = _hits[size_t(index) - conversations - people];
+        const auto open = _ctx.openMessage;
+        const auto in = onChooseMessageIn;
+        close();
+        if (here && open) open(hit.conv, hit.ts, hit.thread);
+        else if (!here && in) in(key, hit.conv, hit.ts, hit.thread);
+    }
 }
 
 } // namespace shell

@@ -3617,6 +3617,7 @@ void Shell::showQuickSwitcher() {
     std::vector<QuickSwitchTab> tabs;
     for (const LiveWorkspace &w : liveWorkspaces()) {
         tabs.push_back({w.key, w.name, w.icon, w.store, {}});
+        tabs.back().backend = w.backend;
         if (w.store != &_ctx.store()) // the open one's comes in below
             tabs.back().order = quickSwitchOrder(*w.store, _sidebar->visited());
     }
@@ -3631,6 +3632,20 @@ void Shell::showQuickSwitcher() {
         const Running *r = findRunning(key);
         if (r && r->store == &_ctx.store() && _signedIn)
             open(conv);
+    };
+    raw->onChooseMessageIn = [this](const std::string &key, ConvRef conv, Ts ts, Ts thread) {
+        if (onSwitchWorkspace) onSwitchWorkspace(key);
+        if (const Running *r = findRunning(key); r && r->store == &_ctx.store() && _signedIn)
+            jumpToMessage(conv, ts, thread);
+    };
+    raw->onChoosePersonIn = [this](const std::string &key, model::UserRef user) {
+        if (onSwitchWorkspace) onSwitchWorkspace(key);
+        if (const Running *r = findRunning(key); r && r->store == &_ctx.store() && _signedIn) {
+            std::weak_ptr<int> alive = _alive;
+            r->backend->openDm(user, [this, alive](ConvRef conv) {
+                if (!alive.expired() && conv != kNoConv) open(conv);
+            });
+        }
     };
     const SizeF ws = _win.size();
     p->setAnchor({(ws.w - 520) / 2, 90, 520, 0}, Popup::Place::Below);

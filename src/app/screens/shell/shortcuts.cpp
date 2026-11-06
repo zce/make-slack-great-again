@@ -14,7 +14,7 @@ constexpr Keys kNone{};
 // (inHelp rows, top to bottom); the rest sit next to the group they belong to.
 const Def kDefs[] = {
     {Id::OpenSettings, Scope::Window, true, N_("Open settings"), {{K::Comma, Ctrl}, kNone}},
-    {Id::QuickSwitch, Scope::Window, true, N_("Jump to a conversation"), {{K::K, Ctrl}, kNone}},
+    {Id::QuickSwitch, Scope::Window, true, N_("Search all"), {{K::K, Ctrl}, kNone}},
     // Find: Ctrl+F on every platform.
     {Id::SearchMessages, Scope::Window, true, N_("Search messages"), {{K::F, Ctrl}, kNone}},
     // The keys of the next two are replaced by bindings() (the Ctrl+Enter option).

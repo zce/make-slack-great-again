@@ -445,6 +445,20 @@ TEST("drafts: stashed per conversation and thread on every leave path") {
 
 // ── Quick switcher ──────────────────────────────────────────────────────────
 
+TEST("global search: Ctrl+K includes message text, not only conversation names") {
+    Harness h;
+    h.sh->showQuickSwitcher();
+    auto *search = h.sh->quickSwitcher();
+    REQUIRE(search);
+    search->field().setText("proposal b");
+    REQUIRE(until([&] { return !search->messageResults().empty(); }));
+    CHECK(search->messageResults()[0].conv == h.conv("C0DESIGN"));
+    search->choose(int(search->results().size()));
+    pump();
+    CHECK(h.sh->current() == h.conv("C0DESIGN"));
+}
+
+
 TEST("quick switcher: a DM matches its peer's full name, display name and handle") {
     Harness      h;
     model::User &mira = h.store.user(h.store.findUser("U0MIRA"));
