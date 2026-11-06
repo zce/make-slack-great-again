@@ -145,7 +145,7 @@ endif()
 # msga replacing its own binary with the next release (app/update), and, on
 # Linux, writing its own ~/.local/share/applications/msga.desktop on every
 # start (screens/shell/desktop_entry.cpp), which names this build's path.
-option(MSGA_SELF_UPDATE "Check msga.app for new releases and install them" ON)
+option(MSGA_SELF_UPDATE "Check msga.app for new releases and install them (not for fork builds)" OFF)
 option(MSGA_INSTALL_LAUNCHER "Linux: write the user's msga.desktop launcher entry at startup" ON)
 # On msga_flags: the updater's UI (the update bar, Settings' update checks)
 # and its tests compile out with it, not only app/update.
