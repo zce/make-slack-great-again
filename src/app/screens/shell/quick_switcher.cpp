@@ -239,7 +239,7 @@ std::string searchPreview(const model::Store &store, std::string_view text) {
     // The rendered text with mentions resolved (the
     // parser's label is kept for anyone unknown).
     std::string out = screens::plainText(store, text);
-    // The first 120 characters, newlines as spaces.
+    // The first 180 characters, newlines as spaces.
     out.resize(utf8::prefixBytes(out, kPreviewChars));
     std::replace(out.begin(), out.end(), '\n', ' ');
     return out;
@@ -581,6 +581,7 @@ void QuickSwitcher::refilter(Scored *scored) {
     }
     _current = 0;
     _preserveScroll = false;
+    _keyboardSelection = false;
     refreshResults();
 }
 
@@ -610,6 +611,7 @@ void QuickSwitcher::queueSearch() {
     const std::string query(str::trim(_field->text()));
     _searching = !query.empty();
     _preserveScroll = false;
+    _keyboardSelection = false;
     refreshResults();
     if (query.empty()) return;
 
@@ -636,6 +638,21 @@ void QuickSwitcher::queueSearch() {
             backend->search(query, [this, generation, origin, alive](
                 std::vector<model::Backend::SearchHit> results) {
                 if (alive.expired() || generation != _searchGeneration) return;
+                // Capture positions before results from another workspace can
+                // reorder the list. An explicit keyboard pick must keep naming
+                // the same result, not the row that takes its old index.
+                const size_t oldMessages = _hits.size();
+                const int previous = _current;
+                std::optional<MessageMatch> selected;
+                if (_keyboardSelection && previous >= 0 && size_t(previous) < oldMessages)
+                    selected = _hits[size_t(previous)];
+                const bool keepViewport = _list->scrollOffset() > 1;
+                const VirtualList::Anchor previousAnchor = _list->anchor();
+                std::optional<MessageMatch> visible;
+                if (keepViewport && previousAnchor.index >= 0 &&
+                    size_t(previousAnchor.index) < oldMessages)
+                    visible = _hits[size_t(previousAnchor.index)];
+
                 const auto &store = *_tabs[origin].store;
                 for (auto &hit : results)
                     if (hit.conv < store.conversationCount())
@@ -643,16 +660,47 @@ void QuickSwitcher::queueSearch() {
                 std::stable_sort(_hits.begin(), _hits.end(), [](const auto &a, const auto &b) {
                     return a.hit.ts > b.hit.ts;
                 });
+                const auto findMessage = [this](const MessageMatch &saved) {
+                    for (size_t i = 0; i < _hits.size(); ++i) {
+                        const auto &now = _hits[i];
+                        if (now.workspace == saved.workspace && now.hit.conv == saved.hit.conv &&
+                            now.hit.ts == saved.hit.ts)
+                            return int(i);
+                    }
+                    return -1;
+                };
+                const int added = int(_hits.size() - oldMessages);
+                if (_keyboardSelection) {
+                    if (selected) {
+                        const int newIndex = findMessage(*selected);
+                        if (newIndex >= 0)
+                            _current = newIndex;
+                    } else if (previous >= int(oldMessages)) {
+                        // Conversation and people rows move below newly found messages.
+                        _current = previous + added;
+                    }
+                }
+
                 --_pendingSearches;
                 _searching = _pendingSearches != 0;
                 _preserveScroll = true;
-                refreshResults(); // show partial results without snapping to top
+                refreshResults();
+                if (keepViewport) {
+                    int newIndex = previousAnchor.index + added;
+                    if (visible) {
+                        const int relocated = findMessage(*visible);
+                        if (relocated >= 0)
+                            newIndex = relocated;
+                    }
+                    _list->scrollToAnchor({newIndex, previousAnchor.offset});
+                }
             });
         }
     });
 }
 
 void QuickSwitcher::highlight(int index) {
+    _keyboardSelection = true;
     const int prev = _current;
     _current       = index;
     if (prev >= 0 && prev < int(_results.size() + _people.size() + _hits.size()))
