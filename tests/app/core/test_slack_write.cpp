@@ -553,7 +553,8 @@ TEST("slack write: search maps channel, ts and thread; unknown channels are skip
             {"channel":{"id":"C1"},"ts":"1700000001.000200","permalink":"https://x/p1"},
             {"channel":{"id":"D1"},"ts":"1700000002.000300",
              "permalink":"https://x/archives/D1/p1700000002000300?thread_ts=1700000000.000100&cid=D1"},
-            {"channel":{"id":"C404"},"ts":"1700000003.000400"}]}}])"
+            {"channel":{"id":"C404"},"ts":"1700000003.000400"}]},
+            "response_metadata":{"next_cursor":"search-page-2"}}])"
     );
     std::vector<model::Backend::SearchHit> hits;
     bool                                   got = false;
@@ -570,6 +571,27 @@ TEST("slack write: search maps channel, ts and thread; unknown channels are skip
     json::Value q = log.get("search.messages")["form"];
     CHECK_STR(q["query"].str(), "hello world");
     CHECK_STR(q["sort"].str(), "timestamp");
+    CHECK_STR(q["cursor"].str(), "*");
+
+    // The next page must use Slack's opaque cursor, not a page number.
+    script(
+        "search.messages",
+        R"([{"ok":true,"messages":{"matches":[
+            {"channel":{"id":"C1"},"ts":"1699999999.000100","permalink":"https://x/p2"}]},
+            "response_metadata":{"next_cursor":""}}])"
+    );
+    slack::SlackBackend::SearchPage page;
+    bool pageDone = false;
+    e.be->searchPage("hello world", "search-page-2", [&](auto result) {
+        page = std::move(result);
+        pageDone = true;
+    });
+    REQUIRE(pumpUntil([&] { return pageDone; }));
+    CHECK(page.error.empty());
+    CHECK(page.nextCursor.empty());
+    REQUIRE(page.hits.size() == 1);
+    CHECK(page.hits[0].ts == model::parseTs("1699999999.000100"));
+    CHECK_STR(Log().get("search.messages", 1)["form"]["cursor"].str(), "search-page-2");
 }
 
 TEST("slack write: save and remind use saved.*; a rejection rolls back") {
