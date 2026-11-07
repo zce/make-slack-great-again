@@ -516,7 +516,7 @@ msgstr "スレッドで返信"
 msgid "Forward message"
 msgstr "メッセージを転送"
 
-#: src/app/screens/messages/message_list.cpp
+#: src/app/screens/messages/message_list.cpp src/app/screens/shell/threads_page.cpp
 msgid "Save for later"
 msgstr "後で見るために保存"
 
@@ -548,7 +548,7 @@ msgstr "複数の人が入力中…"
 msgid "Open thread"
 msgstr "スレッドを開く"
 
-#: src/app/screens/messages/message_list.cpp
+#: src/app/screens/messages/message_list.cpp src/app/screens/shell/threads_page.cpp
 msgid "Remove from saved"
 msgstr "保存済みから削除"
 
