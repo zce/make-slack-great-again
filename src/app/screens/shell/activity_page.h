@@ -58,7 +58,7 @@ public:
     void        showMore();           // "Show more"
 
 private:
-    void reload();
+    void reload(bool filterChanged = false);
     void loadPage(std::string cursor);
     void rebuild() override;
     void onChange(const model::Change &ch) override;
