@@ -5,8 +5,10 @@
 #include "base/time.h"
 #include "gfx/icons_generated.h"
 #include "app/screens/common/message_rules.h"
+#include "app/screens/common/message_text.h"
 #ifdef MSGA_HAVE_MESSAGES
 #include "app/screens/messages/rich.h"
+#include "app/screens/messages/emoji_picker.h"
 #endif
 
 #include <algorithm>
@@ -25,15 +27,21 @@ namespace {
 // One message inside a card: avatar, name and time
 // over the rich body, a one-line summary of attached files. A click outside
 // a link opens the real thread.
+// The same compact message actions as the conversation toolbar. Actions
+// overlay the row on hover, without taking space away from its text.
 class MessageRow final : public Clickable {
 public:
-    MessageRow(screens::Context &ctx, Avatars &avatars, const model::Message &m) {
+    enum Action { React = 1, Forward, Save, More };
+
+    MessageRow(screens::Context &ctx, Avatars &avatars, const model::Message &m)
+        : _ts(m.ts) {
         setLook({C::None, C::None, C::None, C::None, 0});
-        setCursor(plat::Cursor::Hand); // the whole row opens the thread
-        const model::Store &st  = ctx.store();
-        View               *col = fillMessageRow(
-            this,
-            avatars,
+        setCursor(plat::Cursor::Hand);
+        style().stack();
+        auto *content = add<View>();
+        const model::Store &st = ctx.store();
+        View *col = fillMessageRow(
+            content, avatars,
             std::string(screens::authorName(st, m)),
             screens::authorAvatar(st, m),
             base::dateTimeLabel(model::tsSecs(m.ts), ctx.backend.nowSecs())
@@ -55,12 +63,62 @@ public:
             line->add<Label>(
                 files.size() == 1 ? files.front().name
                                   : arg(tr("%1 files"), str::number(int64_t(files.size()))),
-                Font::Body,
-                C::TextMuted
+                Font::Body, C::TextMuted
             );
         }
+        _bar = add<View>();
+        _bar->style().row().padding(4, 2).spacing(2).items(Align::Center);
+        _bar->setBackground(C::Surface, 6);
+        _bar->setBorder(C::Border);
+        auto addAction = [this](gfx::Icon icon, const char *label, int id) {
+            auto *b = _bar->add<IconButton>(icon, tr(label));
+            b->style().size(28, 28).noShrink();
+            b->setIconSize(15);
+            b->setFocusable(false);
+            b->onClick = [this, id, b] {
+                if (onAction) {
+                    const RectF r = b->windowRect();
+                    onAction(_ts, id, {r.x, r.y + r.h});
+                }
+            };
+            return b;
+        };
+        addAction(gfx::Icon::Smile, "Add reaction", React);
+        auto *forward = addAction(gfx::Icon::Forward, "Forward message", Forward);
+        forward->setVisible(bool(ctx.forwardMessage));
+        auto *save = addAction(gfx::Icon::Bookmark, "Save for later", Save);
+        save->setVisible(ctx.backend.capabilities().messageReminders);
+        addAction(gfx::Icon::MoreHorizontal, "More actions", More);
+        _bar->setVisible(false);
     }
-};
+
+    std::function<void(Ts, int, PointF)> onAction;
+
+    void layout() override {
+        View::layout();
+        if (_bar->visible()) {
+            const SizeF size = _bar->measure(width(), height());
+            _bar->setFrame({
+                std::max(0.f, width() - size.w - 4), 0, size.w, size.h
+            });
+        }
+    }
+    bool onEvent(Event &e) override {
+        if (e.type == EventType::ContextMenu) {
+            if (onAction) {
+                onAction(_ts, More, e.windowPos);
+                return true;
+            }
+        } else if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave) {
+            _bar->setVisible(e.type == EventType::PointerEnter);
+        }
+        return Clickable::onEvent(e);
+    }
+
+private:
+    Ts    _ts = 0;
+    View *_bar = nullptr;
+}
 
 } // namespace
 
@@ -122,8 +180,10 @@ ThreadsPage::Card::Card(ThreadsPage &page, FollowedThread item)
     _newPill = pill;
     head->add<Label>(participants(), Font::Small, C::TextMuted)->setMaxLines(1);
 
-    _body                                                           = cardBody(this);
-    _body->add<MessageRow>(ctx, page._avatars, _item.root)->onClick = [this] { openThread(); };
+    _body = cardBody(this);
+    auto *rootRow = _body->add<MessageRow>(ctx, page._avatars, _item.root);
+    rootRow->onClick = [this] { openThread(); };
+    rootRow->onAction = [this](Ts ts, int action, PointF at) { messageAction(ts, action, at); };
     // "Show N more replies": the rest lives in the thread panel.
     const int hidden = int(_item.root.replyCount) - int(_item.latestReplies.size());
     if (hidden > 0) {
@@ -159,10 +219,102 @@ std::string ThreadsPage::Card::participants() const {
 
 void ThreadsPage::Card::rebuildReplies() {
     _replies->clearChildren();
+    for (const model::Message &m : _item.latestReplies) {
+        auto *row = _replies->add<MessageRow>(_page._ctx, _page._avatars, m);
+        row->onClick = [this] { openThread(); };
+        row->onAction = [this](Ts ts, int action, PointF at) { messageAction(ts, action, at); };
+    }
+}
+
+const model::Message *ThreadsPage::Card::message(Ts ts) const {
+    if (ts == _item.root.ts)
+        return &_item.root;
     for (const model::Message &m : _item.latestReplies)
-        _replies->add<MessageRow>(_page._ctx, _page._avatars, m)->onClick = [this] {
-            openThread();
-        };
+        if (m.ts == ts)
+            return &m;
+    return nullptr;
+}
+
+std::vector<ui::MenuItem> ThreadsPage::Card::messageMenuItems(Ts ts) const {
+    std::vector<ui::MenuItem> out;
+    const model::Message *m = message(ts);
+    if (!m || m->pending || screens::isSystem(*m))
+        return out;
+    auto item = [&](int id, const char *label, gfx::Icon icon, bool enabled = true) {
+        ui::MenuItem x;
+        x.id = id;
+        x.label = tr(label);
+        x.icon = uint16_t(icon);
+        x.enabled = enabled;
+        out.push_back(std::move(x));
+    };
+    // No "Reply in thread" for replies: Slack threads cannot nest. The card
+    // already has a dedicated composer for replying to the existing root.
+    item(kOpen, "Open thread", gfx::Icon::MessageSquareReply);
+    item(kReact, "Add reaction", gfx::Icon::Smile);
+    item(kForward, "Forward message", gfx::Icon::Forward, bool(_page._ctx.forwardMessage));
+    ui::addMenuSeparator(out);
+    item(kCopyLink, "Copy link", gfx::Icon::Link);
+    item(kCopyText, "Copy message", gfx::Icon::Copy);
+    ui::addMenuSeparator(out);
+    if (_page._ctx.backend.capabilities().messageReminders)
+        item(_page._ctx.store().findSaved(_item.conv, ts) ? kUnsave : kSave,
+             _page._ctx.store().findSaved(_item.conv, ts) ? "Remove from saved" : "Save for later",
+             gfx::Icon::Bookmark);
+    item(m->pinned ? kUnpin : kPin,
+         m->pinned ? "Unpin from channel" : "Pin to channel",
+         m->pinned ? gfx::Icon::PinOff : gfx::Icon::Pin);
+    item(_page._ctx.store().threadMuted(_item.conv, _item.root.ts) ? kUnmute : kMute,
+         _page._ctx.store().threadMuted(_item.conv, _item.root.ts) ? "Unmute thread" : "Mute thread",
+         _page._ctx.store().threadMuted(_item.conv, _item.root.ts) ? gfx::Icon::Bell : gfx::Icon::BellOff);
+    return out;
+}
+
+void ThreadsPage::Card::messageAction(Ts ts, int action, ui::PointF at) {
+    const model::Message *m = message(ts);
+    if (!m || m->pending || screens::isSystem(*m))
+        return;
+    screens::Context &ctx = _page._ctx;
+    const ConvRef conv = _item.conv;
+    if (action == MessageRow::React || action == kReact) {
+#ifdef MSGA_HAVE_MESSAGES
+        if (window())
+            screens::EmojiPicker::show(
+                *window(), {at.x, at.y, 0, 0}, ctx,
+                [&ctx, conv, ts](const std::string &name) { ctx.backend.react(conv, ts, name, true); }
+            );
+#endif
+    } else if (action == MessageRow::Forward || action == kForward) {
+        if (ctx.forwardMessage)
+            ctx.forwardMessage(conv, ts, {});
+    } else if (action == MessageRow::Save || action == kSave || action == kUnsave) {
+        if (ctx.backend.capabilities().messageReminders)
+            ctx.backend.setSaved(conv, ts, !ctx.store().findSaved(conv, ts));
+    } else if (action == MessageRow::More) {
+        if (!window())
+            return;
+        std::weak_ptr<int> alive = _alive;
+        const std::string workspace = ctx.store().workspaceId;
+        Menu::popupAt(
+            *window(), at, messageMenuItems(ts),
+            [this, alive, workspace, ts, at](int id) {
+                if (!alive.expired() && _page._ctx.store().workspaceId == workspace)
+                    messageAction(ts, id, at);
+            }
+        );
+    } else if (action == kOpen) {
+        openThread();
+    } else if (action == kCopyLink) {
+        ctx.app.platform().setClipboardText(
+            ctx.store().permalink(conv, ts, ts == _item.root.ts ? 0 : _item.root.ts)
+        );
+    } else if (action == kCopyText) {
+        ctx.app.platform().setClipboardText(screens::plainText(ctx.store(), m->text, true));
+    } else if (action == kPin || action == kUnpin) {
+        ctx.backend.setPinned(conv, ts, action == kPin);
+    } else if (action == kMute || action == kUnmute) {
+        ctx.store().setThreadMuted(conv, _item.root.ts, action == kMute);
+    }
 }
 
 void ThreadsPage::Card::markRead() {

@@ -84,12 +84,19 @@ public:
 
     void showComposer(); // "Reply in thread…"
     void openThread();   // marks it read, then onOpenThread
+    // Message row hover / right-click actions, shared across root and replies.
+    enum Action { kOpen = 16, kReact, kForward, kCopyLink, kCopyText,
+                  kSave, kUnsave, kPin, kUnpin, kMute, kUnmute };
+    std::vector<ui::MenuItem> messageMenuItems(model::Ts ts) const;
     // Store changes in this thread (a reply arrived, was confirmed, went).
     void onChange(const model::Change &ch);
 
 private:
     void markRead();
     void rebuildReplies();
+    const model::Message *message(model::Ts ts) const;
+    void messageAction(model::Ts ts, int action, ui::PointF at);
+    std::shared_ptr<int> _alive = std::make_shared<int>(0);
 
     ThreadsPage                   &_page;
     model::Backend::FollowedThread _item;
