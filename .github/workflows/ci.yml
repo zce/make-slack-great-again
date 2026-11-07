@@ -25,8 +25,8 @@ jobs:
           - runner: ubuntu-24.04
             compiler: gcc
             artifact: true
-          # Compile every PR with Clang; run its full tests on master/manual CI.
-          - runner: ubuntu-26.04
+          # Keep the OS baseline fixed so GCC/Clang differences are isolated.
+          - runner: ubuntu-24.04
             compiler: clang
             artifact: false
     runs-on: ${{ matrix.runner }}
@@ -134,6 +134,82 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: msga-linux-x86_64-release
+          path: release-dist/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+
+  windows:
+    name: Windows x86_64 / MinGW
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      # MSYS2 tools expect LF in checked-out source files.
+      - name: Configure Git line endings
+        run: git config --global core.autocrlf input
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up MSYS2
+        id: msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: MINGW64
+          update: true
+          suppress-deprecation-warnings: msystem-mingw64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-python
+      - name: Build Windows release executable
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\release.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package and checksum
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'build-release\msga.exe'
+          if (-not (Test-Path $binary -PathType Leaf)) {
+            throw "Windows release executable not found: $binary"
+          }
+
+          # A release must not depend on DLLs shipped by the MSYS2 toolchain.
+          $objdump = Join-Path $env:MSYS2_ROOT 'mingw64\bin\objdump.exe'
+          $imports = & $objdump -p $binary
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not inspect Windows executable imports.'
+          }
+          $runtimeDlls = @($imports | Select-String -Pattern '^\s*DLL Name:\s*(libgcc|libstdc\+\+|libwinpthread|libatomic|libgomp)' -CaseSensitive:$false)
+          if ($runtimeDlls.Count -gt 0) {
+            $names = ($runtimeDlls | ForEach-Object { $_.Line.Trim() }) -join ', '
+            throw "Windows release depends on MinGW runtime DLLs: $names"
+          }
+
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'release-dist'
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
+          $asset = 'msga-windows-x86_64.exe'
+          $packagedBinary = Join-Path $dist $asset
+          Copy-Item $binary $packagedBinary
+          $hash = (Get-FileHash -Path $packagedBinary -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText(
+            (Join-Path $dist 'SHA256SUMS'),
+            "$hash  $asset`n",
+            [Text.Encoding]::ASCII
+          )
+      - name: Upload production artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msga-windows-x86_64-release
           path: release-dist/
           compression-level: 0
           if-no-files-found: error

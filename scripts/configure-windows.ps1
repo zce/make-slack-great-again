@@ -6,8 +6,8 @@
 # or $env:MSYS2_ROOT):
 #   powershell -ExecutionPolicy Bypass -File scripts\configure-windows.ps1
 #
-# The shipped Windows release is cross-compiled on Linux in Docker
-# (scripts/release-windows.sh); scripts\release.ps1 builds the same exe here.
+# The fork's Windows release is built natively by GitHub Actions with
+# scripts\release.ps1; run the same script locally to reproduce that build.
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir

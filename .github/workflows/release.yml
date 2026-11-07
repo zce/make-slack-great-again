@@ -123,20 +123,35 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Verified successful CI run $run_id for $GITHUB_SHA"
 
-      - name: Download production binary from validated CI
+      - name: Download Linux production binary from validated CI
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: msga-linux-x86_64-release
-          path: dist
+          path: dist/linux
+          run-id: ${{ steps.verify.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download Windows production binary from validated CI
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: msga-windows-x86_64-release
+          path: dist/windows
           run-id: ${{ steps.verify.outputs.run_id }}
           github-token: ${{ github.token }}
 
       - name: Verify checksums
         run: |
           set -euo pipefail
+          (cd dist/linux && sha256sum --check SHA256SUMS)
+          (cd dist/windows && sha256sum --check SHA256SUMS)
+          test -s dist/linux/msga-linux-x86_64
+          test -s dist/linux/DEPENDENCIES.txt
+          test -s dist/windows/msga-windows-x86_64.exe
+          cp dist/linux/msga-linux-x86_64 dist/msga-linux-x86_64
+          cp dist/windows/msga-windows-x86_64.exe dist/msga-windows-x86_64.exe
+          (cd dist && sha256sum msga-linux-x86_64 msga-windows-x86_64.exe > SHA256SUMS)
           (cd dist && sha256sum --check SHA256SUMS)
-          test -s dist/msga-linux-x86_64
-          test -s dist/DEPENDENCIES.txt
+          rm dist/linux/SHA256SUMS dist/windows/SHA256SUMS
           chmod +x dist/msga-linux-x86_64
 
       - name: Publish versioned GitHub Release
@@ -147,15 +162,21 @@ jobs:
           CI_RUN_ID: ${{ steps.verify.outputs.run_id }}
         run: |
           set -euo pipefail
-          notes="Verified fork build from master (commit \`${GITHUB_SHA}\`, CI run ${CI_RUN_ID}). Linux x86_64 dynamically linked binary; upstream in-app updater disabled. See README.md for platform and runtime guidance; the Linux dependency list is attached as DEPENDENCIES.txt."
+          notes="Verified fork builds from master (commit \`${GITHUB_SHA}\`, CI run ${CI_RUN_ID}). Assets: Linux x86_64 dynamically linked binary and Windows x86_64 statically linked MinGW executable. Upstream in-app updater disabled. See README.md for platform and runtime guidance; the Linux dependency list is attached as DEPENDENCIES.txt."
+          assets=(
+            dist/SHA256SUMS
+            dist/linux/DEPENDENCIES.txt
+            dist/msga-linux-x86_64
+            dist/msga-windows-x86_64.exe
+          )
           if [[ "$TAG" == *-rc.* ]]; then
-            gh release create "$TAG" dist/* \
+            gh release create "$TAG" "${assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "MSGA $TAG" \
               --notes "$notes" \
               --prerelease --latest=false
           else
-            gh release create "$TAG" dist/* \
+            gh release create "$TAG" "${assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "MSGA $TAG" \
               --notes "$notes" \

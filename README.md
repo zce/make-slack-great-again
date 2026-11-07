@@ -75,13 +75,13 @@ Implementation: [#5](https://github.com/zce/make-slack-great-again/pull/5), [#7]
 ### Independent CI and releases
 
 - Maintains a fork-specific SemVer release sequence independently of upstream's application version.
-- CI builds with GCC and Clang, runs the test suite, and publishes separate PR test artifacts and production build artifacts.
-- Public releases are manually triggered and can only publish the production artifact from a successful CI run for the exact selected `master` commit; checksums are verified before publishing.
+- CI builds Linux with GCC and Clang and builds the Windows x86_64 production executable with MSYS2/MinGW. The Linux jobs run the test suite; the Windows job validates the portable release build and checks that it has no MinGW runtime DLL dependency.
+- Public releases are manually triggered and publish the Linux and Windows production artifacts from a successful CI run for the exact selected `master` commit; checksums are verified before publishing.
 - The upstream in-app updater is disabled so it cannot replace the fork build.
 
-Fork releases currently provide **Linux x86_64** binaries. macOS and Windows packages shown by upstream are not fork releases.
+Fork releases provide **Linux x86_64** and **Windows x86_64** binaries. macOS packages shown by upstream are not fork releases.
 
-Implementation: [#1](https://github.com/zce/make-slack-great-again/pull/1), [#17](https://github.com/zce/make-slack-great-again/pull/17), [#23](https://github.com/zce/make-slack-great-again/pull/23).
+Implementation: [#1](https://github.com/zce/make-slack-great-again/pull/1), [#17](https://github.com/zce/make-slack-great-again/pull/17), [#23](https://github.com/zce/make-slack-great-again/pull/23), [#32](https://github.com/zce/make-slack-great-again/pull/32).
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
 ![C++](https://img.shields.io/badge/language-C%2B%2B20-00599C?logo=cplusplus&logoColor=white)
@@ -99,7 +99,12 @@ Implementation: [#1](https://github.com/zce/make-slack-great-again/pull/1), [#17
 
 Stable fork versions are published intentionally at [GitHub Releases](https://github.com/zce/make-slack-great-again/releases), using independent `vMAJOR.MINOR.PATCH` version tags. PR test builds are available as downloadable **Actions artifacts** on the associated PR's CI run; they are not formal releases. See [Maintaining this fork](#maintaining-this-fork) for the release process.
 
-Linux x86_64 builds are **dynamically linked** against Ubuntu 24.04 libraries rather than being fully static-musl builds. Windows and macOS packages listed upstream are not fork builds. The upstream in-app updater is disabled so it cannot replace our custom version; install new fork builds from this repository's GitHub Releases.
+The existing `v0.1.0` release predates Windows support and remains Linux-only. Subsequent releases from this pipeline provide:
+
+- **Linux x86_64:** `msga-linux-x86_64`, dynamically linked against Ubuntu 24.04 libraries (not a static-musl build).
+- **Windows x86_64:** `msga-windows-x86_64.exe`, a portable single-file executable built with MinGW and statically linked to its GCC runtime. No installer is provided.
+
+`SHA256SUMS` covers both binaries; `DEPENDENCIES.txt` lists the Linux shared-library requirements. macOS packages shown by upstream are not fork builds. The upstream in-app updater is disabled so it cannot replace our custom version; install new fork builds from this repository's GitHub Releases.
 
 ## Connecting to Slack
 
@@ -161,7 +166,7 @@ When started from a desktop launcher, MSGA inherits the desktop session's enviro
 
 - **No Slack desktop app needed.** msga signs in through your browser, so the Electron app doesn't have to be installed to hold a session.
 - **Images where you expect them.** Images, animated GIFs and custom emoji are drawn in the window on every platform, whatever your terminal supports.
-- **Even smaller.** 4.3 MB on Linux, 3.8 MB on Windows, a 2.2 MB DMG on macOS. One file each.
+- **Compact native builds.** The fork publishes a native Linux executable and a single-file Windows executable without bundling an Electron runtime.
 
 The full side-by-side is at **[slk vs msga](https://msga.app/blog/slk-vs-msga/)**.
 
@@ -260,9 +265,9 @@ This section is the source of truth for fork-specific development, upstream sync
 
 The `.github/workflows/ci.yml` workflow runs on pull requests, pushes to `master` and manual dispatches:
 
-- **Pull requests:** Ubuntu 24.04/GCC builds and runs the full test suite; Ubuntu 26.04/Clang performs a compile check. The GCC job uploads a test-enabled Linux executable for manual testing (14-day retention). This is not a production release binary.
-- **Master pushes and manual runs:** both compiler jobs run the full test suite. CTest currently starts with two workers; tests sharing global resources must declare `RESOURCE_LOCK` or `RUN_SERIAL`.
-- **Successful master pushes:** the GCC job makes a separate production build with tests, demo and upstream self-update disabled. It uploads the dynamically linked Linux x86_64 executable, SHA256 checksum and `DEPENDENCIES.txt` (30-day retention).
+- **Pull requests:** Ubuntu 24.04/GCC builds and runs the full test suite; Ubuntu 24.04/Clang performs a compile check. The GCC job uploads a test-enabled Linux executable for manual testing (14-day retention). The Windows x86_64/MinGW job builds the portable release executable and verifies that it has no MinGW runtime DLL dependencies; Windows CTest is not run.
+- **Master pushes and manual runs:** both Linux compiler jobs run the full test suite. CTest currently starts with two workers; tests sharing global resources must declare `RESOURCE_LOCK` or `RUN_SERIAL`. The Windows job also builds and validates the portable executable.
+- **Successful master pushes:** the GCC job makes a separate production build with tests, demo and upstream self-update disabled, then uploads the dynamically linked Linux x86_64 executable, SHA256 checksum and `DEPENDENCIES.txt`. The Windows job uploads `msga-windows-x86_64.exe` with its SHA256 checksum. Both production artifacts have 30-day retention.
 - Actions are pinned to reviewed commit SHAs. Keep PR test artifacts and production release artifacts distinct.
 
 ### Releases
@@ -273,13 +278,19 @@ Public fork releases are **manual**, not an automatic side effect of merging a P
 gh workflow run release.yml --ref master -f version=0.1.0
 ```
 
-The optional `ci_run_id` input is an advanced override. The release workflow waits up to **20 minutes** for the successful push-triggered CI run for the exact selected `master` commit. It validates the run's branch, repository and commit, downloads that run's production artifact, verifies its SHA256 checksum and publishes it **without rebuilding**. If CI fails or does not finish within the wait window, no release is published. Existing tags and releases are never silently overwritten.
+The optional `ci_run_id` input is an advanced override. The release workflow waits up to **20 minutes** for the successful push-triggered CI run for the exact selected `master` commit. It validates the run's branch, repository and commit, downloads both platform production artifacts from that run, verifies their SHA256 checksums, combines them into one release-level `SHA256SUMS`, and publishes them **without rebuilding**. If CI fails or does not finish within the wait window, no release is published. Existing tags and releases are never silently overwritten.
 
 Fork release versions use an independent, monotonically increasing **SemVer** sequence (`v0.1.0`, `v0.1.1`, `v0.2.0`, etc.). A version such as `v0.2.0-rc.1` is published as a pre-release; stable releases are marked **Latest**. The upstream integer `MSGA_VERSION` in `version.cmake` is retained for runtime compatibility and is **not** the fork release number. Do not change it just to publish a fork release; historical `v44-zce.*` tags remain intact.
 
-The current fork release workflow publishes **Linux x86_64 only**. The binary is dynamically linked against Ubuntu 24.04 system libraries rather than built as a static-musl executable. Check the attached `DEPENDENCIES.txt` when evaluating runtime compatibility on another distribution. macOS and Windows packages listed by upstream are not fork releases.
+The fork release workflow publishes:
 
-The upstream in-app updater must remain disabled: it downloads from `msga.app` and could replace the customized fork build. CI and release builds explicitly set `MSGA_SELF_UPDATE=OFF`. Install fork updates from this repository's [GitHub Releases](https://github.com/zce/make-slack-great-again/releases). The release workflow requires `actions: read` to download the validated CI artifact and `contents: write` to publish tags and releases.
+- **Linux x86_64:** `msga-linux-x86_64`, dynamically linked against Ubuntu 24.04 system libraries rather than built as a static-musl executable. Check the attached `DEPENDENCIES.txt` when evaluating runtime compatibility on another distribution.
+- **Windows x86_64:** `msga-windows-x86_64.exe`, a portable single-file executable built with MSYS2/MinGW and statically linked to its GCC runtime. The release build is checked for MinGW runtime DLL dependencies. No installer or code signing is produced.
+- **macOS:** not currently published by this fork's release workflow; upstream macOS packages are not fork releases.
+
+The existing `v0.1.0` release predates Windows support and remains Linux-only. Subsequent releases from the updated pipeline include Windows.
+
+The upstream in-app updater must remain disabled: it downloads from `msga.app` and could replace the customized fork build. CI and release builds explicitly set `MSGA_SELF_UPDATE=OFF`. Install fork updates from this repository's [GitHub Releases](https://github.com/zce/make-slack-great-again/releases). The release workflow requires `actions: read` to download the validated CI artifacts and `contents: write` to publish tags and releases.
 
 ### Contribution notes
 

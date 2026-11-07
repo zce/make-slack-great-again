@@ -21,6 +21,12 @@ if(APPLE)
     target_link_libraries(msga_app_spell PRIVATE "-framework AppKit")
 elseif(WIN32)
     target_sources(msga_app_spell PRIVATE backend_win.cpp)
+    # spellcheck.h exposes its COM interfaces only for Windows 8+ targets.
+    # Match the Win32 backend's Windows 10 API baseline (src/win32/win32.cmake).
+    target_compile_definitions(msga_app_spell PRIVATE
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
     target_link_libraries(msga_app_spell PRIVATE ole32)
 else()
     # Only this branch compiles Hunspell; size-optimised because spell() takes about a

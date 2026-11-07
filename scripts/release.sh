@@ -4,11 +4,8 @@
 # measures. Prefers clang (the toolchain the releases ship with) when CC/CXX
 # aren't set. Windows: scripts\release.ps1.
 #
-# The shipped artifacts come from the release scripts, into dist/:
-#   scripts/release-linux-static.sh   static musl binary (Docker)
-#   scripts/release-windows.sh        static .exe, cross-compiled (Docker)
-#   scripts/release-mac.sh            DMG, on a Mac (release-mac-remote.sh from here)
-#   scripts/publish-release.sh        uploads dist/
+# Public release artifacts are assembled by .github/workflows/ci.yml and
+# .github/workflows/release.yml from the verified Linux and Windows CI builds.
 # Usage:
 #   scripts/release.sh         # MinSizeRel, stripped, plus the size report
 #
