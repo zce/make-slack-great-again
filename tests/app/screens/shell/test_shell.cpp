@@ -454,7 +454,7 @@ TEST("thread: Reply in thread from the main hover toolbar focuses the reply comp
     int i = -1;
     for (size_t j = 0; j < messages->items().size(); ++j)
         if (messages->items()[j].ts == root &&
-            messages->items()[j].kind == screens::Kind::Message) {
+            messages->items()[j].kind == screens::MessageList::ItemKind::Message) {
             i = int(j);
             break;
         }
