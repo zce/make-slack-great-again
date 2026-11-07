@@ -2527,12 +2527,12 @@ msgid "Log in to workspace"
 msgstr "ワークスペースにログイン"
 
 #: src/app/screens/shell/shell.cpp
-msgid "msga"
-msgstr "msga"
-
-#: src/app/screens/shell/shell.cpp
 msgid "Refresh"
 msgstr ""
+
+#: src/app/screens/shell/shell.cpp
+msgid "msga"
+msgstr "msga"
 
 #: src/app/screens/shell/shell.cpp src/app/screens/shell/shortcuts.cpp
 msgid "Search"

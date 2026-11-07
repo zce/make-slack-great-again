@@ -2,11 +2,10 @@
 // together with their optimistic Store updates.
 //
 // Every change lands in the Store first and the Web API call follows; a
-// definitive rejection puts the old state back. A transport failure says
-// nothing about whether a write landed, so it never rolls back — except for
-// a send, which reconciles: Slack has no idempotency key, so a post that may
-// or may not have arrived is looked for in recent history before it is ever
-// posted again (a blind retransmit would duplicate the message).
+// definitive rejection puts the old state back. For messages, a transport
+// failure may have been accepted by Slack: correlate a unique client_msg_id
+// with history, but NEVER treat absence in a page as proof it was not sent.
+// Unconfirmed posts remain in the Store and are never resent automatically.
 #include "app/model/image_size.h"
 #include "app/model/jobs.h"
 #include "app/model/timers.h"
@@ -34,12 +33,13 @@ using model::Ts;
 namespace {
 
 constexpr int kUploadScans     = 6; // history scans for a finished upload
+constexpr int kSendScans       = 2; // bounded confirmation probes, no re-post
 constexpr int kUploadTimeoutMs = 300000;
 
 // The request may have reached Slack or not: a transport failure or a rate
 // limit. Anything else is Slack's own verdict.
 bool transient(const std::string &e) {
-    return isTransportError(e) || e == "ratelimited";
+    return isTransportError(e) || isTransientSlackError(e) || e == "fatal_error";
 }
 
 void addParam(std::string &form, std::string_view k, std::string_view v) {
@@ -48,13 +48,6 @@ void addParam(std::string &form, std::string_view k, std::string_view v) {
     form += net::percentEncode(k);
     form += '=';
     form += net::percentEncode(v);
-}
-
-// Slack entity-escapes bare & < > in stored text; unescape both sides so a
-// sent text compares equal to its stored form.
-std::string unescaped(std::string_view t) {
-    const std::string out = mrkdwn::decodeEntities(t);
-    return std::string(str::trim(out));
 }
 
 // The pending copy's file card, from the local file (images preview
@@ -194,10 +187,11 @@ struct SlackBackend::Write {
         std::string              text;     // exactly what chat.postMessage is given
         std::string              blocks;   // its Block Kit blocks (JSON), "" = none
         std::string              oldest;   // the reconcile scan's exclusive lower bound
+        std::string              id;       // client_msg_id shared with Slack's echo
+        std::string              lastError;
         std::vector<std::string> fileIds;  // uploads: what the shared message carries
         bool                     broadcast  = false;
         bool                     withFiles  = false; // an upload (msga: "Upload failed")
-        bool                     awaitShare = false; // an upload's done waits for its ts
         bool                     undone     = false; // taken back while in flight (undo send)
         int                      attempts   = 0;
         Ts                       server     = 0; // the confirmed message's ts
@@ -382,6 +376,7 @@ struct SlackBackend::Write {
         st->thread    = thread;
         st->broadcast = broadcast && thread;
         st->done      = std::move(done);
+        st->id        = crypto::uuid4();
         if (conv >= store().conversationCount()) {
             post([st] { st->finish(false, "channel_not_found"); });
             return nullptr;
@@ -398,6 +393,9 @@ struct SlackBackend::Write {
         m.user           = store().me;
         m.text           = text;
         m.pending        = true;
+        m.delivery       = model::DeliveryState::Sending;
+        m.sendId         = st->id;
+        m.extras().sendBroadcast = st->broadcast;
         if (st->broadcast) // the subtype the server gives it, so the channel shows it too
             m.extras().subtype = "thread_broadcast";
         st->text = std::move(text);
@@ -410,6 +408,8 @@ struct SlackBackend::Write {
         std::string form;
         addParam(form, "channel", b.convId(st->conv));
         addParam(form, "text", st->text);
+        if (!st->id.empty())
+            addParam(form, "client_msg_id", st->id);
         if (!st->blocks.empty())
             addParam(form, "blocks", st->blocks);
         if (st->thread)
@@ -426,6 +426,10 @@ struct SlackBackend::Write {
                     model::Message    m = mapjson::toMessage(r["message"], store());
                     if (!m.ts)
                         m.ts = model::parseTs(r["ts"].str());
+                    if (!m.ts) {
+                        fail(st, "missing_message_ts", true);
+                        return;
+                    }
                     confirm(st, std::move(m));
                 } else if (err != "cancelled") {
                     retryOrFail(st, err);
@@ -435,15 +439,21 @@ struct SlackBackend::Write {
     }
 
     void retryOrFail(SendPtr st, const std::string &err) {
-        if (!transient(err))
+        if (st->lastError.empty() && !transient(err))
             return fail(st, err);
+        if (st->lastError.empty())
+            st->lastError = err;
+        // A 5xx, timeout or dropped response could follow a successful post.
+        // History reads are safe; another chat.postMessage is not.
+        if (st->id.empty() || st->attempts >= kSendScans)
+            return fail(st, st->lastError, true);
         const int delay = retryBackoffMs(st->attempts++);
-        LOG_INFO("slack", "send: %s, reconciling in %d ms", err.c_str(), delay);
+        LOG_INFO("slack", "send: %s, checking delivery in %d ms", err.c_str(), delay);
         later(delay, [this, st] { reconcile(st); });
     }
 
-    // Was the lost post delivered after all? Own author + same text after
-    // the anchor: confirm it; absent: safe to post again.
+    // Only an exact client_msg_id is evidence that this request was accepted.
+    // No hit can mean pagination, indexing lag, or a Slack reply without ids.
     void reconcile(SendPtr st) {
         std::string form;
         addParam(form, "channel", b.convId(st->conv));
@@ -457,21 +467,16 @@ struct SlackBackend::Write {
             [this, st](const json::Document &doc, const std::string &err) {
                 if (err == "cancelled")
                     return;
-                if (!err.empty())
-                    return retryOrFail(st, err);
-                const std::string want = unescaped(st->text);
-                for (json::Value o : doc.root()["messages"]) {
-                    const Ts ts = model::parseTs(o["ts"].str());
-                    if (st->thread && ts == st->thread)
-                        continue; // the root, not a reply
-                    if (o["user"].str() != meId() || unescaped(o["text"].str()) != want)
-                        continue;
-                    LOG_INFO(
-                        "slack", "send: %s was delivered after all", model::formatTs(ts).c_str()
-                    );
-                    return confirm(st, mapjson::toMessage(o, store()));
-                }
-                postAttempt(st);
+                if (err.empty())
+                    for (json::Value o : doc.root()["messages"]) {
+                        const Ts ts = model::parseTs(o["ts"].str());
+                        if (st->thread && ts == st->thread)
+                            continue;
+                        if (ts && o["user"].str() == meId() &&
+                            o["client_msg_id"].str() == st->id)
+                            return confirm(st, mapjson::toMessage(o, store()));
+                    }
+                retryOrFail(st, st->lastError);
             }
         );
     }
@@ -480,12 +485,15 @@ struct SlackBackend::Write {
 
     // The server's copy replaces the pending one.
     void confirm(SendPtr st, model::Message m) {
+        if (!m.ts)
+            return fail(st, "missing_message_ts", true);
         forget(st);
         if (m.user == model::kNoUser)
             m.user = store().me;
         if (!m.threadTs && st->thread)
             m.threadTs = st->thread;
-        m.pending = false;
+        m.pending  = false;
+        m.delivery = model::DeliveryState::Confirmed;
         if (st->undone) { // undo send while in flight: the server copy goes too
             if (m.ts)
                 deleteMessage(st->conv, m.ts, nullptr);
@@ -506,18 +514,23 @@ struct SlackBackend::Write {
         st->finish(true, {});
     }
 
-    void fail(SendPtr st, const std::string &err) {
+    void fail(SendPtr st, const std::string &err, bool uncertain = false) {
         forget(st);
-        LOG_WARN("slack", "send failed: %s", err.c_str());
+        LOG_WARN("slack", "send %s: %s", uncertain ? "unconfirmed" : "failed", err.c_str());
         if (!st->undone) {
-            store().removeMessage(st->conv, st->local);
-            // A failed send: the ghost goes and the banner says why (the text
-            // is not put back in the composer).
+            store().updateMessage(st->conv, st->local, [&](model::Message &m) {
+                m.pending   = false;
+                m.delivery  = uncertain ? model::DeliveryState::Uncertain
+                                        : model::DeliveryState::Failed;
+                m.sendError = err;
+            });
             if (b.onError)
                 b.onError(
-                    st->withFiles
-                        ? i18n::arg(i18n::tr("Upload failed: %1"), err)
-                        : i18n::arg(i18n::tr("Couldn't send message: %1"), friendlySendError(err))
+                    uncertain
+                        ? "Message delivery unconfirmed. Check Slack before sending again."
+                        : st->withFiles
+                              ? i18n::arg(i18n::tr("Upload failed: %1"), err)
+                              : i18n::arg(i18n::tr("Couldn't send message: %1"), friendlySendError(err))
                 );
         }
         st->finish(false, err);
@@ -528,6 +541,7 @@ struct SlackBackend::Write {
         SendPtr                  st;
         int                      pending = 0;
         std::vector<std::string> titles; // parallel to st->fileIds
+        bool                     failed = false;
     };
 
     // The files are read on a worker (they may be large), then each goes
@@ -559,6 +573,7 @@ struct SlackBackend::Write {
                 for (Read &r : *reads) {
                     if (!r.ok) {
                         LOG_WARN("slack", "upload: cannot read %s", r.path.c_str());
+                        batch->failed = true;
                         continue;
                     }
                     ++batch->pending;
@@ -582,6 +597,7 @@ struct SlackBackend::Write {
                 const std::string url(doc.root()["upload_url"].str());
                 const std::string id(doc.root()["file_id"].str());
                 if (!err.empty() || url.empty() || id.empty()) {
+                    batch->failed = true;
                     LOG_WARN("slack", "getUploadURLExternal: %s", err.c_str());
                     return uploaded(batch);
                 }
@@ -596,6 +612,7 @@ struct SlackBackend::Write {
                         batch->st->fileIds.push_back(id);
                         batch->titles.push_back(name);
                     } else {
+                        batch->failed = true;
                         LOG_WARN("slack", "upload POST: %d %s", r.status, r.error.c_str());
                     }
                     uploaded(batch);
@@ -608,7 +625,7 @@ struct SlackBackend::Write {
         if (--batch->pending > 0)
             return;
         SendPtr st = batch->st;
-        if (st->fileIds.empty())
+        if (batch->failed || st->fileIds.empty())
             return fail(st, "file upload failed");
         json::Writer files;
         files.beginArray();
@@ -635,11 +652,10 @@ struct SlackBackend::Write {
             [this, st](const json::Document &, const std::string &err) {
                 if (err == "cancelled")
                     return;
-                if (!err.empty())
+                if (!err.empty() && !transient(err))
                     return fail(st, err);
-                // The answer has no message ts: find the share in history.
-                if (!st->awaitShare)
-                    st->finish(true, {});
+                // A lost completeUpload response may follow a successful share.
+                // Even a successful answer has no message ts: scan the share.
                 scanUpload(st);
             }
         );
@@ -673,12 +689,9 @@ struct SlackBackend::Write {
                     later(retryBackoffMs(st->attempts++), [this, st] { scanUpload(st); });
                     return;
                 }
-                // Never seen: drop the ghost; history brings the real one.
-                LOG_WARN("slack", "upload: shared message not found in history");
-                st->finish(false, "share_not_found"); // shared, its ts unknown
-                forget(st);
-                if (!st->undone)
-                    store().removeMessage(st->conv, st->local);
+                // Absence from history cannot establish that sharing failed.
+                LOG_WARN("slack", "upload: shared message not confirmed in history");
+                fail(st, "share_not_confirmed", true);
             }
         );
     }
@@ -885,6 +898,9 @@ void SlackBackend::sendBlocks(
 ) {
     if (auto st = _write->begin(conv, std::move(text), threadTs, broadcast, std::move(done))) {
         st->blocks = std::move(blocks);
+        _store.updateMessage(conv, st->local, [st](model::Message &m) {
+            m.extras().sendBlocks = st->blocks;
+        });
         _write->postAttempt(std::move(st));
     }
 }
@@ -904,6 +920,37 @@ void SlackBackend::sendWithFiles(
             m.extras().files.push_back(localFile(p));
     });
     _write->upload(std::move(st), files);
+}
+
+bool SlackBackend::retryFailedMessage(ConvRef conv, Ts local) {
+    const model::Message *m = _store.findMessage(conv, local);
+    if (!m || m->delivery != model::DeliveryState::Failed)
+        return false;
+    const std::string text = m->text;
+    const Ts thread = m->threadTs;
+    const bool broadcast = m->extra && m->extra->sendBroadcast;
+    const std::string blocks = m->extra ? m->extra->sendBlocks : std::string();
+    std::vector<std::string> paths;
+    for (const model::File &f : m->files()) {
+        if (!str::startsWith(f.id, "pending:") || !file::exists(f.path))
+            return false;
+        paths.push_back(f.path);
+    }
+    // The standard send path creates the replacement before this record is
+    // removed. Uncertain deliveries cannot be retried automatically.
+    const size_t before = _write->sends.size();
+    if (!paths.empty())
+        sendWithFiles(conv, text, thread, std::move(paths), nullptr);
+    else if (!blocks.empty())
+        sendBlocks(conv, text, blocks, thread, broadcast, nullptr);
+    else if (broadcast)
+        sendBroadcast(conv, text, thread, nullptr);
+    else
+        send(conv, text, thread, nullptr);
+    if (_write->sends.size() == before)
+        return false;
+    _store.removeMessage(conv, local);
+    return true;
 }
 
 void SlackBackend::edit(ConvRef conv, Ts ts, std::string text) {

@@ -124,6 +124,7 @@ public:
     // "Edit message" on one's own message; unset = no Edit item. The shell's
     // composer handles the editing itself.
     std::function<void(ConvRef, Ts)> onEdit;
+    std::function<void(ConvRef, Ts)> onRecover;
 
     ui::VirtualList &list() { return *_list; }
 
@@ -193,6 +194,8 @@ public:
         kCopyImage,
         kPreview,    // CSV files; shown disabled (no table viewer yet)
         kDeleteFile, // "Delete image…" / "Delete file…"
+        kRetryFailed = 50,
+        kRecoverOutgoing,
         kRemindPreset = 40, // + 0…4: in 20 minutes … next week
         kRemindCustom = 45,
     };

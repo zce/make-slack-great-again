@@ -694,6 +694,7 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
     m.threadTs    = model::parseTs(o["thread_ts"].str());
     m.latestReply = model::parseTs(o["latest_reply"].str());
     m.replyCount  = uint32_t(o["reply_count"].integer());
+    m.sendId      = owned(o["client_msg_id"]);
     for (const Value u : o["reply_users"])
         m.replyUsers.push_back(store.internUser(u.str()));
     // A bot post without a user is authored by its bot id.

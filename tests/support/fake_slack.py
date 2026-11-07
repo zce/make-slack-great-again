@@ -123,6 +123,8 @@ def post_message(form):
            'ts': next_ts()}
     if form.get('thread_ts'):
         msg['thread_ts'] = form['thread_ts']
+    if form.get('client_msg_id'):
+        msg['client_msg_id'] = form['client_msg_id']
     if form.get('metadata'):
         msg['metadata'] = json.loads(form['metadata'])
     state['history'].setdefault(ch, []).append(msg)

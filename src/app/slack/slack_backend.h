@@ -100,6 +100,7 @@ public:
         std::vector<std::string> files,
         Done                     done
     ) override;
+    bool retryFailedMessage(model::ConvRef conv, model::Ts local) override;
     void edit(model::ConvRef conv, model::Ts ts, std::string text) override;
     void remove(model::ConvRef conv, model::Ts ts) override;
     void react(model::ConvRef conv, model::Ts ts, std::string_view name, bool add) override;

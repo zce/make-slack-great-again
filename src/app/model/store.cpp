@@ -121,6 +121,9 @@ Message Message::clone() const {
     m.edited      = edited;
     m.pinned      = pinned;
     m.pending     = pending;
+    m.delivery    = delivery;
+    m.sendId      = sendId;
+    m.sendError   = sendError;
     m.replyUsers  = replyUsers;
     m.reactions   = reactions;
     if (extra)
@@ -141,6 +144,7 @@ bool Message::operator==(const Message &o) const {
     if (ts != o.ts || threadTs != o.threadTs || latestReply != o.latestReply || user != o.user ||
         pinnedBy != o.pinnedBy || replyCount != o.replyCount || edited != o.edited ||
         pinned != o.pinned || saved != o.saved || pending != o.pending || text != o.text ||
+        delivery != o.delivery || sendId != o.sendId || sendError != o.sendError ||
         replyUsers != o.replyUsers || reactions != o.reactions)
         return false;
     // No extras and empty extras read the same (files() etc. are empty).
@@ -576,6 +580,29 @@ size_t Store::indexOf(ConvRef ref, Ts ts, Ts thread) const {
 void Store::addPage(ConvRef ref, std::vector<Message> page) {
     if (ref >= _convs.size() || page.empty())
         return;
+    // A page after restart may confirm a previously unacknowledged local
+    // message. Match the request ID, never just the text: users can send
+    // identical consecutive messages intentionally.
+    for (const Message &remote : page) {
+        if (remote.sendId.empty() || remote.delivery != DeliveryState::Confirmed)
+            continue;
+        const Conversation &current = _convs[ref];
+        const Ts root = remote.isReply() ? remote.threadTs : 0;
+        const std::vector<Message> *local =
+            root ? replies(ref, root) : &current.messages;
+        if (!local)
+            continue;
+        Ts matched = 0;
+        for (const Message &candidate : *local)
+            if (candidate.delivery != DeliveryState::Confirmed &&
+                candidate.delivery != DeliveryState::Sending &&
+                candidate.sendId == remote.sendId) {
+                matched = candidate.ts;
+                break;
+            }
+        if (matched)
+            removeMessage(ref, matched);
+    }
     Conversation &c      = _convs[ref];
     const Ts      thread = page.front().isReply() ? page.front().threadTs : 0;
     auto         &list   = *listFor(c, thread, true);

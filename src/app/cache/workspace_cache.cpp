@@ -361,8 +361,14 @@ void fields(IO &io, model::Message &m) {
         io.num(x.huddle.startSec);
         io.num(x.huddle.endSec);
         io.flags({&x.huddle.ended});
+        io.str(x.sendBlocks);
+        io.flags({&x.sendBroadcast});
         io.close();
     }
+    // Appended for backward-compatible reads of existing message cache records.
+    io.byte(reinterpret_cast<uint8_t &>(m.delivery));
+    io.str(m.sendId);
+    io.str(m.sendError);
 }
 
 void fields(IO &io, model::Conversation &c) {
@@ -723,9 +729,32 @@ Ts WorkspaceCache::loadMessages(ConvRef c) {
         fields(io, m);
         if (m.ts <= 0)
             continue;
+        if (m.delivery == model::DeliveryState::Sending) {
+            // After a crash we cannot know whether Slack accepted the write.
+            m.delivery = model::DeliveryState::Uncertain;
+            m.sendError = "Application closed before delivery was confirmed";
+        }
+        m.pending = false;
         if (m.isReply())
-            m.threadTs = 0; // a top-level list: a page must not mix in replies
+            m.threadTs = 0; // tolerate malformed legacy top-level cache records
         page.push_back(std::move(m));
+    }
+    // Thread replies otherwise live only in memory. Keep local outgoing replies
+    // in the same existing per-conversation message cache, not a new queue.
+    for (const json::Value rec : doc.root()["r"]) {
+        model::Message m;
+        io.start(rec);
+        fields(io, m);
+        if (m.ts <= 0 || !m.isReply() || m.delivery == model::DeliveryState::Confirmed)
+            continue;
+        if (m.delivery == model::DeliveryState::Sending) {
+            m.delivery = model::DeliveryState::Uncertain;
+            m.sendError = "Application closed before delivery was confirmed";
+        }
+        m.pending = false;
+        std::vector<model::Message> one;
+        one.push_back(std::move(m));
+        _store.addPage(c, std::move(one));
     }
     if (page.empty())
         return 0;
@@ -820,7 +849,7 @@ void WorkspaceCache::onChange(const model::Change &ch) {
         break;
     }
     // A message list changed.
-    if (ch.thread == 0 && tracked(ch.conv)) {
+    if (tracked(ch.conv)) { // also persist local outgoing thread replies
         if (_msgDirty.size() <= ch.conv)
             _msgDirty.resize(ch.conv + 1, 0);
         _msgDirty[ch.conv] = 1;
@@ -1013,17 +1042,17 @@ void WorkspaceCache::writePending() {
     for (ConvRef c = 0; c < msgs.size(); ++c) {
         if (!msgs[c] || c >= s.conversationCount())
             continue;
-        // The newest kMaxMessages confirmed ones (a pending copy must not
-        // come back as a ghost after a restart).
+        // Confirmed history plus local outgoing copies. A sending copy is
+        // restored as Uncertain after restart, never silently resent.
         const model::Conversation          &cv = s.conversation(c);
         std::vector<const model::Message *> keep;
         bool                                older = cv.hasMoreBefore;
         for (size_t i = cv.messages.size(); i-- > 0;) {
-            if (cv.messages[i].pending)
-                continue;
-            if (keep.size() == size_t(kMaxMessages)) {
+            // Unconfirmed local copies are durable until explicit recovery.
+            if (cv.messages[i].delivery == model::DeliveryState::Confirmed &&
+                keep.size() >= size_t(kMaxMessages)) {
                 older = true;
-                break;
+                continue;
             }
             keep.push_back(&cv.messages[i]);
         }
@@ -1035,6 +1064,15 @@ void WorkspaceCache::writePending() {
             fields(io, const_cast<model::Message &>(*keep[i]));
             io.close();
         }
+        w.endArray().key("r").beginArray();
+        // Only local replies need caching: server replies are fetched normally.
+        for (const model::Thread &t : cv.threads)
+            for (const model::Message &m : t.replies)
+                if (m.delivery != model::DeliveryState::Confirmed) {
+                    io.open(0);
+                    fields(io, const_cast<model::Message &>(m));
+                    io.close();
+                }
         w.endArray().endObject();
         write(messagesFile(c).c_str(), w.take());
     }

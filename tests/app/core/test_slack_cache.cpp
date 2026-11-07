@@ -209,6 +209,73 @@ TEST("slack cache: a cold start writes it, a warm start shows it before the netw
     CHECK_STR(e.c("C1").messages[1].text, "third"); // "second" was deleted
 }
 
+TEST("slack cache: in-flight and failed outgoing copies survive restart safely") {
+    if (!haveServer())
+        return;
+    wipe();
+    const Ts inflightTs = model::parseTs("1790000000.000100");
+    const Ts failedTs = model::parseTs("1790000001.000100");
+    const Ts replyTs = model::parseTs("1790000002.000100");
+    const Ts rootTs = model::parseTs("1700000002.000000");
+    {
+        Env e;
+        REQUIRE(e.connect());
+        const ConvRef conv = e.conv("C1");
+        REQUIRE(conv != kNoConv);
+        e.be->setActiveConversation(conv, 0);
+
+        model::Message inflight;
+        inflight.ts = inflightTs;
+        inflight.user = e.store.me;
+        inflight.text = "awaiting confirmation";
+        inflight.pending = true;
+        inflight.delivery = model::DeliveryState::Sending;
+        inflight.sendId = "request-one";
+        e.store.addMessage(conv, std::move(inflight));
+
+        model::Message failed;
+        failed.ts = failedTs;
+        failed.user = e.store.me;
+        failed.text = "not sent";
+        failed.delivery = model::DeliveryState::Failed;
+        failed.sendId = "request-two";
+        failed.sendError = "not_in_channel";
+        failed.extras().sendBlocks = "[]";
+        e.store.addMessage(conv, std::move(failed));
+
+        model::Message reply;
+        reply.ts = replyTs;
+        reply.threadTs = rootTs;
+        reply.user = e.store.me;
+        reply.text = "reply delivery unknown";
+        reply.delivery = model::DeliveryState::Uncertain;
+        reply.sendId = "request-three";
+        e.store.addMessage(conv, std::move(reply));
+    }
+    {
+        Env e(false);
+        REQUIRE(e.warm);
+        const ConvRef conv = e.conv("C1");
+        REQUIRE(conv != kNoConv);
+        e.be->setActiveConversation(conv, 0);
+        const model::Message *inflight = e.store.findMessage(conv, inflightTs);
+        REQUIRE(inflight);
+        CHECK(inflight->delivery == model::DeliveryState::Uncertain);
+        CHECK(!inflight->pending);
+        CHECK_STR(inflight->sendId, "request-one");
+        const model::Message *failed = e.store.findMessage(conv, failedTs);
+        REQUIRE(failed);
+        CHECK(failed->delivery == model::DeliveryState::Failed);
+        CHECK_STR(failed->sendError, "not_in_channel");
+        CHECK_STR(failed->extra->sendBlocks, "[]");
+        const model::Message *reply = e.store.findMessage(conv, replyTs);
+        REQUIRE(reply);
+        CHECK(reply->delivery == model::DeliveryState::Uncertain);
+        CHECK(reply->threadTs == rootTs);
+        CHECK_STR(reply->sendId, "request-three");
+    }
+}
+
 TEST("slack cache: external connection state survives a warm start") {
     if (!haveServer())
         return;

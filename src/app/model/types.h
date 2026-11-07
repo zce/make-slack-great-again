@@ -205,6 +205,9 @@ struct MessageExtras {
     std::vector<Block>      blocks; // drawn instead of `text` when present (see Block)
     std::string             botId;  // Slack: the posting app's bot id (a button press names it)
     Huddle                  huddle; // subtype "huddle_thread": its room's summary
+    // Only on local outgoing copies; kept with the cached message for a faithful Retry.
+    std::string             sendBlocks;
+    bool                    sendBroadcast = false;
 
     // Out of line (store.cpp): the implicit ones would inline a dozen string
     // and vector destructors into every function that drops a message.
@@ -213,6 +216,8 @@ struct MessageExtras {
     ~MessageExtras();
     bool operator==(const MessageExtras &) const;
 };
+
+enum class DeliveryState : uint8_t { Confirmed, Sending, Failed, Uncertain };
 
 struct Message {
     Ts                    ts          = 0;
@@ -226,6 +231,9 @@ struct Message {
     bool                  pinned  = false;
     bool                  saved   = false; // in my "Save for later" list
     bool                  pending = false; // optimistic local copy while a send is in flight
+    DeliveryState         delivery = DeliveryState::Confirmed; // app-local delivery state
+    std::string           sendId;    // one client_msg_id per attempt; never a resend guarantee
+    std::string           sendError; // reason for a failed or unconfirmed attempt
     std::vector<UserRef>  replyUsers;      // roots: up to 5 participants
     std::vector<Reaction> reactions;
     std::unique_ptr<MessageExtras> extra;

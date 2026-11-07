@@ -1152,6 +1152,36 @@ Shell::Shell(
             _composer->beginEdit(ts);
     };
     _thread->panel->list().onEdit = [this](ConvRef, Ts ts) { _thread->composer->beginEdit(ts); };
+    // Recover into the existing scoped draft, preserving anything typed since.
+    auto recover = [this](Composer *composer, ConvRef c, Ts ts) {
+        if (!composer || composer->conv() != c)
+            return;
+        const model::Message *m = _ctx.store().findMessage(c, ts);
+        if (!m || m->delivery == model::DeliveryState::Confirmed ||
+            m->delivery == model::DeliveryState::Sending)
+            return;
+        const bool uncertain = m->delivery == model::DeliveryState::Uncertain;
+        if (uncertain && _ctx.backend.onError)
+            _ctx.backend.onError(
+                "Delivery unconfirmed. Check Slack before sending this text again."
+            );
+        const std::string text = m->text;
+        std::vector<std::string> files;
+        for (const model::File &f : m->files())
+            if (str::startsWith(f.id, "pending:"))
+                files.push_back(f.path);
+        composer->giveBack(text, files);
+        composer->stashNow();
+        // Uncertain records stay until manually resolved; restoring their
+        // content alone does not prove the original post failed.
+        if (!uncertain)
+            _ctx.store().removeMessage(c, ts);
+        composer->edit().focus();
+    };
+    static_cast<screens::MessageList *>(_messages)->onRecover =
+        [this, recover](ConvRef c, Ts ts) { recover(_composer, c, ts); };
+    _thread->panel->list().onRecover =
+        [this, recover](ConvRef c, Ts ts) { recover(_thread->composer, c, ts); };
 #endif
     // Slack's built-in and app slash commands must still run locally; this
     // dispatch is independent of the removed Claude Code agent UI.

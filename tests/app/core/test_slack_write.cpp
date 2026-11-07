@@ -214,7 +214,7 @@ TEST("slack write: a lost answer to a delivered post reconciles, never posts twi
     CHECK(!m->pending && e.store.conversation(e.general).messages.size() == 2);
 }
 
-TEST("slack write: a lost post that never landed is posted again once") {
+TEST("slack write: uncertain post is not retransmitted without confirmation") {
     if (!haveServer())
         return;
     Env e;
@@ -222,14 +222,38 @@ TEST("slack write: a lost post that never landed is posted again once") {
     Result r;
     e.be->send(e.general, "retry me", 0, r.cb());
     REQUIRE(pumpUntil([&] { return r.called; }, 8000));
-    CHECK(r.ok);
+    CHECK(!r.ok);
     Log log;
-    CHECK_STR(log.order(), "chat.postMessage,conversations.history,chat.postMessage");
+    CHECK(log.count("chat.postMessage") == 1);
+    CHECK(log.count("conversations.history") >= 1);
     CHECK(e.store.conversation(e.general).messages.size() == 2);
     CHECK(!e.last(e.general)->pending);
+    CHECK(e.last(e.general)->delivery == model::DeliveryState::Uncertain);
+    CHECK(!e.be->retryFailedMessage(e.general, e.last(e.general)->ts));
 }
 
-TEST("slack write: a rejected send drops the pending copy and says why") {
+TEST("slack write: identical consecutive messages reconcile by request id, not text") {
+    if (!haveServer())
+        return;
+    Env e;
+    Result first;
+    e.be->send(e.general, "same message", 0, first.cb());
+    REQUIRE(pumpUntil([&] { return first.called; }));
+    CHECK(first.ok);
+    script("chat.postMessage", R"([{"__partial":true,"__deliver":true}])");
+    Result second;
+    e.be->send(e.general, "same message", 0, second.cb());
+    REQUIRE(pumpUntil([&] { return second.called; }, 8000));
+    CHECK(second.ok);
+    Log log;
+    CHECK(log.count("chat.postMessage") == 2);
+    CHECK(log.count("conversations.history") >= 1);
+    CHECK(e.store.conversation(e.general).messages.size() == 3);
+    for (const model::Message &m : e.store.conversation(e.general).messages)
+        CHECK(m.delivery == model::DeliveryState::Confirmed);
+}
+
+TEST("slack write: rejected send remains available for explicit retry") {
     if (!haveServer())
         return;
     Env e;
@@ -240,9 +264,16 @@ TEST("slack write: a rejected send drops the pending copy and says why") {
     REQUIRE(pumpUntil([&] { return r.called; }));
     CHECK(!r.ok);
     CHECK_STR(r.err, "not_in_channel");
-    CHECK(e.store.conversation(e.general).messages.size() == 1);
-    pumpFor(200);
-    CHECK(Log().count("chat.postMessage") == 1);
+    CHECK(e.store.conversation(e.general).messages.size() == 2);
+    REQUIRE(e.last(e.general));
+    CHECK(e.last(e.general)->delivery == model::DeliveryState::Failed);
+    const Ts failed = e.last(e.general)->ts;
+    CHECK(e.be->retryFailedMessage(e.general, failed));
+    REQUIRE(pumpUntil([&] {
+        return !e.store.findMessage(e.general, failed) && Log().count("chat.postMessage") == 2;
+    }));
+    CHECK(e.store.conversation(e.general).messages.size() == 2);
+    CHECK(!e.be->retryFailedMessage(e.general, failed));
 }
 
 TEST("slack write: undo while in flight deletes the server copy when it lands") {
@@ -441,7 +472,7 @@ TEST("slack write: an upload goes URL, bytes, complete, then replaces the pendin
     REQUIRE(m);
     CHECK(!m->pending && m->ts != local);
     CHECK(e.store.conversation(e.general).messages.size() == 2);
-    // A failed upload: the ghost goes and the banner says so.
+    // A failed upload retains the ghost and files for user recovery.
     std::vector<std::string> errors;
     e.be->onError = [&](const std::string &msg) { errors.push_back(msg); };
     script("files.completeUploadExternal", R"([{"ok":false,"error":"not_in_channel"}])");
@@ -451,6 +482,9 @@ TEST("slack write: an upload goes URL, bytes, complete, then replaces the pendin
     CHECK(!bad.ok);
     REQUIRE(errors.size() == 1);
     CHECK_STR(errors[0], "Upload failed: not_in_channel");
+    REQUIRE(e.last(e.general));
+    CHECK(e.last(e.general)->delivery == model::DeliveryState::Failed);
+    CHECK(e.last(e.general)->files().size() == 1);
 }
 
 TEST("slack write: a forwarded file is downloaded with the workspace's auth, then uploaded") {
@@ -503,8 +537,9 @@ TEST("slack write: an upload of files that can't be read fails, and nothing is s
     REQUIRE(e.last(e.general) && e.last(e.general)->pending); // the pending copy, at once
     REQUIRE(pumpUntil([&] { return r.called; }));
     CHECK(!r.ok);
-    CHECK(e.store.conversation(e.general).messages.size() == 1); // the copy went
+    CHECK(e.store.conversation(e.general).messages.size() == 2); // retained copy
     CHECK(!e.last(e.general)->pending);
+    CHECK(e.last(e.general)->delivery == model::DeliveryState::Failed);
     CHECK(Log().count("files.getUploadURLExternal") == 0);
 }
 

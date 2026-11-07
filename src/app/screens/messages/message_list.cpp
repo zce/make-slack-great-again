@@ -1702,6 +1702,8 @@ constexpr ui::MenuDef kItemDefs[] = {
     {MessageList::kMuteThread, uint16_t(gfx::Icon::BellOff), N_("Mute thread"), nullptr, nullptr},
     {MessageList::kUnmuteThread, uint16_t(gfx::Icon::Bell), N_("Unmute thread"), nullptr, nullptr},
     {MessageList::kEdit, uint16_t(gfx::Icon::Edit3), N_("Edit message"), nullptr, "E"},
+    {MessageList::kRetryFailed, uint16_t(gfx::Icon::SpinUp), "Retry sending", nullptr, nullptr},
+    {MessageList::kRecoverOutgoing, uint16_t(gfx::Icon::Edit3), "Edit and resend", nullptr, nullptr},
     {MessageList::kCopyLink, uint16_t(gfx::Icon::Link), N_("Copy link"), nullptr, "L"},
     {MessageList::kCopyLinkInText,
      uint16_t(gfx::Icon::Link),
@@ -1806,6 +1808,13 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     const model::Message     *m = message(ts);
     if (!m || m->pending || isSystem(*m))
         return items;
+    if (m->delivery != model::DeliveryState::Confirmed) {
+        if (m->delivery == model::DeliveryState::Failed)
+            addItem(items, kRetryFailed);
+        addItem(items, kRecoverOutgoing, bool(onRecover));
+        addItem(items, kCopyText);
+        return items;
+    }
     const Store &st        = _ctx.store;
     const bool   mine      = m->user == st.me && m->user != model::kNoUser;
     // Delete requires ownership or workspace administration, plus backend permission.
@@ -1988,6 +1997,14 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
     case kEdit:
         if (onEdit)
             onEdit(conv, ts);
+        break;
+    case kRetryFailed:
+        if (!_ctx.backend.retryFailedMessage(conv, ts) && _ctx.backend.onError)
+            _ctx.backend.onError("Unable to retry; an attachment may no longer exist.");
+        break;
+    case kRecoverOutgoing:
+        if (onRecover)
+            onRecover(conv, ts);
         break;
     case kCopyLink:
         copy = _ctx.store().permalink(conv, ts, msg->isReply() ? msg->threadTs : 0);

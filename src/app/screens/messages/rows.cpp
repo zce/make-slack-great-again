@@ -1241,6 +1241,12 @@ void MessageRow::applyBanners(const model::Message &m, bool grouped) {
     // The banners stack above the message, before its padding.
     _pinText.clear();
     _savedText.clear();
+    if (m.delivery != model::DeliveryState::Confirmed)
+        _savedText = m.delivery == model::DeliveryState::Sending
+                         ? std::string("Sending…")
+                         : m.delivery == model::DeliveryState::Failed
+                               ? std::string("Not sent — Retry or Edit from the message menu")
+                               : std::string("Delivery uncertain — check Slack before resending");
     if (m.pinned)
         _pinText = m.pinnedBy != model::kNoUser
                        ? arg(tr("Pinned by %1"), st.user(m.pinnedBy).label())
@@ -1253,7 +1259,7 @@ void MessageRow::applyBanners(const model::Message &m, bool grouped) {
         _savedText = due <= base::nowSecs()
                          ? std::string(tr("Reminder \xE2\x80\x94 past due"))
                          : arg(tr("Reminder \xE2\x80\x94 %1"), base::formatDateTime(due));
-    else if (m.saved)
+    else if (m.saved && m.delivery == model::DeliveryState::Confirmed)
         _savedText = tr("Saved for later");
     const float banners = kBannerH * float(!_pinText.empty() + !_savedText.empty());
     style()

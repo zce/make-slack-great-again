@@ -49,6 +49,12 @@ public:
     ) {
         send(conv, std::move(text), threadTs, std::move(done));
     }
+    // User-initiated retry is only permitted for a definite rejection.
+    virtual bool retryFailedMessage(ConvRef conv, Ts local) {
+        (void)conv;
+        (void)local;
+        return false;
+    }
     virtual void markRead(ConvRef conv, Ts ts) = 0;
     // What follows, down to search(), defaults to nothing for a backend
     // without it: no-ops; openDm gives kNoConv, search finds nothing.

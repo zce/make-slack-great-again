@@ -663,7 +663,9 @@ TEST("slack features: banners — rate limits (throttled) and failed sends in wo
     e.be->send(e.conv("C1"), "hello", 0, nullptr);
     REQUIRE(pumpUntil([&] { return !e.errors.empty(); }));
     CHECK_STR(e.errors.back(), "Couldn't send message: This conversation is archived.");
-    CHECK(e.store.conversation(e.conv("C1")).messages.empty()); // the ghost is gone
+    REQUIRE(e.store.conversation(e.conv("C1")).messages.size() == 1);
+    CHECK(e.store.conversation(e.conv("C1")).messages.back().delivery ==
+          model::DeliveryState::Failed); // the user's text remains recoverable
 }
 
 TEST("slack features: a throttled users.list page waits unseen; earlier pages show at once") {

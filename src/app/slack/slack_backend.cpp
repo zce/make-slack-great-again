@@ -3212,15 +3212,23 @@ bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
         return false; // seen already (a history page, the send's own echo)
     const bool own  = s.me != kNoUser && m.user == s.me;
     const Ts   root = m.isReply() ? m.threadTs : 0;
-    if (own) {
-        // My send's echo, polled before chat.postMessage answered: its
-        // pending copy is still there and the send's confirm replaces it.
+    if (own && !m.sendId.empty()) {
+        // A client's exact request id is stronger than matching text: two
+        // consecutive identical messages are independent sends. Also retire
+        // an unconfirmed copy recovered after a restart if an echo confirms it.
         const std::vector<model::Message> *list =
             root ? s.replies(c, root) : &s.conversation(c).messages;
         if (list)
-            for (size_t i = list->size(), n = 0; i-- > 0 && n < 10; ++n)
-                if ((*list)[i].pending && (*list)[i].text == m.text)
-                    return false;
+            for (const model::Message &local : *list)
+                if (local.delivery != model::DeliveryState::Confirmed &&
+                    local.sendId == m.sendId) {
+                    // Keep an in-flight ghost for Undo and let Write::confirm
+                    // retire it when chat.postMessage answers.
+                    if (local.delivery == model::DeliveryState::Sending)
+                        return false;
+                    s.removeMessage(c, local.ts);
+                    break;
+                }
     }
     const Ts          ts      = m.ts;
     const UserRef     author  = m.user;
