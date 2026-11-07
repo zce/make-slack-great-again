@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -665,6 +666,12 @@ void emojiVertical() {
 // follows from its paints (see make_colrv1_test.py). ctest points the font
 // index at that font alone; run elsewhere, the case skips.
 void colrV1() {
+#ifdef __linux__
+    // text::init() already wrote its index; the isolated CTest environment
+    // must put it directly under XDG_CACHE_HOME/msga (no second MSGA layer).
+    if (const char *xdg = std::getenv("XDG_CACHE_HOME"); xdg && *xdg)
+        CHECK(std::filesystem::is_regular_file(std::string(xdg) + "/msga/fonts.idx"));
+#endif
     const FontKey k = fonts::fallback(0xE000, Style{});
     if (k == fonts::kNoFont || fonts::familyName(k) != "msga colrv1 test") {
         std::printf("  MSGA_NEXT_FONT_DIRS is not tests/assets/fonts; skipped\n");
