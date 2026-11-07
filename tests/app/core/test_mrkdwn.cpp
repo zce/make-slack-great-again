@@ -523,6 +523,52 @@ TEST("mrkdwn: permalink parsing edge cases") {
     CHECK_FALSE(mrkdwn::refFromToken("a/b/c").valid());
 }
 
+TEST("deep links: browser permalinks, thread roots, replies, and native aliases") {
+    using namespace mrkdwn;
+    constexpr const char *root = "1792674458.384049";
+    constexpr const char *reply = "1793818271.076489";
+    const auto httpsReply = parseMessageLink(
+        "https://magicdoor-software.slack.com/archives/C0A4GKEUGGP/"
+        "p1793818271076489?thread_ts=1792674458.384049&cid=C0A4GKEUGGP"
+    );
+    REQUIRE(httpsReply.valid());
+    CHECK_STR(httpsReply.conv, "C0A4GKEUGGP");
+    CHECK_STR(httpsReply.ts, reply);
+    CHECK_STR(httpsReply.threadTs, root);
+    CHECK_STR(parseAppLink(
+        "msga://magicdoor-software.slack.com/archives/C0A4GKEUGGP/"
+        "p1793818271076489?thread_ts=1792674458.384049"
+    ).ts, reply);
+    const auto httpsRoot = parseMessageLink(
+        "https://magicdoor-software.slack.com/archives/C0A4GKEUGGP/"
+        "p1792674458384049?thread_ts=1792674458.384049"
+    );
+    REQUIRE(httpsRoot.valid());
+    CHECK_STR(httpsRoot.ts, root);
+    CHECK(httpsRoot.threadTs.empty()); // root is not itself a nested reply
+
+    for (const auto url : {
+        "slack://channel?team=T0A0PUXB7QD&id=C0A4GKEUGGP&message=1793818271.076489&thread_ts=1792674458.384049",
+        "msga://channel?team=T0A0PUXB7QD&id=C0A4GKEUGGP&message=1793818271.076489&thread_ts=1792674458.384049"
+    }) {
+        const auto native = parseNativeLink(url);
+        REQUIRE(native.valid());
+        CHECK_STR(native.team, "T0A0PUXB7QD");
+        CHECK_STR(native.id, "C0A4GKEUGGP");
+        CHECK_STR(native.messageTs, reply);
+        CHECK_STR(native.threadTs, root);
+    }
+    CHECK_FALSE(parseNativeLink(
+        "slack://channel?team=T0A0PUXB7QD&id=C0A4GKEUGGP&message=bad"
+    ).valid());
+    CHECK_FALSE(parseMessageLink(
+        "https://attacker.example/archives/C0A4GKEUGGP/p1793818271076489"
+    ).valid());
+    CHECK_FALSE(parseAppLink(
+        "msga://magicdoor-software.slack.com/archives/C0A4GKEUGGP/pBAD"
+    ).valid());
+}
+
 // ── Bare URLs (new: Slack wraps URLs in <>, but typed/fixture text may not) ──
 
 TEST("mrkdwn: bare URLs become links, trimmed of sentence punctuation") {
