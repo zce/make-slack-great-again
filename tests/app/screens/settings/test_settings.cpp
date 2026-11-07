@@ -561,6 +561,16 @@ TEST("settings: color mode and theme cards apply and persist at once") {
     CHECK(ui::color(ui::C::SidebarSelectedText) == 0xffeeeeeeu);
     CHECK(ui::color(ui::C::TitleBar) == 0xff101010u);
     CHECK(ui::color(ui::C::TitleBarControl) == 0xffc0c0c0u);
+    // Import schedules a background write; wait for this complete snapshot,
+    // not just the earlier 8-colour import, before reading it back.
+    REQUIRE(until([&] {
+        const shell::Settings persisted = shell::Settings::load(path);
+        return persisted.custom.itemHover == 0xff333333u &&
+               persisted.custom.itemText == 0xffddddddu &&
+               persisted.custom.itemSelText == 0xffeeeeeeu &&
+               persisted.custom.titleBarBg == 0xff101010u &&
+               persisted.custom.titleBarText == 0xffc0c0c0u;
+    }));
     const shell::Settings back = shell::Settings::load(path);
     CHECK(back.custom.itemHover == 0xff333333u && back.custom.itemText == 0xffddddddu);
     CHECK(back.custom.itemSelText == 0xffeeeeeeu && back.custom.titleBarBg == 0xff101010u);
@@ -570,6 +580,13 @@ TEST("settings: color mode and theme cards apply and persist at once") {
     h.click(d.find("Import"));
     CHECK(h.settings.custom.itemHover == 0 && h.settings.custom.titleBarBg == 0);
     CHECK(ui::color(ui::C::TitleBar) == ui::color(ui::C::Rail));
+    // Let the last valid import reach disk before the test removes its file.
+    REQUIRE(until([&] {
+        const shell::Settings persisted = shell::Settings::load(path);
+        return persisted.custom.itemHover == 0 && persisted.custom.itemText == 0 &&
+               persisted.custom.itemSelText == 0 && persisted.custom.titleBarBg == 0 &&
+               persisted.custom.titleBarText == 0;
+    }));
     CHECK(ui::color(ui::C::SidebarText) == 0xffffffffu);
     imp->setText("not a theme");
     h.click(d.find("Import"));
