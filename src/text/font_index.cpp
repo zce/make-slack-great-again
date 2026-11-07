@@ -503,8 +503,8 @@ void walk(const std::string &dir, int depth, Found &out) {
         walk(s, depth + 1, out);
 }
 
-// In the app's cache dir (app/identity.h's cacheDir: organization "msga",
-// application "MSGA"), under a name earlier versions never used.
+// Standalone text module: use the same Linux XDG cache layout as
+// identity::cacheDir (without linking the platform/app layers).
 std::string cachePath() {
 #ifdef _WIN32
     const std::string l = base::env("LOCALAPPDATA");
@@ -512,10 +512,10 @@ std::string cachePath() {
 #elif defined(__APPLE__)
     return base::homeDir() + "/Library/Caches/msga/MSGA/fonts.idx";
 #endif
-    if (const char *x = std::getenv("XDG_CACHE_HOME"); x && *x)
-        return std::string(x) + "/msga/MSGA/fonts.idx";
+    if (const char *x = std::getenv("XDG_CACHE_HOME"); x && *x == '/')
+        return std::string(x) + "/msga/fonts.idx";
     const std::string home = base::homeDir();
-    return (home.empty() ? std::string("/tmp") : home) + "/.cache/msga/MSGA/fonts.idx";
+    return (home.empty() ? std::string("/tmp") : home) + "/.cache/msga/fonts.idx";
 }
 
 template <class T>
