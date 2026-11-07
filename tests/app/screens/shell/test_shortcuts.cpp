@@ -301,6 +301,19 @@ TEST("shortcuts: Ctrl+F uses the same message-first popup as Ctrl+K") {
     CHECK(h.sh->quickSwitcher() != nullptr);
 }
 
+TEST("search: section headings do not consume keyboard selection") {
+    Harness h;
+    h.sh->showQuickSwitcher();
+    auto *search = h.sh->quickSwitcher();
+    REQUIRE(search != nullptr);
+    REQUIRE(!search->results().empty());
+    const ConvRef first = search->results().front();
+    h.chord(0, K::Enter);
+    pump();
+    CHECK(h.sh->current() == first);
+    CHECK(h.sh->quickSwitcher() == nullptr);
+}
+
 TEST("search: a result's labels") {
     Harness             h;
     const model::Store &st = h.store;
@@ -431,7 +444,7 @@ TEST("search: choosing a thread reply opens the correct thread") {
     for (int i = 0; i < 1000 && search->messageResults().empty(); ++i) pump(5);
     REQUIRE(search->messageResults().size() == 1);
     CHECK(search->messageResults()[0].hit.thread == rootTs);
-    search->choose(0);
+    h.chord(0, K::Enter); // the Messages heading is not a selectable result
     pump();
     CHECK(h.sh->current() == design);
     CHECK(h.sh->threadOpen());
