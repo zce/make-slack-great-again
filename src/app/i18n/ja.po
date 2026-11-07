@@ -1057,7 +1057,7 @@ msgstr "12時間表示（午後2:34）"
 msgid "24-hour clock (14:34)"
 msgstr "24時間表示（14:34）"
 
-#: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/activity_page.cpp src/app/screens/shell/sidebar.cpp src/app/screens/shell/threads_page.cpp
+#: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/activity_page.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/sidebar.cpp src/app/screens/shell/threads_page.cpp
 msgid "Threads"
 msgstr "スレッド"
 
@@ -1879,7 +1879,7 @@ msgstr "既読にする"
 msgid "Mark as unread"
 msgstr "未読にする"
 
-#: src/app/screens/shell/activity_page.cpp src/app/screens/shell/sidebar.cpp
+#: src/app/screens/shell/activity_page.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/sidebar.cpp
 msgid "Activity"
 msgstr "アクティビティ"
 
@@ -2490,7 +2490,7 @@ msgstr "%1 で移動 · %2 で開く"
 msgid "Reminder set for %1"
 msgstr "リマインダー: %1"
 
-#: src/app/screens/shell/saved_page.cpp src/app/screens/shell/sidebar.cpp
+#: src/app/screens/shell/saved_page.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/sidebar.cpp
 msgid "Saved messages"
 msgstr "保存済みメッセージ"
 
@@ -2510,7 +2510,7 @@ msgstr "スレッド内"
 msgid "Send now"
 msgstr "今すぐ送信"
 
-#: src/app/screens/shell/scheduled_page.cpp src/app/screens/shell/sidebar.cpp
+#: src/app/screens/shell/scheduled_page.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/sidebar.cpp
 msgid "Scheduled messages"
 msgstr "予約済みメッセージ"
 
@@ -2529,6 +2529,10 @@ msgstr "ワークスペースにログイン"
 #: src/app/screens/shell/shell.cpp
 msgid "msga"
 msgstr "msga"
+
+#: src/app/screens/shell/shell.cpp
+msgid "Refresh"
+msgstr ""
 
 #: src/app/screens/shell/shell.cpp src/app/screens/shell/shortcuts.cpp
 msgid "Search"
