@@ -471,6 +471,8 @@ void ThreadsPage::showMore() {
 void ThreadsPage::clear() {
     ++_generation; // an answer in flight is dropped
     _loading = false;
+    setRefreshing(false);
+    setRetry({});
     _nextCursor.clear();
     _list->clearChildren();
     _cards.clear();
@@ -482,9 +484,11 @@ void ThreadsPage::loadPage(std::string cursor) {
     if (_loading)
         return;
     _loading = true;
+    setRefreshing(true);
+    setRetry({});
     _more->setEnabled(false);
     const bool first = cursor.empty();
-    if (first)
+    if (first && _cards.empty())
         setStatus(tr("Loading threads…"));
     const uint32_t     gen   = ++_generation;
     std::weak_ptr<int> alive = _alive;
@@ -493,11 +497,14 @@ void ThreadsPage::loadPage(std::string cursor) {
             if (alive.expired() || gen != _generation)
                 return;
             _loading = false;
+            setRefreshing(false);
             _more->setEnabled(true);
             if (!ok) {
+                setRetry([this, first] {
+                    loadPage(first ? std::string() : _nextCursor);
+                });
                 // Slack's code with it: the one clue a report can carry.
-                if (_cards.empty())
-                    setStatus(
+                setStatus(
                         page.error.empty()
                             ? std::string(tr("Couldn't load threads. Try again later."))
                             : str::concat(
@@ -509,6 +516,7 @@ void ThreadsPage::loadPage(std::string cursor) {
                     );
                 return;
             }
+            setRetry({});
             if (first) {
                 _list->clearChildren();
                 _cards.clear();
