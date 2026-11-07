@@ -440,7 +440,7 @@ private:
     ui::Label             *_titleLabel = nullptr; // macOS: the workspace, without a header
     ui::Label             *_pageTitle = nullptr; // overview title in the unified titlebar
     ui::View              *_pageHeading = nullptr; // title and optional page actions (non-macOS)
-    ui::Button            *_pageAction = nullptr;
+    ui::Clickable         *_pageAction = nullptr;
     WorkspaceStack        *_wsStack    = nullptr;
     std::vector<Workspace> _workspaces;
     std::string            _activeKey;
