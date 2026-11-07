@@ -1,6 +1,7 @@
 #include "screens/shell/overview_page.h"
 
 #include "screens/shell/shell_text.h"
+#include "base/i18n.h"
 
 using namespace ui;
 
@@ -58,6 +59,11 @@ OverviewPage::OverviewPage(screens::Context &ctx, Avatars &avatars, std::string 
     _status->setAlign(text::LayoutOptions::Align::Center);
     _status->style().padding(24);
     _status->setVisible(false);
+    _retry = content->add<Button>(i18n::tr("Retry"), Button::Kind::Secondary, Button::Form::Small);
+    _retry->setFocusable(false);
+    _retry->style().alignSelf(Align::Center);
+    _retry->setVisible(false);
+    _retry->onClick = [this] { retry(); };
     _list = content->add<View>();
     _list->style().spacing(24);
     _observer = ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
@@ -92,6 +98,19 @@ void OverviewPage::setStatus(std::string text) {
     _statusText = std::move(text);
     _status->setText(_statusText);
     _status->setVisible(!_statusText.empty());
+}
+
+void OverviewPage::setRetry(std::function<void()> action) {
+    _retryAction = std::move(action);
+    _retry->setVisible(bool(_retryAction));
+}
+
+void OverviewPage::setRefreshing(bool loading) {
+    if (_refreshing == loading)
+        return;
+    _refreshing = loading;
+    if (onRefreshStateChanged)
+        onRefreshStateChanged();
 }
 
 // ── Card parts ──────────────────────────────────────────────────────────────
