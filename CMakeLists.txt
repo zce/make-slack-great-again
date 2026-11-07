@@ -123,11 +123,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel" AND NOT MSGA_COVERAGE AND NOT MSGA_ASA
     endif()
 endif()
 
-# Fully static executables, the release binaries: on Linux one that runs on
-# any distribution (Alpine/musl, scripts/release-linux-static.sh; every library
-# from its .a, pkg-config asked for the static link lines), on Windows an .exe
-# with libstdc++/libgcc/winpthread linked in (scripts/release-windows.sh).
-option(MSGA_STATIC "Link fully static (the Linux/musl and Windows releases)" OFF)
+# Optional fully-static link mode for local/upstream builds. The fork's
+# published Linux artifact is dynamically linked; its release workflow does
+# not produce static packages.
+option(MSGA_STATIC "Link a fully static executable where dependencies permit" OFF)
 if(MSGA_STATIC AND MINGW)
     target_link_options(msga_flags INTERFACE -static)
 elseif(MSGA_STATIC)

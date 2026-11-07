@@ -64,6 +64,12 @@ jobs:
             exit 1
           fi
 
+          ci_workflow_id="$(gh api "repos/${GH_REPO}/actions/workflows/ci.yml" --jq '.id')"
+          if [[ ! "$ci_workflow_id" =~ ^[0-9]+$ ]]; then
+            echo "Could not resolve the CI workflow ID" >&2
+            exit 1
+          fi
+
           max_attempts=80
           poll_interval=15
           ci_status=""
@@ -84,16 +90,10 @@ jobs:
               echo "[$attempt/$max_attempts] Waiting for the master CI run for $GITHUB_SHA to appear..."
             else
               run_json="$(gh api "repos/${GH_REPO}/actions/runs/${run_id}")"
-              jq -e --arg sha "$GITHUB_SHA" --arg repo "$GH_REPO" '
-                .name == "CI" and
-                .event == "push" and
-                .head_branch == "master" and
-                .head_sha == $sha and
-                .head_repository.full_name == $repo
-              ' <<< "$run_json" >/dev/null || {
-                echo "CI run $run_id is not the master push for this exact commit" >&2
+              if ! scripts/verify-release-ci-run.sh "$ci_workflow_id" "$GITHUB_SHA" "$GH_REPO" <<< "$run_json"; then
+                echo "CI run $run_id is not the master push from .github/workflows/ci.yml for this exact commit" >&2
                 exit 1
-              }
+              fi
 
               ci_status="$(jq -r '.status' <<< "$run_json")"
               ci_conclusion="$(jq -r '.conclusion // ""' <<< "$run_json")"
