@@ -52,6 +52,8 @@ std::string dataDir(plat::App &app) {
 #ifdef _WIN32
     // The data directory is in the roaming profile; plat's Data is the local one.
     return under(app.standardDir(plat::StandardDir::Config), "msga/MSGA");
+#elif defined(__linux__)
+    return under(app.standardDir(plat::StandardDir::Data), "msga");
 #else
     return under(app.standardDir(plat::StandardDir::Data), "msga/MSGA");
 #endif
@@ -60,6 +62,8 @@ std::string dataDir(plat::App &app) {
 std::string cacheDir(plat::App &app) {
 #ifdef _WIN32
     return under(app.standardDir(plat::StandardDir::Cache), "msga/MSGA/cache");
+#elif defined(__linux__)
+    return under(app.standardDir(plat::StandardDir::Cache), "msga");
 #else
     return under(app.standardDir(plat::StandardDir::Cache), "msga/MSGA");
 #endif
