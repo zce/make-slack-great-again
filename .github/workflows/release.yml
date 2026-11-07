@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       ci_run_id:
-        description: 'Optional successful master CI run ID (defaults to this commit)'
+        description: 'Optional master CI run ID to wait for (defaults to this commit)'
         required: false
         type: string
 
