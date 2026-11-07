@@ -372,6 +372,7 @@ struct SlackBackend::Read {
         int                         &injected
     );
     void    threadSubsPage(std::string cursor, ThreadsViewDone done);
+    void    cacheThreadSnapshot(const FollowedThread &thread);
     void    loadSubThread(const mapjson::ThreadSub &t, std::function<void(FollowedThread)> done);
     ConvRef nextBackgroundTarget();
     bool    inject(ConvRef c, model::Message m, bool parentIsMe);
@@ -3037,6 +3038,42 @@ void SlackBackend::Read::publishUnreadThreads() {
     s.setUnreadThreads(n);
 }
 
+// Cache one item from the Threads feed in the Store's thread-only structures.
+// This keeps message actions on the page on the same canonical model as the
+// thread panel without inserting an old parent into channel history.
+void SlackBackend::Read::cacheThreadSnapshot(const FollowedThread &thread) {
+    if (thread.conv >= s.conversationCount() || !thread.root.ts || thread.root.isReply())
+        return;
+
+    model::Message root = thread.root.clone();
+    root.threadTs       = root.ts;
+    if (s.indexOf(thread.conv, root.ts) != SIZE_MAX) {
+        s.updateMessage(thread.conv, root.ts, [&root](model::Message &current) {
+            current.replyCount  = root.replyCount;
+            current.latestReply = root.latestReply;
+            current.replyUsers  = root.replyUsers;
+            current.threadTs    = root.ts;
+        });
+    } else {
+        s.setThreadRoot(thread.conv, std::move(root));
+    }
+
+    std::vector<model::Message> replies;
+    replies.reserve(thread.latestReplies.size());
+    for (const model::Message &reply : thread.latestReplies) {
+        if (!reply.ts || reply.ts == root.ts)
+            continue;
+        model::Message cached = reply.clone();
+        cached.threadTs       = root.ts;
+        if (const model::Message *old = s.findMessage(thread.conv, cached.ts))
+            cached.saved = old->saved;
+        replies.push_back(std::move(cached));
+    }
+    // addPage routes replies by threadTs; it does not advance channel latest,
+    // recount channel unreads, or announce these snapshots as live arrivals.
+    s.addPage(thread.conv, std::move(replies));
+}
+
 // One page of the
 // Threads page's feed (the endpoint the poll above reads).
 void SlackBackend::loadThreadsView(std::string cursor, ThreadsViewDone done) {
@@ -3051,7 +3088,16 @@ void SlackBackend::loadThreadsView(std::string cursor, ThreadsViewDone done) {
         return;
     }
     if (r->threadsViaSubs) {
-        r->threadSubsPage(std::move(cursor), std::move(done));
+        r->threadSubsPage(
+            std::move(cursor),
+            [r, done = std::move(done)](bool ok, ThreadsView page) mutable {
+                if (ok)
+                    for (const FollowedThread &thread : page.threads)
+                        r->cacheThreadSnapshot(thread);
+                if (done)
+                    done(ok, std::move(page));
+            }
+        );
         return;
     }
     std::string form = "limit=10&priority_mode=all"; // every followed thread
@@ -3100,6 +3146,8 @@ void SlackBackend::loadThreadsView(std::string cursor, ThreadsViewDone done) {
                     continue;
                 page.threads.push_back(std::move(f));
             }
+            for (const FollowedThread &thread : page.threads)
+                r->cacheThreadSnapshot(thread);
             if (done)
                 done(true, std::move(page));
         }

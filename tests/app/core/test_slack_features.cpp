@@ -444,6 +444,67 @@ TEST("slack features: the Threads entry — unread from the feed, read by markTh
     CHECK(e.store.unreadThreads() == 0);
 }
 
+
+TEST("slack features: the Threads feed caches thread-only messages for message actions") {
+    if (!haveServer())
+        return;
+    Env e(R"({
+      "subscriptions.thread.getView": {"ok": true, "total_unread_replies": 1, "threads": [
+        {"root_msg": {"channel": "C1", "ts": "1800000000.000100", "user": "UME", "text": "root",
+                      "reply_count": 1, "latest_reply": "1800000001.000100",
+                      "thread_ts": "1800000000.000100", "reply_users": ["UMIRA"],
+                      "last_read": "1800000000.000100"},
+         "unread_replies": [{"ts": "1800000001.000100", "user": "UMIRA", "text": "reply",
+                             "thread_ts": "1800000000.000100"}]}]},
+      "reactions.add": {"ok": true},
+      "pins.add": {"ok": true}
+    })");
+    REQUIRE(e.connect());
+    REQUIRE(pumpUntil([&] { return e.store.unreadThreads() == 1; }, 5000));
+
+    const ConvRef c = e.conv("C1");
+    REQUIRE(c != kNoConv);
+    const size_t historySize  = e.store.conversation(c).messages.size();
+    const Ts     channelLatest = e.store.conversation(c).latest;
+    const int    unreadThreads = e.store.unreadThreads();
+    const Ts     root          = model::parseTs("1800000000.000100");
+    const Ts     reply         = model::parseTs("1800000001.000100");
+
+    bool called = false, ok = false;
+    model::Backend::ThreadsView page;
+    e.be->loadThreadsView({}, [&](bool success, model::Backend::ThreadsView result) {
+        called = true;
+        ok = success;
+        page = std::move(result);
+    });
+    REQUIRE(pumpUntil([&] { return called; }, 5000));
+    REQUIRE(ok);
+    REQUIRE(page.threads.size() == 1);
+
+    // A feed snapshot belongs to its thread cache, never the channel timeline.
+    CHECK(e.store.indexOf(c, root) == SIZE_MAX);
+    CHECK(e.store.findMessage(c, root) != nullptr);
+    CHECK(e.store.indexOf(c, reply, root) != SIZE_MAX);
+    CHECK(e.store.findMessage(c, reply) != nullptr);
+    CHECK(e.store.replies(c, root) && e.store.replies(c, root)->size() == 1);
+    CHECK(e.store.conversation(c).messages.size() == historySize);
+    CHECK(e.store.conversation(c).latest == channelLatest);
+    CHECK(e.store.unreadThreads() == unreadThreads);
+
+    // These paths previously returned early because the feed messages were
+    // not in Store. They now use the same canonical message state as a thread.
+    e.be->react(c, reply, "thumbsup", true);
+    e.be->setPinned(c, reply, true);
+    REQUIRE(pumpUntil(
+        [&] { return count("reactions.add") == 1 && count("pins.add") == 1; }, 5000
+    ));
+    const model::Message *cached = e.store.findMessage(c, reply);
+    REQUIRE(cached != nullptr);
+    CHECK(cached->pinned);
+    REQUIRE(!cached->reactions.empty());
+    CHECK(e.store.reactedByMe(cached->reactions.front()));
+}
+
 TEST("slack features: on Grid the thread feed refused without team_id goes again with it") {
     if (!haveServer())
         return;
@@ -549,6 +610,18 @@ TEST("slack features: the Threads page falls back to getTimestamps where getView
     CHECK_STR(page.threads[1].latestReplies[0].text, "last reply");
     CHECK(page.hasMore);
     CHECK_STR(page.nextCursor, "bmV4dA==");
+    // Both feed implementations cache roots and replies outside channel history.
+    const ConvRef cachedConv = e.conv("C1");
+    const Ts rootOne = model::parseTs("1800000000.000100");
+    const Ts replyOne = model::parseTs("1800000002.000100");
+    const Ts rootTwo = model::parseTs("1800000100.000100");
+    const Ts replyTwo = model::parseTs("1800000101.000100");
+    CHECK(e.store.indexOf(cachedConv, rootOne) == SIZE_MAX);
+    CHECK(e.store.findMessage(cachedConv, rootOne) != nullptr);
+    CHECK(e.store.indexOf(cachedConv, replyOne, rootOne) != SIZE_MAX);
+    CHECK(e.store.findMessage(cachedConv, rootTwo) != nullptr);
+    CHECK(e.store.indexOf(cachedConv, replyTwo, rootTwo) != SIZE_MAX);
+    CHECK(e.store.conversation(cachedConv).messages.empty());
     // Unread: the replies past my read cursor; read: the newest one.
     const Log log;
     for (int i = 0; i < log.count("conversations.replies"); ++i) {

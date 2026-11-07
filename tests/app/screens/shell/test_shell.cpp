@@ -2266,6 +2266,8 @@ TEST("workspace switch: the open chat and thread are left before the Store empti
     h.sh->openThread(design, root);
     REQUIRE(h.sh->threadOpen());
     h.sh->leaveWorkspace();
+    CHECK_FALSE(h.sh->composer().visible()); // no conversation: no stale composer below Welcome
+    CHECK_FALSE(h.sh->composer().enabled());
     h.store.clear();
     pump();
     CHECK(h.sh->current() == kNoConv);

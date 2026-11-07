@@ -2843,13 +2843,14 @@ Composer *Shell::threadComposer() {
 // "Add canvas": a blank page the first save turns into one).
 void Shell::showCanvas(bool on) {
     showMessageArea(); // both tabs live where the messages are
-    on = on && _current != kNoConv;
+    const bool hasConversation = _current != kNoConv;
+    on = on && hasConversation;
     if (!on)
         _canvas->flushPendingSave(); // on every tab / conversation switch
     _canvas->setVisible(on);
-    _messages->setVisible(!on && _current != kNoConv);
-    _composer->setVisible(!on);
-    _typing->setVisible(!on && !_typing->text().empty());
+    _messages->setVisible(!on && hasConversation);
+    _composer->setVisible(!on && hasConversation);
+    _typing->setVisible(!on && hasConversation && !_typing->text().empty());
     _tabs->setActive(on ? 1 : 0);
     if (on)
         _canvas->open(_current);
