@@ -1,4 +1,4 @@
-// Ctrl/Cmd+K and Ctrl/Cmd+F share the global message-first search popup.
+// Ctrl/Cmd+K and Ctrl/Cmd+F share one popup with conversation suggestions and message results.
 #pragma once
 
 #include "screens/common/context.h"

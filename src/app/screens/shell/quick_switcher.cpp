@@ -496,7 +496,7 @@ QuickSwitcher::QuickSwitcher(
         }
         return false;
     };
-    // The list: every match, scrolling, at least kListH (300) tall.
+    // The list: conversation suggestions followed by the scrollable message results.
     _rows = std::make_unique<Rows>(*this);
     _list = add<VirtualList>(_rows.get());
     _list->setGap(1);
@@ -514,7 +514,7 @@ QuickSwitcher::QuickSwitcher(
     _status = add<Label>("", Font::Small, C::TextMuted);
     _status->setAlign(text::LayoutOptions::Align::Center);
     _status->setVisible(false);
-    _moreButton = add<Button>("Load more results", Button::Kind::Secondary, Button::Form::Small);
+    _moreButton = add<Button>("Retry search", Button::Kind::Secondary, Button::Form::Small);
     _moreButton->style().alignSelf(Align::Center);
     _moreButton->setVisible(false);
     _moreButton->onClick = [this] { loadMore(); };
