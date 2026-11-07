@@ -2446,6 +2446,10 @@ msgstr "無題"
 msgid "A huddle is happening"
 msgstr "ハドルが開催中です"
 
+#: src/app/screens/shell/overview_page.cpp
+msgid "Retry"
+msgstr ""
+
 #: src/app/screens/shell/profile_card.cpp
 msgid "Workspace Owner"
 msgstr "ワークスペースのオーナー"
@@ -2510,6 +2514,10 @@ msgstr "スレッド内"
 msgid "Send now"
 msgstr "今すぐ送信"
 
+#: src/app/screens/shell/scheduled_page.cpp
+msgid "Action failed. Please check its status."
+msgstr ""
+
 #: src/app/screens/shell/scheduled_page.cpp src/app/screens/shell/shell.cpp src/app/screens/shell/sidebar.cpp
 msgid "Scheduled messages"
 msgstr "予約済みメッセージ"
@@ -2557,6 +2565,14 @@ msgstr "同じアプリキーが別のデバイスで使用されており、Sla
 #: src/app/screens/shell/shell.cpp
 msgid "How to solve this?"
 msgstr "解決方法は？"
+
+#: src/app/screens/shell/shell.cpp
+msgid "Offline"
+msgstr ""
+
+#: src/app/screens/shell/shell.cpp
+msgid "Reconnecting…"
+msgstr ""
 
 #: src/app/screens/shell/shell.cpp
 msgid "Submitting notification to macOS…"
