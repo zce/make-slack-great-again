@@ -70,7 +70,7 @@ OverviewPage::~OverviewPage() {
 }
 
 void OverviewPage::paint(gfx::Painter &p) {
-    p.fillRect(bounds(), color(C::FormSunken));
+    p.fillRect(bounds(), color(C::Surface));
     View::paint(p);
 }
 
