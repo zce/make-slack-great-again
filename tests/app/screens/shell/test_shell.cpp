@@ -2978,6 +2978,101 @@ TEST("activity page: the entry is bright while the feed has unread items; a fail
     CHECK(page.itemCount() == 0);
 }
 
+TEST("overview: Activity retains last good snapshot across failure and retry") {
+    struct Controlled : fake::FakeBackend {
+        using FakeBackend::FakeBackend;
+        int requests = 0;
+        std::vector<ActivityDone> pending;
+        void loadActivity(ActivityFilter, bool, std::string, ActivityDone done) override {
+            ++requests;
+            pending.push_back(std::move(done));
+        }
+        void success() {
+            REQUIRE(!pending.empty());
+            auto done = std::move(pending.front());
+            pending.erase(pending.begin());
+            ActivityFeed feed;
+            ActivityItem item;
+            item.conv = store().findConversation("C0DESIGN");
+            item.ts = model::parseTs("1793818271.076489");
+            feed.items.push_back(std::move(item));
+            done(true, std::move(feed));
+        }
+        void failure() {
+            REQUIRE(!pending.empty());
+            auto done = std::move(pending.front());
+            pending.erase(pending.begin());
+            ActivityFeed feed;
+            feed.error = "ratelimited";
+            done(false, std::move(feed));
+        }
+    };
+    Harness h;
+    Controlled backend{h.store, app().platform()};
+    screens::Context ctx{app(), h.store, backend, h.ctx.images, {}, {}, {}, {}, {}};
+    shell::ActivityPage page(ctx, h.sh->avatars());
+    page.open();
+    CHECK(page.refreshing());
+    CHECK(backend.requests == 1);
+    page.open();
+    CHECK(backend.requests == 1);
+    backend.success();
+    REQUIRE(page.itemCount() == 1);
+    CHECK_FALSE(page.refreshing());
+    page.open();
+    CHECK(page.refreshing());
+    CHECK(page.itemCount() == 1);
+    backend.failure();
+    CHECK_FALSE(page.refreshing());
+    CHECK(page.itemCount() == 1);
+    CHECK(page.canRetry());
+    CHECK(page.statusText().find("ratelimited") != std::string::npos);
+    page.retry();
+    CHECK(backend.requests == 3);
+    backend.success();
+    CHECK_FALSE(page.canRetry());
+    CHECK(page.itemCount() == 1);
+    CHECK(page.statusText().empty());
+}
+
+TEST("overview: Threads refresh is single-flight and retries failures") {
+    struct Controlled : fake::FakeBackend {
+        using FakeBackend::FakeBackend;
+        int requests = 0;
+        std::vector<ThreadsViewDone> pending;
+        void loadThreadsView(std::string, ThreadsViewDone done) override {
+            ++requests;
+            pending.push_back(std::move(done));
+        }
+        void finish(bool ok) {
+            REQUIRE(!pending.empty());
+            auto done = std::move(pending.front());
+            pending.erase(pending.begin());
+            ThreadsView feed;
+            if (!ok)
+                feed.error = "ratelimited";
+            done(ok, std::move(feed));
+        }
+    };
+    Harness h;
+    Controlled backend{h.store, app().platform()};
+    screens::Context ctx{app(), h.store, backend, h.ctx.images, {}, {}, {}, {}, {}};
+    shell::ThreadsPage page(ctx, h.sh->avatars(), h.sh->drafts(), nullptr);
+    page.open();
+    page.open();
+    CHECK(backend.requests == 1);
+    CHECK(page.refreshing());
+    backend.finish(false);
+    CHECK(page.canRetry());
+    CHECK_FALSE(page.refreshing());
+    page.retry();
+    CHECK(page.refreshing());
+    CHECK(backend.requests == 2);
+    backend.finish(true);
+    CHECK_FALSE(page.refreshing());
+    CHECK_FALSE(page.canRetry());
+}
+
 TEST("activity page: the conversation tabs still read Messages | canvas") {
     Harness          h;
     shell::ConvTabs &tabs = h.sh->tabs();
