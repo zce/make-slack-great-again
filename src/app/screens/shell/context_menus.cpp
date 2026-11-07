@@ -51,7 +51,7 @@ constexpr ui::MenuDef kDefs[] = {
     {Menus::kSortAlpha, kNone, N_("Alphabetically"), nullptr, nullptr},
     {Menus::kSortRecent, kNone, N_("By most recent"), nullptr, nullptr},
     {Menus::kUnreadsFirst, kNone, N_("Unreads on top"), nullptr, nullptr},
-    {Menus::kShowUnreadWhenCollapsed, kNone, N_("Show unread conversations when collapsed"), nullptr, nullptr},
+    {Menus::kShowUnreadWhenCollapsed, kNone, N_("Show unread when collapsed"), nullptr, nullptr},
 };
 
 ui::MenuItem &add(std::vector<ui::MenuItem> &out, int id, bool direct = false, bool on = true) {
