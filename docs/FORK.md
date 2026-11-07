@@ -20,6 +20,8 @@ The repository setting **Actions → General → Workflow permissions → Allow 
 
 `ci.yml` compiles on **Ubuntu 24.04/GCC and Ubuntu 26.04/Clang**. Every PR runs the full test suite with GCC and a Clang compile check. Pushes to `master` (and manual CI runs) run the full suite on both toolchains. CTest runs with two workers initially; tests sharing global resources must use `RESOURCE_LOCK` or `RUN_SERIAL`. The GCC PR job uploads a test-enabled executable as an Actions artifact for manual testing (14-day retention); it is **not** a production binary. Actions are pinned to reviewed commits.
 
+The `i18n_up_to_date` check is intentionally enforced: when translatable UI strings change, run `python3 src/tools/i18n.py update` and commit both the updated `.po` catalogs and generated `languages_generated.cpp` file. Do not disable this check to unblock CI.
+
 On successful pushes to `master`, the GCC job also builds a separate production executable with tests, demo and upstream self-update disabled, then uploads `msga-linux-x86_64-release` with checksums and the dynamic dependency list (30-day retention). This artifact belongs to the exact CI run/commit and is **not** itself a public Release.
 
 **Official fork releases are manually triggered**, not automatically created for every merge. From Actions → Release → Run workflow on **master**, enter the next fork version without the leading `v` (e.g. `0.1.0` or `0.2.0-rc.1`); optionally supply a specific master CI run ID. Example:
