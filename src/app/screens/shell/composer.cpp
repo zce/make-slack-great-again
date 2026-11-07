@@ -810,8 +810,7 @@ void Composer::formatAction(shortcuts::Id id) {
     }
 }
 
-// Up in an empty editor: edit my newest message here (the newest
-// that is mine and not a system line). Agent sessions have no edit.
+// Up in an empty editor: edit my newest ordinary message (not a system line).
 void Composer::editLast() {
     if (_key.conv == model::kNoConv)
         return;
@@ -1109,9 +1108,8 @@ bool Composer::send() {
     if ((text.empty() && _files.empty()) || _key.conv == model::kNoConv)
         return false;
     resetPromptHistory(); // the next ↑ starts from the newest again
-    // "/command [args]" runs a command msga answers itself instead of
-    // posting — only a known one, so a message that merely starts with "/"
-    // still goes out; the rest are messages to the agent.
+    // "/command [args]" runs a known local command in msga. An unknown
+    // slash command is sent to Slack unchanged.
     if (_files.empty() && text.size() > 1 && text[0] == '/' && onCommand &&
         _ctx.backend.capabilities().slashCommands) {
         const size_t      sp   = text.find(' ');
@@ -2006,8 +2004,8 @@ void Composer::computePickList() {
             it.usage    = c.usage;
             it.subtitle = c.desc;
             it.source   = c.source; // "source · description"
-            // The service's own commands bring its icon (the Claude
-            // Code avatar); Slack's built-ins draw the Slack mark instead.
+            // App commands carry their own icon; other service commands
+            // fall back to the workspace icon, while Slack built-ins use its mark.
             it.avatar   = !c.icon.empty()                ? c.icon
                           : c.app || c.source == "Slack" ? std::string()
                                                          : st.workspaceIcon;

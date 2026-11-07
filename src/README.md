@@ -2,8 +2,9 @@
 
 msga (native Slack client), built on its own platform layer `plat/`. The
 **first goal is the smallest possible binary and resource use**; every choice
-below serves that. Design record: `../docs/platform-layer-plan.md` (the plat
-layer) and `docs/` here as modules land.
+below serves that. Runtime ownership and event-flow invariants are documented in
+`../docs/ARCHITECTURE.md`; fork branch, CI and release policy are in
+`../docs/FORK.md`.
 
 ## Layout
 
@@ -33,9 +34,10 @@ its media, the SVG fixtures).
 
 - Build: `-Oz` (`-Os` where the compiler has no `-Oz`), no exceptions, no RTTI,
   no unwind tables, function/data sections + gc-sections, identical-code
-  folding, packed relocations; releases build with clang. A file that is
-  provably hot (the rasterizer, JSON parser) may opt into `-O2` in its
-  CMakeLists with a comment saying why.
+  folding, packed relocations. The fork's Linux release artifact is built with
+  GCC on Ubuntu 24.04; Clang is used for cross-compiler verification on Ubuntu
+  26.04. A file that is provably hot (the rasterizer, JSON parser) may opt into
+  `-O2` in its CMakeLists with a comment saying why.
 - Function bodies live in `.cpp` files; headers declare. Only trivial one-liners
   inline.
 - No template-heavy libraries (no rpl, no Boost, no `std::regex`, no
@@ -66,13 +68,14 @@ scripts/build.sh --test         # or: cmake -S . -B build -G Ninja -DCMAKE_BUILD
 cmake --build build && ctest --test-dir build
 ```
 
-Releases (into `dist/`, with a `.manifest` for the updater and the symbols
-kept beside it): `scripts/release-linux-static.sh` (static musl binary, Docker),
-`scripts/release-windows.sh` (static `.exe`, cross-compiled in Docker),
-`scripts/release-mac.sh` on a Mac or `scripts/release-mac-remote.sh` from Linux
-(DMG), then `scripts/publish-release.sh`. `scripts/release.sh` is the local
-release-flags build with the size report. macOS, Windows and the static Linux
-build compile FreeType and HarfBuzz themselves (`text/font_libs.cmake`).
+The fork does not use the upstream release scripts. GitHub Actions builds a
+GCC/Ubuntu 24.04 Linux x86_64 preview artifact for PR testing and a separate
+production artifact on successful pushes to master. The production artifact is
+dynamically linked; its dependency list and checksum travel with it. Clang on
+Ubuntu 26.04 provides cross-compiler verification. Public releases reuse the
+production artifact from the successful CI run for the exact selected commit;
+see `../docs/FORK.md`. The generic `MSGA_STATIC` option remains available for
+local experiments but does not produce a published fork artifact.
 
 The fake backend (`app/fake/`) is opt-in: `-DMSGA_BUILD_TESTS=ON` builds the
 test suites on it (on `../tests/assets/fixture.json`). Without it nothing of

@@ -1,9 +1,9 @@
 # msga as a Nix package: `nix build` from the flake, or from another
 # configuration `pkgs.callPackage ./nix/package.nix { }`.
 #
-# A dynamically linked build against nixpkgs' libraries, with the release
-# toolchain (clang + lld, MinSizeRel). The static musl binary of the releases
-# comes from scripts/release-linux-static.sh, not from here.
+# A dynamically linked build against nixpkgs' libraries, with the Clang + lld
+# toolchain (MinSizeRel). The fork's published Linux release is a separate
+# dynamically linked GCC build on Ubuntu 24.04; this derivation is not a release artifact.
 {
   lib,
   llvmPackages,

@@ -113,8 +113,8 @@ struct ImageCache::Impl {
             if (ok)
                 frames.push_back(std::move(f));
         }
-        // An SVG (the Claude Code teammates' glyph tiles): rendered to cover
-        // the requested size, as the shell's avatars are.
+        // An SVG avatar or icon: render it to cover the requested size, like
+        // the shell's avatars.
         if (gfx::AnimFrame f; !ok && gfx::renderSvgCover(data, r.width, r.height, &f.frame)) {
             ok = true;
             frames.clear();
