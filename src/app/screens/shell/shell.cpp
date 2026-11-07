@@ -3918,7 +3918,7 @@ void Shell::applySettings() {
             static_cast<MessageStandIn *>(_messages)->setTarget(_current, 0);
 #endif
             if (threadOpen())
-                _thread->show(_thread->conv, _thread->root);
+                _thread->show(_thread->conv, _thread->root, 0);
         }
     }
     // Settings → Appearance (relevant days, Agents & apps, unreads only) and
