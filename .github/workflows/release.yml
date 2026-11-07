@@ -1,105 +1,122 @@
 name: Release
 
-# A successful master CI run is required before publishing.
-# The upstream updater must NEVER be enabled in this fork: it downloads
-# official msga.app binaries, which would replace our custom version.
+# Public releases are intentional, not a side-effect of every merge.
+# Only an artifact from a successful push-to-master CI run of this exact
+# commit can be published. Never use the upstream msga.app updater.
 on:
-  workflow_run:
-    workflows: [CI]
-    branches: [master]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Fork version, e.g. 0.1.0 or 0.2.0-rc.1 (without v)'
+        required: true
+        type: string
+      ci_run_id:
+        description: 'Optional successful master CI run ID (defaults to this commit)'
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-master
   cancel-in-progress: false
 
-jobs:
-  linux:
-    timeout-minutes: 40
-    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
-      - name: Install build dependencies
-        timeout-minutes: 7
-        run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            clang lld cmake ninja-build pkg-config python3 \
-            libfreetype-dev libharfbuzz-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev \
-            libwayland-dev wayland-protocols \
-            libxcb1-dev libxcb-xkb-dev libxcb-shm0-dev \
-            libxcb-randr0-dev libxcb-cursor-dev libxcb-xfixes0-dev \
-            libxcb-xinput-dev libdbus-1-dev
-      - name: Show toolchain and library versions
-        run: |
-          cmake --version
-          c++ --version
-          pkg-config --modversion freetype2 harfbuzz
-      - name: Configure release
-        run: |
-          cmake -S . -B build-release -G Ninja \
-            -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DMSGA_BUILD_TESTS=OFF \
-            -DMSGA_DEMO=OFF \
-            -DMSGA_SELF_UPDATE=OFF \
-            -DMSGA_SIZE_MAP=OFF
-      - name: Build release binary
-        run: cmake --build build-release --target msga --parallel 4
-      - name: Package and checksum
-        run: |
-          mkdir -p dist
-          strip build-release/msga
-          cp build-release/msga dist/msga-linux-x86_64
-          ldd dist/msga-linux-x86_64 | tee dist/DEPENDENCIES.txt
-          if grep -q 'not found' dist/DEPENDENCIES.txt; then
-            echo "Missing shared-library dependencies in release binary" >&2
-            exit 1
-          fi
-          (cd dist && sha256sum msga-linux-x86_64 > SHA256SUMS)
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: linux-release
-          path: dist/
-          if-no-files-found: error
-          retention-days: 7
+run-name: Release v${{ inputs.version }}
 
+jobs:
   publish:
-    needs: linux
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: linux-release
-          path: dist
-      - name: Publish GitHub release
+      - name: Validate version and CI provenance
+        id: verify
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          FORK_VERSION: ${{ inputs.version }}
+          REQUESTED_RUN_ID: ${{ inputs.ci_run_id }}
         run: |
           set -euo pipefail
-          upstream_version="$(sed -nE 's/^[[:space:]]*set\(MSGA_VERSION[[:space:]]+([0-9]+)\).*/\1/p' version.cmake | head -n1)"
-          test -n "$upstream_version"
-          tag="v${upstream_version}-zce.${{ github.event.workflow_run.run_number }}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/* --clobber
+          if [[ ! "$FORK_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.([1-9][0-9]*))?$ ]]; then
+            echo "Expected a fork SemVer such as 0.1.0 or 0.2.0-rc.1" >&2
+            exit 1
+          fi
+
+          tag="v${FORK_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1 ||
+             gh api "repos/${GH_REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "Release tag already exists: $tag" >&2
+            exit 1
+          fi
+
+          run_id="$REQUESTED_RUN_ID"
+          if [[ -z "$run_id" ]]; then
+            run_id="$(gh api "repos/${GH_REPO}/actions/workflows/ci.yml/runs?branch=master&event=push&per_page=50" |
+              jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success")] | first | .id // empty')"
+          fi
+          if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "No successful master CI for this commit; run CI first and optionally supply ci_run_id" >&2
+            exit 1
+          fi
+
+          gh api "repos/${GH_REPO}/actions/runs/${run_id}" |
+            jq -e --arg sha "$GITHUB_SHA" --arg repo "$GH_REPO" '
+              .name == "CI" and
+              .event == "push" and
+              .head_branch == "master" and
+              .status == "completed" and
+              .conclusion == "success" and
+              .head_sha == $sha and
+              .head_repository.full_name == $repo' >/dev/null || {
+                echo "CI run is not a successful master push for this exact commit" >&2
+                exit 1
+              }
+
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Verified CI run $run_id for $GITHUB_SHA"
+
+      - name: Download production binary from validated CI
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: msga-linux-x86_64-release
+          path: dist
+          run-id: ${{ steps.verify.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS)
+          test -s dist/msga-linux-x86_64
+          test -s dist/DEPENDENCIES.txt
+          chmod +x dist/msga-linux-x86_64
+
+      - name: Publish versioned GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.verify.outputs.tag }}
+          CI_RUN_ID: ${{ steps.verify.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          notes="Verified fork build from master (commit \`${GITHUB_SHA}\`, CI run ${CI_RUN_ID}). Linux x86_64 dynamically linked binary; upstream in-app updater disabled. See docs/FORK.md for dependencies."
+          if [[ "$TAG" == *-rc.* ]]; then
+            gh release create "$TAG" dist/* \
+              --target "$GITHUB_SHA" \
+              --title "MSGA $TAG" \
+              --notes "$notes" \
+              --prerelease --latest=false
           else
-            gh release create "$tag" dist/* \
-              --target "${{ github.event.workflow_run.head_sha }}" \
-              --title "msga ${upstream_version} (zce build ${GITHUB_RUN_NUMBER})" \
-              --notes "Automated fork build from \`master\` (commit \`${{ github.event.workflow_run.head_sha }}\`). Linux x86_64 dynamic binary; upstream in-app updater disabled. See docs/FORK.md for dependencies and supported platforms."
+            gh release create "$TAG" dist/* \
+              --target "$GITHUB_SHA" \
+              --title "MSGA $TAG" \
+              --notes "$notes" \
+              --latest
           fi
