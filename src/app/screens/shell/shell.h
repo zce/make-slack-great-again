@@ -229,7 +229,7 @@ public:
     ui::View                   *rail() const { return _rail; }
     ConvHeader                 &header() { return *_header; }
     ui::Label                  *pageTitle() const { return _pageTitle; } // tests
-    ui::Button                 *pageAction() const { return _pageAction; }
+    ui::Clickable              *pageAction() const { return _pageAction; }
     ConvTabs                   &tabs() { return *_tabs; }
     TypingIndicator            &typing() { return *_typing; }
     DraftStash                 &drafts() { return _drafts; }
