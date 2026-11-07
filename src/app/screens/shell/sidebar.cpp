@@ -31,9 +31,9 @@ namespace shell {
 
 namespace {
 // The list's metrics: one row height for everything (scaled with
-// the text size), a 6 px inset above the first row, pills inset 8 px from the
+// the text size), an 8 px inset above the first row, pills inset 8 px from the
 // list's edges; icons at kPadH, labels and conversation content at 32.
-constexpr float kRowHBase = 32, kTopPad = 8, kPill = 12, kPadH = 14, kContentX = 34;
+constexpr float kRowHBase = 32, kTopPad = 8, kPill = 8, kPadH = 14, kContentX = 34;
 constexpr float kNavRowGap = 2;
 constexpr int   kAvatarPx = 40; // 20 logical, sharp at 2x
 
