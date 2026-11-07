@@ -1399,17 +1399,21 @@ TEST("actions: the message menu, item for item, acts through the backend") {
     // message_list.cpp showContextMenu for someone else's message in Slack.
     CHECK_STR(
         menuLabels(e.list->menuItems(linked)),
-        "Reply in thread|-|Copy link|Copy link from message|Copy message|-|Pin to channel|"
-        "Save for later|Remind me|-|Forward message|Summarize down"
+        "Reply in thread|Add reaction|Forward message|-|Copy link|Copy message|"
+        "Copy link from message|Mark unread from here|-|Save for later|Remind me|"
+        "Pin to channel|-|Summarize down"
     );
     const auto items = e.list->menuItems(linked);
     CHECK_STR(items[0].hint, "T");
-    CHECK_STR(items[2].hint, "L");
-    CHECK_STR(items[4].hint, "Ctrl+C");
-    CHECK_STR(items[6].hint, "P");
+    CHECK_STR(items[1].hint, "R");
+    CHECK_STR(items[4].hint, "L");
+    CHECK_STR(items[5].hint, "Ctrl+C");
+    CHECK_STR(items[7].hint, "U");
+    CHECK_STR(items[11].hint, "P");
     CHECK(items[0].icon == uint16_t(gfx::Icon::MessageSquareReply));
-    CHECK(items[8].icon == uint16_t(gfx::Icon::AlarmClock));
-    CHECK(!items[10].enabled && !items[11].enabled); // no forwarding hook / AI provider here
+    CHECK(items[1].icon == uint16_t(gfx::Icon::Smile));
+    CHECK(items[10].icon == uint16_t(gfx::Icon::AlarmClock));
+    CHECK(!items[2].enabled && !items[13].enabled); // no forwarding hook / AI provider here
 
     using M = MessageList;
     e.list->runMenuAction(linked, M::kCopyLinkInText);
@@ -1418,11 +1422,20 @@ TEST("actions: the message menu, item for item, acts through the backend") {
     CHECK_STR(clipboard(), e.store.permalink(eng, linked));
     e.list->runMenuAction(linked, M::kCopyText);
     CHECK(clipboard().rfind("PR for the new tokens is up: atlas-web#1482", 0) == 0);
+    e.list->runMenuAction(linked, M::kReply);
+    REQUIRE(!e.threads.empty());
+    CHECK(e.threads.back().first == eng && e.threads.back().second == linked);
+    e.list->runMenuAction(linked, M::kReact, {}, {200, 200});
+    CHECK(e.win->topPopup() != nullptr);
+    if (ui::Popup *p = e.win->topPopup())
+        e.win->closePopup(p);
+    e.list->runMenuAction(linked, M::kMarkUnread);
+    CHECK(e.store.conversation(eng).lastRead < linked);
     e.list->runMenuAction(linked, M::kPin);
     e.list->runMenuAction(linked, M::kSave);
     CHECK(e.store.findMessage(eng, linked)->pinned && e.store.findMessage(eng, linked)->saved);
     CHECK(
-        menuLabels(e.list->menuItems(linked)).find("Unpin from channel|Remove from saved|") !=
+        menuLabels(e.list->menuItems(linked)).find("Remove from saved|Remind me|Unpin from channel") !=
         std::string::npos
     );
     // Remind me: the presets; a reminder replaces "Remove from saved".
@@ -1434,7 +1447,7 @@ TEST("actions: the message menu, item for item, acts through the backend") {
     const int64_t due = e.store.reminderAt(eng, linked);
     CHECK(due > base::nowSecs() + 3500 && due < base::nowSecs() + 3700);
     CHECK(
-        menuLabels(e.list->menuItems(linked)).find("Unpin from channel|Remove reminder|-|") !=
+        menuLabels(e.list->menuItems(linked)).find("Remove reminder|Unpin from channel") !=
         std::string::npos
     );
     e.list->runMenuAction(linked, M::kRemoveReminder);
@@ -1450,9 +1463,9 @@ TEST("actions: the message menu, item for item, acts through the backend") {
     e.list->onEdit   = [&](ConvRef, Ts ts) { editing = ts; };
     CHECK_STR(
         menuLabels(e.list->menuItems(mine)),
-        "Reply in thread|-|Edit message|-|Copy link|Copy message|-|Pin to channel|"
-        "Save for later|Remind me|-|Forward message|Move to thread…|Summarize down|-|"
-        "Delete message…"
+        "Reply in thread|Add reaction|Forward message|-|Copy link|Copy message|"
+        "Mark unread from here|-|Save for later|Remind me|Pin to channel|-|"
+        "Edit message|Move to thread…|Summarize down|-|Delete message…"
     );
     e.list->runMenuAction(mine, M::kEdit);
     CHECK(editing == mine);
@@ -1469,7 +1482,7 @@ TEST("actions: the message menu, item for item, acts through the backend") {
         if (m.replyCount > 0)
             root = m.ts;
     if (root) {
-        CHECK(menuLabels(e.list->menuItems(root)).rfind("Reply in thread|Mute thread|-|", 0) == 0);
+        CHECK(menuLabels(e.list->menuItems(root)).find("|Mute thread|-|") != std::string::npos);
         e.list->runMenuAction(root, M::kMuteThread);
         CHECK(e.store.threadMuted(eng, root));
     }
@@ -1794,7 +1807,7 @@ TEST("actions: a remote CSV's Preview downloads it to a temporary file, removed 
     CHECK_FALSE(file::exists(e.backend.asked.back().to));
 }
 
-TEST("actions: hovering an avatar asks for the profile card; right click on the row is nothing") {
+TEST("actions: right click on a message shows the same menu as More actions") {
     Env            e(true);
     const ConvRef  eng      = e.conv("C0ENG");
     model::UserRef hovered  = model::kNoUser;
@@ -1819,10 +1832,10 @@ TEST("actions: hovering an avatar asks for the profile card; right click on the 
     h->injectButton(e.win->native(), plat::Button::Right, true);
     h->injectButton(e.win->native(), plat::Button::Right, false);
     pump(4);
-    CHECK(e.win->topPopup() == nullptr);
+    CHECK(e.win->topPopup() != nullptr);
 }
 
-TEST("actions: the hover toolbar — react, forward, save, more; save toggles") {
+TEST("actions: the hover toolbar — react, reply, forward, save, more; save toggles") {
     Env           e(true);
     const ConvRef design  = e.conv("C0DESIGN");
     ConvRef       fwdConv = model::kNoConv;
@@ -1842,32 +1855,38 @@ TEST("actions: the hover toolbar — react, forward, save, more; save toggles") 
     const ui::RectF rr = row->windowRect();
     h->injectPointerMove(e.win->native(), {rr.x + 300, rr.y + 20});
     pump(4);
-    // Four buttons after the (empty) one-click reactions, with tooltips,
+    // Five buttons after the (empty) one-click reactions, with tooltips,
     // in a 16/12-padded card.
     ui::View *fwd = findByTooltip(e.win->root().child(0), "Forward message");
     REQUIRE(fwd != nullptr);
     ui::View *card = fwd->parent();
     REQUIRE(card->visible());
-    REQUIRE(card->childCount() == 5);
+    REQUIRE(card->childCount() == 6);
     CHECK_FALSE(card->child(0)->visible()); // no one-click reactions without the shell
     CHECK_STR(card->child(1)->tooltip(), "Add reaction");
-    CHECK_STR(card->child(3)->tooltip(), "Save for later");
-    CHECK_STR(card->child(4)->tooltip(), "More actions");
-    CHECK(near(card->frame().w, 16 + 4 * 28 + 3 * 4) && near(card->frame().h, 40));
+    CHECK_STR(card->child(2)->tooltip(), "Reply in thread");
+    CHECK_STR(card->child(4)->tooltip(), "Save for later");
+    CHECK_STR(card->child(5)->tooltip(), "More actions");
+    CHECK(near(card->frame().w, 16 + 5 * 28 + 4 * 4) && near(card->frame().h, 40));
     // It straddles the row's top edge, 12 px from the right.
     CHECK(near(card->windowRect().y, rr.y - 20, 1));
     CHECK(near(card->windowRect().x + card->frame().w, e.win->size().w - 12, 1));
-    // Forward asks the shell for its dialog; Save toggles the bookmark.
+    // A message with no replies still has Reply in thread, just like Slack.
+    REQUIRE(last.replyCount == 0 && !last.isReply());
     static_cast<ui::Clickable *>(card->child(2))->activate();
+    REQUIRE(e.threads.size() == 1);
+    CHECK(e.threads[0].first == design && e.threads[0].second == last.ts);
+    // Forward asks the shell for its dialog; Save toggles the bookmark.
+    static_cast<ui::Clickable *>(card->child(3))->activate();
     CHECK(fwdConv == design && fwdTs == last.ts && fwdFile.empty());
-    static_cast<ui::Clickable *>(card->child(3))->activate();
+    static_cast<ui::Clickable *>(card->child(4))->activate();
     CHECK(e.store.findMessage(design, last.ts)->saved);
-    CHECK_STR(card->child(3)->tooltip(), "Remove from saved");
-    static_cast<ui::Clickable *>(card->child(3))->activate();
+    CHECK_STR(card->child(4)->tooltip(), "Remove from saved");
+    static_cast<ui::Clickable *>(card->child(4))->activate();
     CHECK_FALSE(e.store.findMessage(design, last.ts)->saved);
     // A reminder is a saved item too: Save removes it whole.
     e.backend.setReminder(design, last.ts, base::nowSecs() + 3600);
-    static_cast<ui::Clickable *>(card->child(3))->activate();
+    static_cast<ui::Clickable *>(card->child(4))->activate();
     CHECK(e.store.reminderAt(design, last.ts) == 0 && !e.store.findMessage(design, last.ts)->saved);
     // No toolbar on a pending send.
     e.backend.send(design, "pending one", 0, nullptr);
@@ -1884,7 +1903,7 @@ TEST("actions: the hover toolbar — react, forward, save, more; save toggles") 
     }
 }
 
-TEST("actions: the file bar on hovered files; right click on them does nothing") {
+TEST("actions: the file bar on hovered files; right click opens the file menu") {
     Env           e(true);
     const ConvRef general = e.conv("C0GENERAL");
     std::string   shared;
@@ -1930,7 +1949,7 @@ TEST("actions: the file bar on hovered files; right click on them does nothing")
     h->injectButton(e.win->native(), plat::Button::Right, true);
     h->injectButton(e.win->native(), plat::Button::Right, false);
     pump(2);
-    CHECK(e.win->topPopup() == nullptr);
+    CHECK(e.win->topPopup() != nullptr);
 }
 
 TEST("actions: the delete, move to thread and reminder dialogs and the CSV viewer") {
