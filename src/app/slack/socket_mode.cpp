@@ -81,7 +81,10 @@ void SocketMode::teardown() {
         _client.cancel(_openReq);
     _openReq = 0;
     retireSocket(_app, _pending);
+    const bool wasConnected = connected();
     retireSocket(_app, _ws);
+    if (wasConnected && onConnectionChanged)
+        onConnectionChanged(false);
     _connecting = false;
 }
 
@@ -242,6 +245,8 @@ void SocketMode::onOpen(net::WebSocket *sock) {
     _connecting     = false;
     _connectedSince = wallMs();
     LOG_INFO("slack", "Socket Mode: connected");
+    if (onConnectionChanged)
+        onConnectionChanged(true);
 }
 
 void SocketMode::onClosed(net::WebSocket *sock, int code) {
@@ -263,6 +268,8 @@ void SocketMode::onClosed(net::WebSocket *sock, int code) {
     // keepalives — told apart by the hello counts (maybeNotifyContention).
     const bool bareClose  = !expected && code == 1000;
     retireSocket(_app, _ws);
+    if (onConnectionChanged)
+        onConnectionChanged(false);
     // A replacement already in flight finishes instead of racing a second.
     if (_connecting || _pending)
         return;
