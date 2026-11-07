@@ -561,8 +561,14 @@ MessageList::MessageList(Context &ctx)
     };
     _tbReply          = _toolbar->add<ActionButton>(gfx::Icon::MessageSquareReply, tr("Reply in thread"));
     _tbReply->onClick = [this] {
-        if (_toolbarRow)
-            reply(_toolbarRow->ts());
+        if (!_toolbarRow)
+            return;
+        const Ts ts = _toolbarRow->ts();
+        if (const model::Message *m = message(ts); m && m->isReply()) {
+            if (_ctx.openThread)
+                _ctx.openThread(_conv, m->threadTs);
+        } else
+            reply(ts);
     };
     _tbForward          = _toolbar->add<ActionButton>(gfx::Icon::Forward, tr("Forward message"));
     _tbForward->onClick = [this] {
@@ -1336,7 +1342,8 @@ void MessageList::placeToolbar() {
         return;
     }
     _tbEmoji->setVisible(true);
-    _tbReply->setVisible(_root == 0 && !m->isReply());
+    _tbReply->setVisible(_root == 0);
+    _tbReply->setTooltip(m->isReply() ? tr("Open thread") : tr("Reply in thread"));
     syncQuickReactions(true);
     _tbSave->setVisible(_ctx.backend.capabilities().messageReminders);
     const bool saved = m->saved || _ctx.store().reminderAt(_conv, m->ts) != 0;
@@ -1807,8 +1814,8 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
 
     // Frequent actions first, matching the hover toolbar and Slack's right-click
     // hierarchy. A reply in a thread opens that thread, never a nested thread.
-    if (_root == 0 && !m->isReply())
-        addItem(items, kReply);
+    if (_root == 0)
+        addItem(items, m->isReply() ? kOpenThread : kReply);
     addItem(items, kReact);
     addItem(items, kForward, bool(_ctx.forwardMessage));
     ui::addMenuSeparator(items);
@@ -1961,8 +1968,11 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
     }
     switch (id) {
     case kReply:
-    case kOpenThread:
         reply(ts);
+        break;
+    case kOpenThread:
+        if (_root == 0 && msg->isReply() && msg->threadTs && _ctx.openThread)
+            _ctx.openThread(conv, msg->threadTs);
         break;
     case kReact:
         openReactionPicker(ts, {at.x, at.y, 0, 0});
