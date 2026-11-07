@@ -33,6 +33,20 @@ void Backend::search(std::string, std::function<void(std::vector<SearchHit>)> do
         done({});
 }
 
+void Backend::searchPage(std::string query, int page, SearchPageDone done) {
+    if (page != 1) {
+        if (done) done({});
+        return;
+    }
+    search(std::move(query), [done = std::move(done)](std::vector<SearchHit> hits) {
+        if (done) {
+            SearchPage result;
+            result.hits = std::move(hits);
+            done(std::move(result));
+        }
+    });
+}
+
 // ── Sidebar sections, kept in this client ──────────────────────────────────
 
 void Backend::createSection(std::string name, std::string emoji, ConvRef first) {

@@ -235,14 +235,64 @@ std::string searchConvLabel(const model::Store &store, ConvRef conv) {
     return store.conversation(conv).isDirect() ? name : str::concat({"#", name});
 }
 
-std::string searchPreview(const model::Store &store, std::string_view text) {
-    // The rendered text with mentions resolved (the
-    // parser's label is kept for anyone unknown).
-    std::string out = screens::plainText(store, text);
-    // The first 180 characters, newlines as spaces.
+namespace {
+constexpr std::string_view kHighlightStart = "\xEE\x80\x80";
+constexpr std::string_view kHighlightStop = "\xEE\x80\x81";
+std::string withoutHighlights(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    while (!s.empty()) {
+        if (s.starts_with(kHighlightStart)) s.remove_prefix(kHighlightStart.size());
+        else if (s.starts_with(kHighlightStop)) s.remove_prefix(kHighlightStop.size());
+        else { out += s.front(); s.remove_prefix(1); }
+    }
+    return out;
+}
+} // namespace
+
+std::string searchPreview(const model::Store &store, std::string_view value) {
+    std::string out = screens::plainText(store, withoutHighlights(value));
     out.resize(utf8::prefixBytes(out, kPreviewChars));
     std::replace(out.begin(), out.end(), '\n', ' ');
     return out;
+}
+
+text::AttributedText searchHighlightedPreview(const model::Store &store, std::string_view value) {
+    const std::string plain = screens::plainText(store, value);
+    text::AttributedText result;
+    text::Style normal = pxFont(13, text::Weight::Regular, themed(C::TextMuted));
+    text::Style marked = normal;
+    marked.weight = text::Weight::Semibold;
+    marked.color = themed(C::Text);
+    marked.background = themed(C::FormHighlight);
+    bool active = false;
+    size_t pos = 0, count = 0;
+    while (pos < plain.size() && count < kPreviewChars) {
+        if (plain.compare(pos, kHighlightStart.size(), kHighlightStart) == 0) {
+            active = true; pos += kHighlightStart.size(); continue;
+        }
+        if (plain.compare(pos, kHighlightStop.size(), kHighlightStop) == 0) {
+            active = false; pos += kHighlightStop.size(); continue;
+        }
+        size_t bytes = utf8::prefixBytes(std::string_view(plain).substr(pos), 1);
+        if (!bytes) break;
+        std::string_view part(plain.data() + pos, bytes);
+        if (part == "\n") part = " ";
+        result.append(part, active ? marked : normal);
+        pos += bytes; ++count;
+    }
+    return result;
+}
+
+std::string searchScopeQuery(const model::Store &store, ConvRef conv) {
+    if (conv == model::kNoConv || conv >= store.conversationCount()) return {};
+    const auto &c = store.conversation(conv);
+    if (c.kind == model::ConvKind::Dm && c.dmUser != model::kNoUser &&
+        c.dmUser < store.userCount())
+        return "in:<@" + store.user(c.dmUser).id + ">";
+    if ((c.kind == model::ConvKind::Channel || c.kind == model::ConvKind::Private) &&
+        !c.name.empty()) return "in:" + c.name;
+    return c.id.empty() ? std::string() : "in:<#" + c.id + ">";
 }
 
 // The list rows, virtual (a large workspace has thousands of channels):
@@ -316,9 +366,14 @@ public:
             std::string heading = searchConvLabel(*tab.store, match.hit.conv);
             if (_q._tabs.size() > 1 && !tab.name.empty())
                 heading += " \xC2\xB7 " + tab.name;
-            heading += " \xC2\xB7 " + base::formatDateTime(model::tsSecs(match.hit.ts));
+            const auto &hit = match.hit;
+            const std::string sender = hit.user != model::kNoUser &&
+                hit.user < tab.store->userCount()
+                    ? std::string(tab.store->user(hit.user).label()) : hit.sender;
+            if (!sender.empty()) heading += " \xC2\xB7 " + sender;
+            heading += " \xC2\xB7 " + base::formatDateTime(model::tsSecs(hit.ts));
             r.name->setText(std::move(heading));
-            r.snippet->setText(searchPreview(*tab.store, match.hit.text));
+            r.snippet->setRichText(searchHighlightedPreview(*tab.store, match.hit.text));
         } else if (index < messages + conversations) {
             const ConvRef c = _q._results[index - messages];
             const auto &cv = st.conversation(c);
@@ -359,9 +414,10 @@ QuickSwitcher::QuickSwitcher(
     screens::Context           &ctx,
     Avatars                    &avatars,
     std::vector<ConvRef>        order,
-    std::vector<QuickSwitchTab> tabs
+    std::vector<QuickSwitchTab> tabs,
+    ConvRef scope
 )
-    : _ctx(ctx), _avatars(avatars), _tabs(std::move(tabs)) {
+    : _ctx(ctx), _avatars(avatars), _tabs(std::move(tabs)), _scope(scope) {
     // Open on the workspace on screen: with no query the list is its
     // conversations, most recent first, exactly what one workspace shows.
     _tab = -1;
@@ -375,6 +431,11 @@ QuickSwitcher::QuickSwitcher(
         _tab  = 0;
     }
     const bool multi = _tabs.size() > 1;
+    if (_scope != model::kNoConv && searchScopeQuery(ctx.store(), _scope).empty())
+        _scope = model::kNoConv;
+    _nextPage.assign(_tabs.size(), 1);
+    _failedPage.assign(_tabs.size(), 0);
+    _hasMorePage.assign(_tabs.size(), false);
     style().width(620).padding(10).spacing(8);
     // The tabs first — the card's header when there is a choice to make.
     if (multi) {
@@ -392,6 +453,12 @@ QuickSwitcher::QuickSwitcher(
         _tabName->setMaxLines(1);
         _tabName->style().flex(1).margins(4, 0, 0, 0);
     }
+    _scopeChip = add<Button>("", Button::Kind::Secondary, Button::Form::Small);
+    _scopeChip->style().alignSelf(Align::Start);
+    _scopeChip->onClick = [this] { clearScope(); };
+    _scopeChip->setVisible(_scope != model::kNoConv);
+    if (_scope != model::kNoConv)
+        _scopeChip->setLabel("In " + searchConvLabel(_ctx.store(), _scope) + "  x");
     _field = add<TextEdit>();
     _field->setPlaceholder(tr("Search messages, channels or people\xE2\x80\xA6"));
     _field->setMaxLines(1);
@@ -419,7 +486,7 @@ QuickSwitcher::QuickSwitcher(
             stepTab(e.key == plat::Key::Left ? -1 : 1);
             return true;
         }
-        if (multi && e.key == plat::Key::Tab) {
+        if (multi && _scope == model::kNoConv && e.key == plat::Key::Tab) {
             stepTab(e.mods & plat::ModShift ? -1 : 1);
             return true;
         }
@@ -435,6 +502,13 @@ QuickSwitcher::QuickSwitcher(
     _empty->setAlign(text::LayoutOptions::Align::Center);
     _empty->style().height(kListH);
     _empty->setVisible(false);
+    _status = add<Label>("", Font::Small, C::TextMuted);
+    _status->setAlign(text::LayoutOptions::Align::Center);
+    _status->setVisible(false);
+    _moreButton = add<Button>("Load more results", Button::Kind::Secondary, Button::Form::Small);
+    _moreButton->style().alignSelf(Align::Center);
+    _moreButton->setVisible(false);
+    _moreButton->onClick = [this] { loadMore(); };
     // Arrow keys aren't discoverable on a field that looks like plain search.
     const char       *upDown = "\xE2\x86\x91\xE2\x86\x93", *leftRight = "\xE2\x86\x90\xE2\x86\x92";
     const std::string enter = shortcuts::nativeKeys(shortcuts::Id::SendMessage);
@@ -450,6 +524,13 @@ QuickSwitcher::QuickSwitcher(
         C::TextMuted
     );
     hint->setAlign(text::LayoutOptions::Align::Center);
+    auto *syntax = add<Label>("Filters: from:me · from:@user · after:YYYY-MM-DD · before:YYYY-MM-DD",
+                              Font::Small, C::TextMuted);
+    syntax->setAlign(text::LayoutOptions::Align::Center);
+    auto *keys = add<Label>(shortcuts::nativeKeys(shortcuts::Id::QuickSwitch) +
+                            " global · " + shortcuts::nativeKeys(shortcuts::Id::SearchMessages) +
+                            " in conversation · Esc close", Font::Small, C::TextMuted);
+    keys->setAlign(text::LayoutOptions::Align::Center);
     refreshStrip();
     refilter();
 }
@@ -477,6 +558,12 @@ const std::vector<QuickSwitchName> &QuickSwitcher::names(QuickSwitchTab &t) {
 
 void QuickSwitcher::applyFilter() {
     const std::string query(str::trim(_field->text()));
+    if (_scope != model::kNoConv) {
+        refreshStrip();
+        refilter();
+        queueSearch();
+        return;
+    }
     const int         n = int(_tabs.size());
     _dimmed.clear();
     if (query.empty()) {
@@ -517,6 +604,11 @@ void QuickSwitcher::setTab(int index) {
     if (index < 0 || index >= int(_tabs.size()) || index == _tab)
         return;
     _tab       = index;
+    if (_scope != model::kNoConv) {
+        _scope = model::kNoConv;
+        _scopeChip->setVisible(false);
+    }
+    queueSearch();
     // Picked while a query is up: the user overruling the re-aim. Over an
     // empty field it is just browsing.
     _manualTab = !str::trim(_field->text()).empty();
@@ -550,6 +642,15 @@ QuickSwitcher::~QuickSwitcher() {
 
 
 void QuickSwitcher::refilter(Scored *scored) {
+    if (_scope != model::kNoConv) {
+        _results.clear();
+        _people.clear();
+        _current = 0;
+        _preserveScroll = false;
+        _keyboardSelection = false;
+        refreshResults();
+        return;
+    }
     QuickSwitchTab &tab = _tabs[size_t(_tab)];
     _results = scored ? ranked(std::move(*scored))
                       : quickSwitchFilter(_field->text(), tab.order, names(tab));
@@ -585,19 +686,45 @@ void QuickSwitcher::refilter(Scored *scored) {
     refreshResults();
 }
 
+bool QuickSwitcher::hasMore() const {
+    for (bool more : _hasMorePage) if (more) return true;
+    for (int failed : _failedPage) if (failed) return true;
+    return false;
+}
+
 void QuickSwitcher::refreshResults() {
     const int total = int(_results.size() + _people.size() + _hits.size());
     if (_current >= total) _current = 0;
-    // Later workspace responses should not snap an already-scrolled list to top.
     const float oldOffset = _preserveScroll ? _list->scrollOffset() : 0;
     _list->reset();
     _list->scrollTo(oldOffset);
     _list->setVisible(total > 0);
     _empty->setVisible(total == 0);
-    if (total == 0) {
-        _empty->setText(_searching ? tr("Searching\xE2\x80\xA6")
-                                   : tr("No results found."));
-    }
+    if (total == 0)
+        _empty->setText(_searching ? tr("Searching\xE2\x80\xA6") :
+                        !_searchError.empty() ? "Search failed. Try again."
+                                              : tr("No results found."));
+    _status->setVisible(!_searchError.empty() || (_searching && total > 0));
+    _status->setText(!_searchError.empty() ? "Search error: " + _searchError
+                                        : tr("Searching\xE2\x80\xA6"));
+    _moreButton->setVisible(!_searching && hasMore());
+    _moreButton->setLabel(!_searchError.empty() ? "Retry search"
+                                                : "Load more results");
+}
+
+std::string QuickSwitcher::searchQuery() const {
+    const std::string query(str::trim(_field->text()));
+    if (_scope == model::kNoConv) return query;
+    const std::string scoped = searchScopeQuery(_ctx.store(), _scope);
+    return query.empty() ? scoped : scoped + " " + query;
+}
+
+void QuickSwitcher::clearScope() {
+    if (_scope == model::kNoConv) return;
+    _scope = model::kNoConv;
+    _scopeChip->setVisible(false);
+    applyFilter();
+    _field->focus();
 }
 
 void QuickSwitcher::queueSearch() {
@@ -608,99 +735,138 @@ void QuickSwitcher::queueSearch() {
     }
     _hits.clear();
     _pendingSearches = 0;
-    const std::string query(str::trim(_field->text()));
-    _searching = !query.empty();
+    _nextPage.assign(_tabs.size(), 1);
+    _failedPage.assign(_tabs.size(), 0);
+    _hasMorePage.assign(_tabs.size(), false);
+    _searchError.clear();
+    const std::string query(searchQuery());
+    _searching = !str::trim(_field->text()).empty();
     _preserveScroll = false;
     _keyboardSelection = false;
     refreshResults();
-    if (query.empty()) return;
-
+    if (!_searching) return;
     const uint32_t generation = _searchGeneration;
     std::weak_ptr<int> alive = _alive;
-    // A single debounce launches searches on all connected Slack backends.
     _searchTimer = _ctx.app.addTimer(250, false, [this, generation, query, alive] {
         if (alive.expired() || generation != _searchGeneration) return;
         _searchTimer = 0;
-        std::vector<std::pair<size_t, model::Backend *>> targets;
+        std::vector<size_t> targets;
         for (size_t i = 0; i < _tabs.size(); ++i) {
-            auto &tab = _tabs[i];
-            model::Backend *backend = tab.backend;
-            if (!backend && tab.store == &_ctx.store()) backend = &_ctx.backend;
-            if (backend) targets.emplace_back(i, backend);
+            if (_scope != model::kNoConv && int(i) != _tab) continue;
+            const auto &tab = _tabs[i];
+            if (tab.backend || tab.store == &_ctx.store()) targets.push_back(i);
         }
-        _pendingSearches = targets.size(); // may invoke callbacks synchronously
+        _pendingSearches = targets.size();
         if (!_pendingSearches) {
             _searching = false;
             refreshResults();
             return;
         }
-        for (const auto &[origin, backend] : targets) {
-            backend->search(query, [this, generation, origin, alive](
-                std::vector<model::Backend::SearchHit> results) {
-                if (alive.expired() || generation != _searchGeneration) return;
-                // Capture positions before results from another workspace can
-                // reorder the list. An explicit keyboard pick must keep naming
-                // the same result, not the row that takes its old index.
-                const size_t oldMessages = _hits.size();
-                const int previous = _current;
-                std::optional<MessageMatch> selected;
-                if (_keyboardSelection && previous >= 0 && size_t(previous) < oldMessages)
-                    selected = _hits[size_t(previous)];
-                const bool keepViewport = _list->scrollOffset() > 1;
-                const VirtualList::Anchor previousAnchor = _list->anchor();
-                std::optional<MessageMatch> visible;
-                if (keepViewport && previousAnchor.index >= 0 &&
-                    size_t(previousAnchor.index) < oldMessages)
-                    visible = _hits[size_t(previousAnchor.index)];
-
-                const auto &store = *_tabs[origin].store;
-                for (auto &hit : results)
-                    if (hit.conv < store.conversationCount())
-                        _hits.push_back({origin, std::move(hit)});
-                std::stable_sort(_hits.begin(), _hits.end(), [](const auto &a, const auto &b) {
-                    return a.hit.ts > b.hit.ts;
-                });
-                const auto findMessage = [this](const MessageMatch &saved) {
-                    for (size_t i = 0; i < _hits.size(); ++i) {
-                        const auto &now = _hits[i];
-                        if (now.workspace == saved.workspace && now.hit.conv == saved.hit.conv &&
-                            now.hit.ts == saved.hit.ts)
-                            return int(i);
-                    }
-                    return -1;
-                };
-                const int added = int(_hits.size() - oldMessages);
-                if (_keyboardSelection) {
-                    if (selected) {
-                        const int newIndex = findMessage(*selected);
-                        if (newIndex >= 0)
-                            _current = newIndex;
-                    } else if (previous >= int(oldMessages)) {
-                        // Conversation and people rows move below newly found messages.
-                        _current = previous + added;
-                    }
-                }
-
-                --_pendingSearches;
-                _searching = _pendingSearches != 0;
-                _preserveScroll = true;
-                refreshResults();
-                if (_keyboardSelection) {
-                    // A manually selected result must stay in view as well as
-                    // retain its identity after another workspace responds.
-                    _list->scrollToItem(_current, VirtualList::ItemAlign::Nearest, false);
-                } else if (keepViewport) {
-                    int newIndex = previousAnchor.index + added;
-                    if (visible) {
-                        const int relocated = findMessage(*visible);
-                        if (relocated >= 0)
-                            newIndex = relocated;
-                    }
-                    _list->scrollToAnchor({newIndex, previousAnchor.offset});
-                }
-            });
-        }
+        for (size_t origin : targets) requestPage(origin, 1, generation, query);
     });
+}
+
+void QuickSwitcher::requestPage(size_t origin, int page, uint32_t generation,
+                                const std::string &query) {
+    model::Backend *backend = _tabs[origin].backend;
+    if (!backend && _tabs[origin].store == &_ctx.store()) backend = &_ctx.backend;
+    if (!backend) return;
+    std::weak_ptr<int> alive = _alive;
+    backend->searchPage(query, page,
+        [this, generation, origin, page, alive](model::Backend::SearchPage result) {
+            if (alive.expired() || generation != _searchGeneration) return;
+            receivePage(origin, page, generation, std::move(result));
+        });
+}
+
+void QuickSwitcher::receivePage(size_t origin, int page, uint32_t generation,
+                                model::Backend::SearchPage result) {
+    if (generation != _searchGeneration || origin >= _tabs.size()) return;
+    const size_t oldMessages = _hits.size();
+    const int previous = _current;
+    std::optional<MessageMatch> selected;
+    if (_keyboardSelection && previous >= 0 && size_t(previous) < oldMessages)
+        selected = _hits[size_t(previous)];
+    const bool keepViewport = _list->scrollOffset() > 1;
+    const VirtualList::Anchor previousAnchor = _list->anchor();
+    std::optional<MessageMatch> visible;
+    if (keepViewport && previousAnchor.index >= 0 &&
+        size_t(previousAnchor.index) < oldMessages)
+        visible = _hits[size_t(previousAnchor.index)];
+
+    if (!result.error.empty()) {
+        _failedPage[origin] = page;
+    } else {
+        _failedPage[origin] = 0;
+        _nextPage[origin] = page + 1;
+        _hasMorePage[origin] = result.hasMore;
+        const model::Store &store = *_tabs[origin].store;
+        for (auto &hit : result.hits) {
+            if (hit.conv >= store.conversationCount()) continue;
+            const auto duplicate = std::find_if(_hits.begin(), _hits.end(), [&](const MessageMatch &m) {
+                return m.workspace == origin && m.hit.conv == hit.conv && m.hit.ts == hit.ts;
+            });
+            if (duplicate == _hits.end()) _hits.push_back({origin, std::move(hit)});
+        }
+        std::stable_sort(_hits.begin(), _hits.end(), [](const auto &a, const auto &b) {
+            return a.hit.ts > b.hit.ts;
+        });
+    }
+    _searchError.clear();
+    for (int failed : _failedPage)
+        if (failed) {
+            _searchError = "One or more workspaces could not be searched.";
+            break;
+        }
+    const auto findMessage = [this](const MessageMatch &saved) {
+        for (size_t i = 0; i < _hits.size(); ++i) {
+            const auto &now = _hits[i];
+            if (now.workspace == saved.workspace && now.hit.conv == saved.hit.conv &&
+                now.hit.ts == saved.hit.ts) return int(i);
+        }
+        return -1;
+    };
+    const int added = int(_hits.size() - oldMessages);
+    if (_keyboardSelection) {
+        if (selected) {
+            const int newIndex = findMessage(*selected);
+            if (newIndex >= 0) _current = newIndex;
+        } else if (previous >= int(oldMessages)) _current = previous + added;
+    }
+    if (_pendingSearches) --_pendingSearches;
+    _searching = _pendingSearches != 0;
+    _preserveScroll = true;
+    refreshResults();
+    if (_keyboardSelection) {
+        if (_list->visible())
+            _list->scrollToItem(_current, VirtualList::ItemAlign::Nearest, false);
+    } else if (keepViewport) {
+        int newIndex = previousAnchor.index + added;
+        if (visible) {
+            const int relocated = findMessage(*visible);
+            if (relocated >= 0) newIndex = relocated;
+        }
+        _list->scrollToAnchor({newIndex, previousAnchor.offset});
+    }
+}
+
+void QuickSwitcher::loadMore() {
+    if (_searching || !hasMore()) return;
+    const uint32_t generation = _searchGeneration;
+    const std::string query(searchQuery());
+    std::vector<std::pair<size_t, int>> targets;
+    for (size_t i = 0; i < _tabs.size(); ++i) {
+        if (_scope != model::kNoConv && int(i) != _tab) continue;
+        if (_failedPage[i]) targets.emplace_back(i, _failedPage[i]);
+        else if (_hasMorePage[i]) targets.emplace_back(i, _nextPage[i]);
+    }
+    if (targets.empty()) return;
+    _pendingSearches = targets.size();
+    _searching = true;
+    _searchError.clear();
+    refreshResults();
+    for (const auto &[origin, page] : targets)
+        requestPage(origin, page, generation, query);
 }
 
 void QuickSwitcher::highlight(int index) {

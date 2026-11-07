@@ -15,7 +15,7 @@ constexpr Keys kNone{};
 const Def kDefs[] = {
     {Id::OpenSettings, Scope::Window, true, N_("Open settings"), {{K::Comma, Ctrl}, kNone}},
     {Id::QuickSwitch, Scope::Window, true, N_("Search"), {{K::K, Ctrl}, kNone}},
-    // Ctrl+F is an alternate shortcut to the global Ctrl+K search.
+    // Ctrl+F searches the current conversation within the same popup.
     {Id::SearchMessages, Scope::Window, false, N_("Search"), {{K::F, Ctrl}, kNone}},
     // The keys of the next two are replaced by bindings() (the Ctrl+Enter option).
     {Id::SendMessage, Scope::Documented, true, N_("Send message"), {{K::Enter, 0}, kNone}},

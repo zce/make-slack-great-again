@@ -19,6 +19,8 @@ namespace shell {
 
 std::string searchConvLabel(const model::Store &store, model::ConvRef conv);
 std::string searchPreview(const model::Store &store, std::string_view mrkdwn);
+text::AttributedText searchHighlightedPreview(const model::Store &store, std::string_view text);
+std::string searchScopeQuery(const model::Store &store, model::ConvRef conv);
 
 // Every conversation you are a member of except
 // DMs whose peer is deactivated or still unresolved (a raw user id), most
@@ -74,7 +76,8 @@ public:
         screens::Context           &ctx,
         Avatars                    &avatars,
         std::vector<model::ConvRef> order,
-        std::vector<QuickSwitchTab> tabs = {}
+        std::vector<QuickSwitchTab> tabs = {},
+        model::ConvRef scope = model::kNoConv
     );
     ~QuickSwitcher() override;
     ui::TextEdit                      &field() { return *_field; }
@@ -84,6 +87,8 @@ public:
         model::Backend::SearchHit hit;
     };
     const std::vector<MessageMatch> &messageResults() const { return _hits; }
+    model::ConvRef scope() const { return _scope; }
+    bool hasMore() const;
     void                               choose(int index); // opens results[index] and closes
     int                                tab() const { return _tab; }
     void                               setTab(int index); // a click on its bubble
@@ -108,6 +113,13 @@ private:
     void                                       highlight(int index);
     void                                       refreshResults();
     void                                       queueSearch();
+    void                                       loadMore();
+    void                                       requestPage(size_t origin, int page, uint32_t generation,
+                                                        const std::string &query);
+    void                                       receivePage(size_t origin, int page, uint32_t generation,
+                                                        model::Backend::SearchPage result);
+    std::string                                searchQuery() const;
+    void                                       clearScope();
     void                                       refreshStrip();
     std::optional<double>                      bestScore(QuickSwitchTab &t, std::string_view query);
     static const std::vector<QuickSwitchName> &names(QuickSwitchTab &t); // brought up to date
@@ -121,6 +133,10 @@ private:
     std::vector<model::UserRef> _people;
     std::vector<MessageMatch> _hits;
     size_t _pendingSearches = 0;
+    model::ConvRef _scope = model::kNoConv;
+    std::vector<int> _nextPage, _failedPage;
+    std::vector<bool> _hasMorePage;
+    std::string _searchError;
     uint32_t                    _searchGeneration = 0;
     plat::TimerId               _searchTimer = 0;
     bool                        _searching = false;
@@ -130,7 +146,8 @@ private:
     std::vector<bool>           _dimmed;
     ui::TextEdit               *_field   = nullptr;
     ui::View                   *_strip   = nullptr;
-    ui::Label                  *_tabName = nullptr, *_empty = nullptr;
+    ui::Label                  *_tabName = nullptr, *_empty = nullptr, *_status = nullptr;
+    ui::Button                 *_scopeChip = nullptr, *_moreButton = nullptr;
     std::unique_ptr<Rows>       _rows; // the list's adapter
     ui::VirtualList            *_list    = nullptr;
     int                         _current = 0;

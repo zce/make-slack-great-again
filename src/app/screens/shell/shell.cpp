@@ -1207,7 +1207,7 @@ Shell::Shell(
     shortcuts::install(win, Id::NavForward, [this] { navigateHistory(false); });
     shortcuts::install(win, Id::CloseFrontmost, [this] { closeFrontmost(); });
     shortcuts::install(win, Id::CloseThread, [this] { closeThreadOnEscape(); });
-    shortcuts::install(win, Id::SearchMessages, [this] { showQuickSwitcher(); });
+    shortcuts::install(win, Id::SearchMessages, [this] { showQuickSwitcher(true); });
     shortcuts::install(win, Id::QuickSwitch, [this] { showQuickSwitcher(); });
     win.keyFilter = [this](const Event &e) {
         noteActivity();
@@ -3854,7 +3854,7 @@ void Shell::applySettings() {
     updateAttention();
 }
 
-void Shell::showQuickSwitcher() {
+void Shell::showQuickSwitcher(bool currentConversation) {
     // Not over another dialog (nor over itself): the switcher navigates the
     // window behind the backdrop.
     if (topDialog())
@@ -3869,7 +3869,9 @@ void Shell::showQuickSwitcher() {
             tabs.back().order = quickSwitchOrder(*w.store, _sidebar->visited());
     }
     auto p = std::make_unique<QuickSwitcher>(
-        _ctx, _avatars, quickSwitchOrder(_ctx.store(), _sidebar->visited()), std::move(tabs)
+        _ctx, _avatars, quickSwitchOrder(_ctx.store(), _sidebar->visited()), std::move(tabs),
+        currentConversation && _signedIn && _current < _ctx.store().conversationCount()
+            ? _current : model::kNoConv
     );
     auto *raw       = p.get();
     raw->onChooseIn = [this](const std::string &key, ConvRef conv) {

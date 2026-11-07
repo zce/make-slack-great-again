@@ -1725,19 +1725,36 @@ void SlackBackend::setPhoto(std::string path, Done done) {
 // ── Search ──────────────────────────────────────────────────────────────────
 
 void SlackBackend::search(std::string query, std::function<void(std::vector<SearchHit>)> done) {
-    // The contract is newest first, hence the timestamp sort (msga took
-    // Slack's default "score" order).
+    searchPage(std::move(query), 1, [done = std::move(done)](SearchPage result) {
+        if (done) done(std::move(result.hits));
+    });
+}
+
+void SlackBackend::searchPage(std::string query, int page, SearchPageDone done) {
+    // Slack's search.messages supports page=1..100; keep the API's timestamp
+    // order, and let the caller merge results from multiple workspaces.
+    const int requestedPage = std::clamp(page, 1, 100);
     api("search.messages",
         net::formEncode(
-            {{"query", query}, {"count", "20"}, {"sort", "timestamp"}, {"sort_dir", "desc"}}
+            {{"query", query}, {"count", "20"}, {"page", str::number(requestedPage)},
+             {"sort", "timestamp"}, {"sort_dir", "desc"}, {"highlight", "true"}}
         ),
-        [this, done = std::move(done)](const json::Document &doc, const std::string &err) {
+        [this, requestedPage, done = std::move(done)](
+            const json::Document &doc, const std::string &err
+        ) {
             if (err == "cancelled")
                 return;
-            std::vector<SearchHit> hits;
-            if (!err.empty())
+            SearchPage result;
+            if (!err.empty()) {
+                result.error = err;
                 LOG_WARN("slack", "search.messages: %s", err.c_str());
-            for (json::Value m : doc.root()["messages"]["matches"]) {
+                if (done) done(std::move(result));
+                return;
+            }
+            const json::Value messages = doc.root()["messages"];
+            const int pages = int(messages["paging"]["pages"].integer());
+            result.hasMore = requestedPage < pages && requestedPage < 100;
+            for (json::Value m : messages["matches"]) {
                 SearchHit h;
                 h.conv = _store.findConversation(m["channel"]["id"].str());
                 h.ts   = model::parseTs(m["ts"].str());
@@ -1754,11 +1771,17 @@ void SlackBackend::search(std::string query, std::function<void(std::vector<Sear
                 }
                 if (h.thread == h.ts)
                     h.thread = 0; // a root is a top-level hit
-                h.text = m["text"].str();
-                hits.push_back(h);
+                const std::string userId(m["user"].str());
+                if (!userId.empty()) {
+                    h.user   = _store.findUser(userId);
+                    h.sender = userId;
+                }
+                if (!m["username"].str().empty())
+                    h.sender = std::string(m["username"].str());
+                h.text = m["text"].str(); // highlight markers belong to this result, not the Store
+                result.hits.push_back(std::move(h));
             }
-            if (done)
-                done(std::move(hits));
+            if (done) done(std::move(result));
         });
 }
 

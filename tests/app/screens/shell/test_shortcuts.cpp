@@ -253,6 +253,7 @@ TEST("shortcuts: Ctrl+F uses the same message-first popup as Ctrl+K") {
     REQUIRE(search != nullptr);
     CHECK(h.win->topPopup() == search);
     CHECK(search->field().focused());
+    CHECK(search->scope() == design);
     CHECK_STR(h.edit().text(), "draft"); // never modify the composer draft
 
     h.chord(kCtrl, K::K); // no nested search popup
@@ -278,12 +279,64 @@ TEST("search: a result's labels") {
     CHECK_STR(shell::searchConvLabel(st, h.conv("C0DESIGN")), "#design");
     CHECK_STR(shell::searchConvLabel(st, h.conv("D0MIRA")), st.displayName(h.conv("D0MIRA")));
     CHECK_STR(shell::searchConvLabel(st, model::kNoConv), "Unknown channel");
+    CHECK_STR(shell::searchScopeQuery(st, h.conv("C0DESIGN")), "in:design");
+    CHECK_STR(shell::searchScopeQuery(st, model::kNoConv), "");
+    CHECK_STR(shell::searchScopeQuery(st, h.conv("D0MIRA")), "in:<@U0MIRA>");
     const std::string mira(st.user(st.findUser("U0MIRA")).label());
     CHECK_STR(
         shell::searchPreview(st, "ping <@U0MIRA>\nand <@U9NOBODY> *now*"),
         "ping @" + mira + " and @U9NOBODY now"
     );
     CHECK(utf8::countCodePoints(shell::searchPreview(st, std::string(300, 'x'))) == 180);
+}
+
+TEST("search: fake backend paginates and scopes results") {
+    Harness h;
+    const ConvRef design = h.conv("C0DESIGN");
+    const Ts start = h.store.conversation(design).latest + 1000000;
+    std::vector<Message> messages;
+    for (int i = 0; i < 45; ++i) {
+        Message m;
+        m.ts = start + Ts(i) * 1000000;
+        m.user = h.store.me;
+        m.text = "search-pagination-token " + std::to_string(i);
+        messages.push_back(std::move(m));
+    }
+    h.store.addPage(design, std::move(messages));
+    Backend::SearchPage first, second, third;
+    bool done = false;
+    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", 1,
+                         [&](Backend::SearchPage r) { first = std::move(r); done = true; });
+    for (int i = 0; i < 1000 && !done; ++i) pump(5);
+    REQUIRE(done);
+    CHECK(first.hits.size() == 20);
+    CHECK(first.hasMore);
+    done = false;
+    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", 2,
+                         [&](Backend::SearchPage r) { second = std::move(r); done = true; });
+    for (int i = 0; i < 1000 && !done; ++i) pump(5);
+    REQUIRE(done);
+    CHECK(second.hits.size() == 20);
+    CHECK(second.hasMore);
+    CHECK(second.hits[0].ts < first.hits.back().ts);
+    done = false;
+    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", 3,
+                         [&](Backend::SearchPage r) { third = std::move(r); done = true; });
+    for (int i = 0; i < 1000 && !done; ++i) pump(5);
+    REQUIRE(done);
+    CHECK(third.hits.size() == 5);
+    CHECK_FALSE(third.hasMore);
+}
+
+TEST("search: Slack highlighted Unicode preview removes markers and preserves bytes") {
+    model::Store st;
+    const std::string marked = std::string("你好 ") + "\xEE\x80\x80" + "世界" +
+                               "\xEE\x80\x81" + " hello";
+    CHECK_STR(shell::searchPreview(st, marked), "你好 世界 hello");
+    const text::AttributedText rich = shell::searchHighlightedPreview(st, marked);
+    CHECK_STR(rich.text, "你好 世界 hello");
+    CHECK(rich.spans.size() >= 3);
+    CHECK(rich.spans[1].style.weight == text::Weight::Semibold);
 }
 
 TEST("search: previews and notifications resolve mentions the same way") {

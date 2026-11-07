@@ -593,7 +593,7 @@ void FakeBackend::search(std::string query, std::function<void(std::vector<Searc
             auto        scan = [&](const std::vector<model::Message> &msgs, Ts thread) {
                 for (const auto &m : msgs)
                     if (utf8::containsFolded(mrkdwn::parse(m.text).text, q))
-                        hits.push_back(SearchHit{c, m.ts, thread, m.text});
+                        hits.push_back(SearchHit{c, m.ts, thread, m.text, m.user});
             };
             scan(conv.messages, 0);
             for (const auto &t : conv.threads)
@@ -606,6 +606,68 @@ void FakeBackend::search(std::string query, std::function<void(std::vector<Searc
     later(kReadLatencyMs * 4, [done = std::move(done), hits = std::move(hits)]() mutable {
         if (done)
             done(std::move(hits));
+    });
+}
+
+// The fixture backend honors the common Slack scope/author operators and
+// paginates its local results, so the popup can exercise real page transitions
+// without a network connection. Date operators are passed to Slack directly.
+void FakeBackend::searchPage(std::string query, int page, SearchPageDone done) {
+    std::string words, inChannel, inUser, fromUser;
+    // Keep the simple fake text matcher; don't pass search operators into it.
+    size_t begin = 0;
+    while (begin < query.size()) {
+        while (begin < query.size() && query[begin] == ' ') ++begin;
+        if (begin == query.size()) break;
+        size_t end = query.find(' ', begin);
+        if (end == std::string::npos) end = query.size();
+        const std::string token = query.substr(begin, end - begin);
+        if (token.starts_with("in:<#") && token.ends_with(">"))
+            inChannel = token.substr(5, token.size() - 6);
+        else if (token.starts_with("in:<@") && token.ends_with(">"))
+            inUser = token.substr(5, token.size() - 6);
+        else if (token.starts_with("from:<@") && token.ends_with(">"))
+            fromUser = token.substr(7, token.size() - 8);
+        else if (token == "from:me")
+            fromUser = _store.user(_store.me).id;
+        else if (token.starts_with("in:"))
+            inChannel = token.substr(3); // Slack's documented in:channel syntax
+        else if (token.starts_with("from:"))
+            fromUser = token.substr(5); // Slack handle / display name
+        else if (!token.starts_with("after:") && !token.starts_with("before:")) {
+            if (!words.empty()) words += ' ';
+            words += token;
+        }
+        begin = end;
+    }
+    search(words, [this, page, inChannel, inUser, fromUser,
+                   done = std::move(done)](std::vector<SearchHit> hits) {
+        std::vector<SearchHit> filtered;
+        for (SearchHit &h : hits) {
+            const auto &conv = _store.conversation(h.conv);
+            if (!inChannel.empty() && conv.id != inChannel && conv.name != inChannel)
+                continue;
+            if (!inUser.empty() &&
+                (conv.kind != model::ConvKind::Dm ||
+                 conv.dmUser == model::kNoUser || _store.user(conv.dmUser).id != inUser))
+                continue;
+            if (!fromUser.empty()) {
+                if (h.user == model::kNoUser) continue;
+                const auto &sender = _store.user(h.user);
+                if (sender.id != fromUser && sender.name != fromUser &&
+                    sender.label() != fromUser) continue;
+            }
+            filtered.push_back(std::move(h));
+        }
+        constexpr size_t count = 20;
+        const size_t start = size_t(std::max(1, page) - 1) * count;
+        SearchPage result;
+        if (start < filtered.size()) {
+            const size_t end = std::min(start + count, filtered.size());
+            result.hits.assign(filtered.begin() + start, filtered.begin() + end);
+            result.hasMore = end < filtered.size();
+        }
+        if (done) done(std::move(result));
     });
 }
 

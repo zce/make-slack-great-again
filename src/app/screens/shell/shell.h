@@ -157,7 +157,7 @@ public:
     void           purgeHistory(const std::string &key);
     model::ConvRef current() const { return _current; }
     bool           threadOpen() const;
-    void           showQuickSwitcher();
+    void           showQuickSwitcher(bool currentConversation = false);
     // Back/forward through the conversations opened (NavBack/NavForward),
     // switching workspaces where an entry is another's; false when there is
     // nowhere to go.

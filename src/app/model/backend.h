@@ -429,9 +429,19 @@ public:
         Ts          ts     = 0;
         Ts          thread = 0; // non-zero: a reply in that thread
         std::string text;       // the message's mrkdwn (it may not be loaded)
+        UserRef     user   = kNoUser; // sender, if known
+        std::string sender;     // fallback from the server (e.g. a removed user)
     };
-    // Messages containing `query` (case-insensitive), newest first.
+    struct SearchPage {
+        std::vector<SearchHit> hits;
+        bool                  hasMore = false;
+        std::string           error; // nonempty on API/transport failure, never an empty success
+    };
+    using SearchPageDone = std::function<void(SearchPage)>;
+    // Messages containing `query`, newest first. The old one-shot interface
+    // remains for simple backends; pageable services override searchPage().
     virtual void search(std::string query, std::function<void(std::vector<SearchHit>)> done);
+    virtual void searchPage(std::string query, int page, SearchPageDone done);
 
     // The sidebar's "Threads" page (Capabilities::threadsView):
     // the threads I follow, newest activity first. Copies,
