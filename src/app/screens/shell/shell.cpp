@@ -1578,9 +1578,10 @@ void Shell::buildTitleBar(View *parent) {
     _pageTitle->setHitTransparent(true);
     _pageTitle->style().shrink = 1;
     _pageAction = _pageHeading->add<Button>(
-        tr("Refresh"), Button::Kind::Ghost, Button::Form::Small
+        "↻", Button::Kind::Ghost, Button::Form::Small
     );
     _pageAction->setFocusable(false);
+    _pageAction->setTooltip(tr("Refresh"));
     _pageAction->setTextColor(C::SidebarTextMuted);
     _pageAction->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 6});
     _pageAction->style().noShrink();
