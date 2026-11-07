@@ -142,7 +142,7 @@ bool paintIcon(
         if (flags & 1) {
             sc.fill.clear();
             fillSegs(flat, &sc.fill);
-            PainterImpl::rasterize(p, sc.fill, pm);
+            PainterImpl::rasterize(p, sc.fill, pm, (flags & 8) ? FillRule::EvenOdd : FillRule::NonZero);
         }
         if (flags & 2)
             strokeSegs(flat, hw, &segs);

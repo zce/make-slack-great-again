@@ -2,7 +2,7 @@
 // into the Store, what a reconnect backfills, the presence link and the
 // OAuth token refresh.
 //
-// Typing (user_typing is RTM-only, dead over Socket Mode) is not here.
+// Typing is RTM-only, not part of the shared Socket Mode event stream.
 #include "app/slack/rtm_presence.h"
 #include "app/model/timers.h"
 #include "app/slack/slack_backend.h"
@@ -43,6 +43,7 @@ constexpr int64_t kContentionNoticeGap   = 5 * 60'000;
 constexpr int     kRefreshCheckMs        = 60'000;
 constexpr int64_t kRefreshAheadSecs      = 3600;
 constexpr int     kPresenceRefreshMs     = 2'000; // Slack registers the socket a beat after hello
+constexpr int     kTypingExpiryMs        = 6'000; // RTM resends while someone is still typing
 constexpr int     kUsergroupsDebounceMs  = 2'000;
 constexpr int     kUnreadPatchMs         = 300;
 
@@ -115,6 +116,15 @@ struct SlackBackend::Live {
     // ── The presence link ───────────────────────────────────────────────────
     std::unique_ptr<RtmPresence> rtm;
     plat::TimerId                selfTimer = 0;
+    struct TypingLease {
+        plat::TimerId timer = 0;
+        ConvRef conv = kNoConv;
+        UserRef user = kNoUser;
+        Ts thread = 0;
+    };
+    std::unordered_map<std::string, TypingLease> typingLeases;
+    void onRtmTyping(const std::string &channel, const std::string &user, Ts thread);
+    void clearTyping();
 
     // ── Token refresh ───────────────────────────────────────────────────────
     AppConfig                              cfg;
@@ -139,7 +149,12 @@ SlackBackend::Live::Live(SlackBackend &b) : b(b), s(b.store()) {
             },
             b._creds.cookie
         );
-        rtm->onStateChanged = [this](RtmPresence::Link) {
+        rtm->onUserTyping = [this](std::string channel, std::string user, Ts thread) {
+            onRtmTyping(channel, user, thread);
+        };
+        rtm->onStateChanged = [this](RtmPresence::Link state) {
+            if (state != RtmPresence::Link::Active)
+                clearTyping();
             // The footer's tooltip names the link's state (no user changed).
             s.usersChanged(kNoUser);
             // Slack flips `online` as the socket comes and goes, but the
@@ -165,6 +180,7 @@ SlackBackend::Live::Live(SlackBackend &b) : b(b), s(b.store()) {
 
 SlackBackend::Live::~Live() {
     rtm.reset(); // before anything it calls into
+    clearTyping();
     if (socket && sink)
         socket->removeSink(sink);
     timers.cancelAll(); // before the rest goes: they capture this
@@ -276,10 +292,10 @@ void SlackBackend::Live::apply(const json::Value &ev, bool ours) {
         });
         return;
     }
-    if (type == "presence_change" || type == "dnd_updated_user") {
+    if (type == "presence_change" || type == "dnd_updated_user" || type == "dnd_updated") {
         const bool presence = type == "presence_change";
-        const bool on =
-            presence ? ev["presence"].str() == "active" : ev["dnd_status"]["dnd_enabled"].boolean();
+        const bool on = presence ? ev["presence"].str() == "active"
+                                 : mapjson::dndPaused(ev["dnd_status"], base::nowSecs());
         int     changed = 0;
         UserRef last    = kNoUser;
         auto    patch   = [&](std::string_view id) {
@@ -636,7 +652,48 @@ void SlackBackend::Live::applyPatches() {
     patches.clear();
 }
 
-// ── The presence link ───────────────────────────────────────────────────────
+// ── The presence link and typing ────────────────────────────────────────────
+
+void SlackBackend::Live::onRtmTyping(
+    const std::string &channel, const std::string &id, Ts thread
+) {
+    const ConvRef conv = s.findConversation(channel);
+    const UserRef user = s.findUser(id);
+    if (conv == kNoConv || user == kNoUser || user == s.me)
+        return;
+    const std::string key = str::concat({channel, ":", id, ":", model::formatTs(thread)});
+    auto &lease = typingLeases[key];
+    if (lease.timer)
+        b._app.cancelTimer(lease.timer);
+    lease.conv = conv;
+    lease.user = user;
+    lease.thread = thread;
+    s.setTyping(conv, user, thread, true);
+    lease.timer = b._app.addTimer(
+        std::max(1, int(kTypingExpiryMs / speed)), false,
+        [this, key] {
+            const auto it = typingLeases.find(key);
+            if (it == typingLeases.end())
+                return;
+            const TypingLease lease = it->second;
+            typingLeases.erase(it);
+            s.setTyping(lease.conv, lease.user, lease.thread, false);
+        }
+    );
+}
+
+void SlackBackend::Live::clearTyping() {
+    for (const auto &[key, lease] : typingLeases) {
+        b._app.cancelTimer(lease.timer);
+        s.setTyping(lease.conv, lease.user, lease.thread, false);
+    }
+    typingLeases.clear();
+}
+
+void SlackBackend::userTyping(ConvRef conv, Ts thread) {
+    if (_live->rtm && conv < _store.conversationCount())
+        _live->rtm->sendTyping(_store.conversation(conv).id, thread);
+}
 
 void SlackBackend::setPresenceMode(PresenceMode mode) {
     if (_live->rtm)

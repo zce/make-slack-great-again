@@ -361,12 +361,11 @@ void SidebarFooter::refresh() {
     // phantomAway() is false while manually away: an explicit "hidden" shows
     // the hollow ring rather than the amber tint.
     const bool active = sp.loaded ? sp.active : me.active;
-    // The footer never draws my own DND.
     _avatar->setPresence(
         !self              ? P::None
-        : active           ? P::Active
-        : sp.phantomAway() ? P::Phantom
-                           : P::Away,
+        : active           ? (me.dnd ? P::ActiveDnd : P::Active)
+        : sp.phantomAway() ? (me.dnd ? P::PhantomDnd : P::Phantom)
+                           : (me.dnd ? P::Dnd : P::Away),
         _inRail && !_inTitle ? C::Rail : C::Sidebar
     );
     _avatarBtn->setTooltip(caps.selfStatus ? tr("Profile & status") : tr("Profile"));

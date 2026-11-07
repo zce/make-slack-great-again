@@ -461,14 +461,17 @@ void ConvHeader::refresh() {
             C::BadgeText // the header dot's ring is white
         );
         // The presence tooltip: nothing until my presence is known.
-        _avatar->setTooltip(
+        std::string presenceTip =
             !self ? std::string()
             : sp.phantomAway()
                 ? tr("You appear away to others \xE2\x80\x94 no official Slack client is connected")
             : sp.active ? tr("Active")
             : sp.loaded ? tr("Away")
-                        : std::string()
-        );
+                        : std::string();
+        if (u.dnd)
+            presenceTip += presenceTip.empty() ? tr("Notifications paused")
+                                               : tr(" \xC2\xB7 notifications paused");
+        _avatar->setTooltip(std::move(presenceTip));
         _avatar->setCursor(plat::Cursor::Arrow);
     } else if (c.kind == ConvKind::Group) {
         // conversations.list leaves a renamed group DM's members out: ask once

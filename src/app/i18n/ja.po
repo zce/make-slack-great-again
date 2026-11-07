@@ -2442,6 +2442,14 @@ msgstr "アクティブ"
 msgid "Away"
 msgstr "離席中"
 
+#: src/app/screens/shell/header.cpp
+msgid "Notifications paused"
+msgstr ""
+
+#: src/app/screens/shell/header.cpp
+msgid " · notifications paused"
+msgstr ""
+
 #: src/app/screens/shell/header.cpp src/app/screens/shell/quick_switcher.cpp
 msgid "Messages"
 msgstr "メッセージ"

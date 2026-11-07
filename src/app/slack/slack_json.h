@@ -17,6 +17,8 @@ namespace slack::mapjson {
 // USLACKBOT (Slackbot) / USLACK (the "Slack" workspace notifier): absent
 // from users.list, is_bot=false, no observable presence.
 bool                isSlackSystemUser(std::string_view id);
+// Whether notifications are paused right now (snooze or scheduled DND).
+bool                dndPaused(const json::Value &status, int64_t nowSecs);
 // A users.list / users.info member. realName / profileName: real_name and
 // display_name (enterprise directories fill display_name with a login
 // slug); displayName as for full names (the Store re-resolves it); avatar:

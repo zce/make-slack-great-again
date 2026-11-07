@@ -104,20 +104,19 @@ plat::Image toPlatImage(const gfx::Bitmap &b);
 // an OS notification. Non-square input is centre-cropped first.
 plat::Image roundedNotificationImage(const gfx::Bitmap &b);
 
-// A square avatar (rounded or round) with a presence dot: a 6 px dot centred 3 px in from the
-// bottom-right corner on a 10 px disc of `ring` (the row colour) — green when active, amber when
-// away only for want of an official client (phantom), a DND bar, else a hollow ring (bright on a
-// selected row).
+// A square avatar (rounded or round) with a presence badge at its lower right:
+// active is green, away is hollow, and paused notifications add two pause bars
+// inside either badge. The mark comes from the existing Pause vector icon.
 class Avatar : public ui::Image {
 public:
-    enum class Presence : uint8_t { None, Active, Away, Phantom, Dnd };
+    enum class Presence : uint8_t { None, Active, Away, Phantom, Dnd, ActiveDnd, PhantomDnd };
     Avatar();
     ~Avatar() override;
     void            setPresence(Presence p, ui::C ring, bool selected = false);
     // The presence dot for a user: none for a bot or a backend
-    // without presence, then DND, active, phantom (yellow: `phantom`, e.g. me
+    // without presence; then active, phantom (yellow: `phantom`, e.g. me
     // with no official client connected, or a peer that can't be reached,
-    // User::unavailable), else away. Null u: none.
+    // User::unavailable), or away, with a separate DND variant. Null u: none.
     static Presence presenceOf(const model::User *u, bool hasPresence, bool phantom = false);
     Presence        presence() const { return _presence; }
     // The initial-letter placeholder: the first letter of `name` over the
@@ -133,5 +132,12 @@ private:
     ui::C                         _ring     = ui::C::Sidebar;
     bool                          _selected = false;
 };
+
+// Shared four-state presence badge for avatars and profile cards. The exact
+// monochrome SVGs are compiled into the existing icon table and tinted here.
+void paintPresenceBadge(
+    gfx::Painter &p, ui::PointF center, Avatar::Presence presence,
+    gfx::Color background, gfx::Color awayInk, float radius = 3.5f
+);
 
 } // namespace shell

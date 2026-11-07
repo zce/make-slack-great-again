@@ -99,14 +99,18 @@ enum class Icon : uint16_t {
     X,
     Tray,
     Logo,
+    PresenceOnline,
+    PresenceOnlinePaused,
+    PresenceOffline,
+    PresenceOfflinePaused,
 };
-constexpr int kIconCount = 92;
+constexpr int kIconCount = 96;
 
 // Path data for drawIcon() (format: src/tools/icons.py).
 namespace iconData {
 constexpr int kUnit = 32; // quanta per viewBox unit
-extern const uint8_t  kData[8804];
-extern const uint16_t kOffsets[93];
+extern const uint8_t  kData[9216];
+extern const uint16_t kOffsets[97];
 } // namespace iconData
 
 } // namespace gfx

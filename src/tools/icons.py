@@ -16,12 +16,12 @@ and gfx::drawIcon fills or strokes them (round caps and joins) at runtime.
 Supported SVG subset — everything the icons in gfx/ui use, plus a little:
   <svg viewBox>, <g>, <path d> (all commands incl. arcs), <circle>, <ellipse>,
   <rect x y width height rx ry>, <line>, <polyline>, <polygon>;
-  fill / stroke (none | currentColor | #rgb | #rrggbb), stroke-width,
+  fill / stroke (none | currentColor | #rgb | #rrggbb), fill-rule, stroke-width,
   transform (matrix/translate/scale/rotate). Anything else is reported.
 
 Blob format, per icon (offsets[i] .. offsets[i+1]):
   varint viewBox width, height (in 1/UNIT viewBox units)
-  items: flags byte (1 fill, 2 stroke, 4 literal colour)
+  items: flags byte (1 fill, 2 stroke, 4 literal colour, 8 even-odd fill)
          [varint stroke width] [4 bytes ARGB, big-endian]
          ops until End: byte = op | (repeat - 1) << 3, op in
            0 M x y, 1 L x y, 2 C x1 y1 x2 y2 x y, 3 Z, 4 circle cx cy r, 5 End
@@ -370,7 +370,7 @@ def parse_color(v, name):
 # ── SVG walk ────────────────────────────────────────────────────────────────
 KNOWN_ATTRS = {'d', 'cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'width', 'height', 'x1', 'y1', 'x2', 'y2',
                'points', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin',
-               'transform', 'id', 'viewBox', 'xmlns', 'class'}
+               'fill-rule', 'clip-rule', 'transform', 'id', 'viewBox', 'xmlns', 'class'}
 
 
 def load_icon(path):
@@ -387,7 +387,7 @@ def load_icon(path):
             if a not in KNOWN_ATTRS:
                 warn(name, f'ignored attribute {a} on <{tag}>')
         st = dict(style)
-        for k in ('fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'):
+        for k in ('fill', 'stroke', 'fill-rule', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'):
             if el.get(k) is not None:
                 st[k] = el.get(k)
         if el.get('transform'):
@@ -435,7 +435,7 @@ def load_icon(path):
         else:
             ops = transform_ops(ops, m)
         # Items are positioned relative to the viewBox origin.
-        items.append((fill, stroke, width * sc, ops))
+        items.append((fill, stroke, width * sc, ops, st.get('fill-rule', 'nonzero') == 'evenodd'))
 
     # The root's own fill/stroke seed the inherited style. SVG's initial fill
     # is black; for these UI icons (mdi window buttons) that means "the icon
@@ -468,7 +468,7 @@ def encode(vb, items):
         pen[axis] = q
         varint(((-d) << 1) - 1 if d < 0 else d << 1, out)
 
-    for fill, stroke, width, ops in items:
+    for fill, stroke, width, ops, evenodd in items:
         if fill is None and stroke is None:
             continue
         # One colour per item: fill and stroke only share an item when they
@@ -480,7 +480,7 @@ def encode(vb, items):
             parts = [(fill, stroke)]
         for f, s in parts:
             col = f if f is not None else s
-            flags = (1 if f is not None else 0) | (2 if s is not None else 0) | (4 if col != 'cur' else 0)
+            flags = (1 if f is not None else 0) | (2 if s is not None else 0) | (4 if col != 'cur' else 0) | (8 if f is not None and evenodd else 0)
             out.append(flags)
             if s is not None:
                 varint(round(width * UNIT), out)

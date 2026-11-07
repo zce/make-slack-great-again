@@ -56,6 +56,10 @@ if(Python3_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/../../gfx/ui ${CMAKE_CURRENT_SOURCE_DIR}
                 Tray=${CMAKE_CURRENT_SOURCE_DIR}/../../gfx/icon_tray.svg
                 Logo=color:${CMAKE_CURRENT_SOURCE_DIR}/../../gfx/icon.svg
+                PresenceOnline=${CMAKE_CURRENT_SOURCE_DIR}/../../gfx/presence/online.svg
+                PresenceOnlinePaused=${CMAKE_CURRENT_SOURCE_DIR}/../../gfx/presence/online-paused.svg
+                PresenceOffline=${CMAKE_CURRENT_SOURCE_DIR}/../../gfx/presence/offline.svg
+                PresenceOfflinePaused=${CMAKE_CURRENT_SOURCE_DIR}/../../gfx/presence/offline-paused.svg
         COMMENT "Generating gfx icon tables"
         VERBATIM)
 endif()

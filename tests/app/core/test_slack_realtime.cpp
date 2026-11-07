@@ -6,6 +6,7 @@
 // Slack.
 #include "app/cache/workspace_cache.h"
 #include "app/slack/rtm_presence.h"
+#include "app/slack/slack_json.h"
 #include "app/slack/slack_backend.h"
 #include "app/slack/socket_mode.h"
 #include "support/fake_slack_server.h"
@@ -73,9 +74,13 @@ int count(std::string_view method) {
 }
 
 // A server frame on the newest open Socket Mode socket.
-bool push(const std::string &frame) {
+bool push(const std::string &frame, std::string_view conn = {}) {
     std::string body = "{\"text\":";
     json::escapeString(body, frame);
+    if (!conn.empty()) {
+        body += ",\"conn\":";
+        json::escapeString(body, conn);
+    }
     body += '}';
     json::Document d;
     d.parse(ctl("POST", "/_ctl/ws/send", std::move(body)).body, nullptr);
@@ -847,6 +852,46 @@ TEST("slack realtime: the presence link holds an RTM socket with the d cookie") 
     // An OAuth workspace has none.
     Env o(false, false);
     CHECK(o.be->presenceLinkForTest() == nullptr);
+}
+
+TEST("slack realtime: RTM typing is sent, received and expires") {
+    if (!haveServer())
+        return;
+    Env e(true, false);
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("D1");
+    REQUIRE(c != kNoConv);
+    const auto mira = e.store.findUser("UMIRA");
+    REQUIRE(mira != model::kNoUser);
+    e.be->setPresenceMode(Mode::WhileRunning);
+    REQUIRE(pumpUntil([&] { return e.be->presenceLink() == Link::Active; }));
+    const std::string conn(Log().get("ws-open")["form"]["conn"].str());
+    REQUIRE(str::startsWith(conn, "rtm-"));
+    REQUIRE(push(R"({"type":"user_typing","channel":"D1","user":"UMIRA"})", conn));
+    REQUIRE(pumpUntil([&] { return !e.store.typing(c).empty(); }));
+    CHECK(e.store.typing(c)[0].user == mira);
+    CHECK(e.store.typing(c)[0].thread == 0);
+    e.be->userTyping(c, 0);
+    REQUIRE(pumpUntil([&] { return Log().frame("ws:rtm", R"("type":"typing")"); }));
+    REQUIRE(pumpUntil([&] { return e.store.typing(c).empty(); }, 2000));
+    // Native mode deliberately doesn't open an RTM socket just for typing.
+    e.be->setPresenceMode(Mode::Native);
+    e.be->userTyping(c, 0);
+    CHECK(e.be->presenceLink() == Link::Off);
+}
+
+TEST("slack realtime: DND schedule is distinct from active presence") {
+    json::Document d;
+    REQUIRE(d.parse(
+        std::string(R"({"dnd_enabled":true,"next_dnd_start_ts":150,"next_dnd_end_ts":250})"),
+        nullptr
+    ));
+    CHECK_FALSE(slack::mapjson::dndPaused(d.root(), 149));
+    CHECK(slack::mapjson::dndPaused(d.root(), 150));
+    CHECK(slack::mapjson::dndPaused(d.root(), 249));
+    CHECK_FALSE(slack::mapjson::dndPaused(d.root(), 250));
+    REQUIRE(d.parse(std::string(R"({"snooze_enabled":true,"dnd_enabled":false})"), nullptr));
+    CHECK(slack::mapjson::dndPaused(d.root(), 300));
 }
 
 TEST("slack realtime: the presence link reconnects without pongs and idles while unused") {

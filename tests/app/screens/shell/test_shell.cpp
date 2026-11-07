@@ -3599,19 +3599,26 @@ TEST("header: names, presence, DND and my phantom state follow the Store") {
     st.usersChanged();
     pump();
     CHECK(w.sh->header().avatarPresence() == int(P::Active));
-    st.user(mira).active = false;
-    st.usersChanged();
-    pump();
-    CHECK(w.sh->header().avatarPresence() == int(P::Away));
     st.user(mira).dnd = true;
     st.usersChanged();
     pump();
+    CHECK(w.sh->header().avatarPresence() == int(P::ActiveDnd));
+    st.user(mira).active = false;
+    st.usersChanged();
+    pump();
     CHECK(w.sh->header().avatarPresence() == int(P::Dnd));
-    st.user(mira).dnd         = false;
+    st.user(mira).dnd = false;
+    st.usersChanged();
+    pump();
+    CHECK(w.sh->header().avatarPresence() == int(P::Away));
     st.user(mira).unavailable = true; // an unreachable peer is phantom too
     st.usersChanged();
     pump();
     CHECK(w.sh->header().avatarPresence() == int(P::Phantom));
+    st.user(mira).dnd = true;
+    st.usersChanged();
+    pump();
+    CHECK(w.sh->header().avatarPresence() == int(P::PhantomDnd));
     // A name that changes later: the title and "Message …" follow.
     st.user(mira).displayName = "Mira O.";
     st.usersChanged();
@@ -3619,6 +3626,35 @@ TEST("header: names, presence, DND and my phantom state follow the Store") {
     CHECK_STR(w.sh->header().title()->text(), st.displayName(dm));
     CHECK(w.sh->header().title()->text().find("Mira O.") != std::string::npos);
     CHECK(w.sh->composer().edit().accessibleName().find("Mira O.") != std::string::npos);
+}
+
+TEST("presence badge: supplied SVGs render all four states at 100% and 150%") {
+    using P = shell::Avatar::Presence;
+    for (float scale : {1.f, 1.5f}) {
+        std::set<std::vector<uint32_t>> images;
+        for (const P state : {P::Active, P::Away, P::ActiveDnd, P::Dnd}) {
+            const int size = int(32 * scale);
+            gfx::Bitmap canvas(size, size);
+            gfx::Painter painter(canvas.view(), scale);
+            shell::paintPresenceBadge(
+                painter, {16, 16}, state, 0xfff9f9f9, 0xff505050, 3.5f
+            );
+            images.insert(std::vector<uint32_t>(
+                canvas.pixels(), canvas.pixels() + canvas.width() * canvas.height()
+            ));
+        }
+        CHECK(images.size() == 4);
+    }
+    auto centerIsTransparent = [](gfx::Icon icon) {
+        gfx::Bitmap canvas(40, 40);
+        gfx::Painter painter(canvas.view(), 1.f);
+        gfx::drawIcon(painter, icon, {10, 10, 20, 20}, 0xff606060);
+        return (canvas.pixels()[20 * 40 + 20] >> 24) == 0;
+    };
+    CHECK(centerIsTransparent(gfx::Icon::PresenceOffline));
+    CHECK(centerIsTransparent(gfx::Icon::PresenceOfflinePaused));
+    CHECK_FALSE(centerIsTransparent(gfx::Icon::PresenceOnline));
+    CHECK_FALSE(centerIsTransparent(gfx::Icon::PresenceOnlinePaused));
 }
 
 #ifdef MSGA_SELF_UPDATE

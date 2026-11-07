@@ -342,6 +342,18 @@ bool isSlackSystemUser(std::string_view id) {
     return id == "USLACKBOT" || id == "USLACK";
 }
 
+bool dndPaused(const json::Value &status, int64_t nowSecs) {
+    if (status["snooze_enabled"].boolean())
+        return true;
+    if (status.has("next_dnd_start_ts") && status.has("next_dnd_end_ts")) {
+        const int64_t start = status["next_dnd_start_ts"].integer();
+        const int64_t end   = status["next_dnd_end_ts"].integer();
+        return start > 0 && end > start && start <= nowSecs && nowSecs < end;
+    }
+    // Events lacking a schedule can report the current boolean directly.
+    return status["dnd_enabled"].boolean();
+}
+
 model::User toUser(const json::Value &o) {
     const Value                        p      = o["profile"];
     static const StrField<model::User> kTop[] = {

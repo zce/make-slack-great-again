@@ -3,6 +3,7 @@
 
 #include "app/slack/web_api.h"
 
+#include "base/json.h"
 #include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
@@ -34,6 +35,7 @@ RtmPresence::RtmPresence(plat::App &app, Connect connect, std::string cookie)
 RtmPresence::~RtmPresence() {
     *_alive        = false;
     onStateChanged = nullptr;
+    onUserTyping = nullptr;
     teardown();
     stopTimer(_idleTimer);
 }
@@ -212,11 +214,11 @@ void RtmPresence::onClosed(int code, const std::string &reason) {
 }
 
 void RtmPresence::onText(const std::string &text) {
-    // The socket carries every event of the workspace; only hello, pong and
-    // error are ours, and a frame without one of the words is none of them
-    // (no parse for the rest).
+    // Keep the cheap prefilter: only user_typing joins the existing
+    // hello/pong/error control frames; message delivery stays with polling.
     const std::string_view t(text);
-    if (t.find("hello") == t.npos && t.find("pong") == t.npos && t.find("error") == t.npos)
+    if (t.find("hello") == t.npos && t.find("pong") == t.npos &&
+        t.find("error") == t.npos && t.find("user_typing") == t.npos)
         return;
     json::Document doc;
     if (!doc.parse(std::string_view(text), nullptr))
@@ -236,6 +238,18 @@ void RtmPresence::onText(const std::string &text) {
         _awaitingPongs = 0;
         return;
     }
+    if (type == "user_typing") {
+        if (onUserTyping) {
+            const auto channel = doc.root()["channel"].str();
+            const auto user = doc.root()["user"].str();
+            if (!channel.empty() && !user.empty())
+                onUserTyping(
+                    std::string(channel), std::string(user),
+                    model::parseTs(doc.root()["thread_ts"].str())
+                );
+        }
+        return;
+    }
     if (type == "error") {
         // e.g. invalid_auth without the cookie: Slack drops the socket soon
         // anyway; don't wait for it.
@@ -249,6 +263,18 @@ void RtmPresence::onText(const std::string &text) {
         scheduleReconnect();
     }
     // Everything else is the event stream: not ours.
+}
+
+void RtmPresence::sendTyping(std::string_view channel, model::Ts threadTs) {
+    if (_state != Link::Active || !connected() || channel.empty())
+        return;
+    json::Writer w;
+    w.beginObject().key("type").value("typing").key("id").value(++_pingId)
+        .key("channel").value(channel);
+    if (threadTs > 0)
+        w.key("thread_ts").value(model::formatTs(threadTs));
+    w.endObject();
+    _ws->sendText(w.take());
 }
 
 void RtmPresence::sendPing() {

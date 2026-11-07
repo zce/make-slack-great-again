@@ -5,6 +5,7 @@
 #include "app/screens/common/remote_images.h"
 #include "app/screens/messages/image_cache.h"
 #include "base/str.h"
+#include "gfx/icons_generated.h"
 
 #include <algorithm>
 #include <cmath>
@@ -191,11 +192,13 @@ plat::Image roundedNotificationImage(const gfx::Bitmap &b) {
 }
 
 Avatar::Presence Avatar::presenceOf(const model::User *u, bool hasPresence, bool phantom) {
-    return !u || u->bot || !hasPresence ? Presence::None
-           : u->dnd                     ? Presence::Dnd
-           : u->active                  ? Presence::Active
-           : phantom || u->unavailable  ? Presence::Phantom
-                                        : Presence::Away;
+    if (!u || u->bot || !hasPresence)
+        return Presence::None;
+    if (u->active)
+        return u->dnd ? Presence::ActiveDnd : Presence::Active;
+    if (phantom || u->unavailable)
+        return u->dnd ? Presence::PhantomDnd : Presence::Phantom;
+    return u->dnd ? Presence::Dnd : Presence::Away;
 }
 
 Avatar::Avatar() {
@@ -228,30 +231,41 @@ void Avatar::styleChanged() {
     Image::styleChanged();
 }
 
+void paintPresenceBadge(
+    gfx::Painter &p, ui::PointF center, Avatar::Presence presence,
+    gfx::Color background, gfx::Color awayInk, float radius
+) {
+    using P = Avatar::Presence;
+    if (presence == P::None)
+        return;
+    const bool active = presence == P::Active || presence == P::ActiveDnd;
+    const bool phantom = presence == P::Phantom || presence == P::PhantomDnd;
+    const bool paused = presence == P::Dnd || presence == P::ActiveDnd ||
+                        presence == P::PhantomDnd;
+    const gfx::Icon icon = active
+        ? (paused ? gfx::Icon::PresenceOnlinePaused : gfx::Icon::PresenceOnline)
+        : (paused ? gfx::Icon::PresenceOfflinePaused : gfx::Icon::PresenceOffline);
+    const gfx::Color tint = active ? ui::color(ui::C::Online)
+                             : phantom ? ui::color(ui::C::PresencePhantom)
+                                       : awayInk;
+    // Keep the existing avatar-edge separation; the supplied SVGs define
+    // the exact visible shape and are scaled by their 4.5-unit dot radius.
+    p.fillCircle(center, radius + 1.5f, background);
+    const float iconSize = radius * (20.f / 4.5f);
+    gfx::drawIcon(
+        p, icon,
+        {center.x - iconSize / 2, center.y - iconSize / 2, iconSize, iconSize},
+        tint
+    );
+}
 void Avatar::paintOver(gfx::Painter &p) {
     if (!_initial.empty() && (!bitmap() || bitmap()->empty()))
         screens::paintInitial(p, *this, bounds(), 0, 0, _initial, _initialLayout);
-    if (_presence == Presence::None)
-        return;
-    const ui::PointF c{width() - 3, height() - 3};
-    if (_ring != ui::C::None)
-        p.fillCircle(c, 5, ui::color(_ring));
-    switch (_presence) {
-    case Presence::Active:
-        p.fillCircle(c, 3, ui::color(ui::C::Online));
-        break;
-    case Presence::Phantom:
-        p.fillCircle(c, 3, ui::color(ui::C::PresencePhantom));
-        break;
-    case Presence::Dnd:
-        p.fillCircle(c, 3, ui::color(ui::C::FormDivider));
-        p.drawLine({c.x - 2, c.y}, {c.x + 2, c.y}, 1.5f, ui::color(ui::C::PresenceAway));
-        break;
-    default:
-        p.strokeCircle(
-            c, 3, 1, ui::color(_selected ? ui::C::SidebarSelectedText : ui::C::SidebarTextMuted)
-        );
-    }
+    const gfx::Color background = _ring == ui::C::None ? 0 : ui::color(_ring);
+    paintPresenceBadge(
+        p, {width() - 3, height() - 3}, _presence, background,
+        ui::color(_selected ? ui::C::SidebarSelectedText : ui::C::SidebarTextMuted)
+    );
 }
 
 } // namespace shell

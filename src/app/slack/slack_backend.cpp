@@ -237,6 +237,7 @@ struct SlackBackend::Read {
 
     // ── Users ───────────────────────────────────────────────────────────────
     std::unordered_set<std::string>          pendingUsers, presenceUnavailable, offRoster;
+    bool                                     dndUnavailable = false;
     std::unordered_map<std::string, int64_t> probedAt;
     // users.info/bots.info lookups that failed (user_not_found, a deleted or
     // invisible account) or answered no user: not asked again until the
@@ -253,6 +254,7 @@ struct SlackBackend::Read {
     void reprobeOffRoster();
     void requestPresence(UserRef u, bool background);
     void pollDmPresence();
+    void pollDnd(const std::vector<UserRef> &users);
     void refreshSelfPresence(std::function<void()> then = {});
 
     // ── Stars and saved items (server snapshots, diffed) ────────────────────
@@ -1477,6 +1479,8 @@ void SlackBackend::Read::requestPresence(UserRef ref, bool background) {
     if (background && presenceUnavailable.count(u.id))
         return;
     const std::string id = u.id;
+    if (!background)
+        pollDnd({ref}); // a newly opened DM needs its DND status promptly
     call(
         "users.getPresence",
         net::formEncode({{"user", id}}),
@@ -1511,18 +1515,78 @@ void SlackBackend::Read::pollDmPresence() {
         return a.first > b.first;
     });
     const size_t n = dms.size(), hot = std::min<size_t>(kPresenceHot, n);
-    for (size_t i = 0; i < hot; ++i)
+    std::vector<UserRef> selected;
+    selected.reserve(kPresenceHot + kPresenceRotate);
+    for (size_t i = 0; i < hot; ++i) {
         requestPresence(dms[i].second, true);
+        selected.push_back(dms[i].second);
+    }
     const size_t rest = n - hot;
     if (rest == 0) {
         presenceIdx = 0;
-        return;
+    } else {
+        presenceIdx %= rest;
+        const size_t batch = std::min<size_t>(kPresenceRotate, rest);
+        for (size_t i = 0; i < batch; ++i) {
+            const UserRef u = dms[hot + (presenceIdx + i) % rest].second;
+            requestPresence(u, true);
+            selected.push_back(u);
+        }
+        presenceIdx = (presenceIdx + batch) % rest;
     }
-    presenceIdx %= rest;
-    const size_t batch = std::min<size_t>(kPresenceRotate, rest);
-    for (size_t i = 0; i < batch; ++i)
-        requestPresence(dms[hot + (presenceIdx + i) % rest].second, true);
-    presenceIdx = (presenceIdx + batch) % rest;
+    pollDnd(selected);
+}
+
+void SlackBackend::Read::pollDnd(const std::vector<UserRef> &users) {
+    if (dndUnavailable)
+        return;
+    std::vector<std::string> ids;
+    auto add = [&](UserRef ref) {
+        if (ref == kNoUser)
+            return;
+        const model::User &u = s.user(ref);
+        if (!u.id.empty() && !u.bot && !u.placeholder &&
+            std::find(ids.begin(), ids.end(), u.id) == ids.end())
+            ids.push_back(u.id);
+    };
+    add(s.me); // keep the footer's DND current even if the pause changed elsewhere
+    for (UserRef u : users)
+        add(u);
+    if (ids.empty())
+        return;
+    std::string joined;
+    for (const std::string &id : ids) {
+        if (!joined.empty())
+            joined += ',';
+        joined += id;
+    }
+    call(
+        "dnd.teamInfo",
+        net::formEncode({{"users", joined}}),
+        [this](const json::Document &doc, const std::string &err) {
+            if (!err.empty()) {
+                if (err == "missing_scope" || err == "not_allowed_token_type" ||
+                    err == "method_deprecated" || err == "deprecated_endpoint" ||
+                    err == "no_permission")
+                    dndUnavailable = true;
+                return;
+            }
+            int changed = 0;
+            for (const json::Value status : doc.root()["users"]) {
+                const UserRef ref = s.findUser(status.key());
+                if (ref == kNoUser)
+                    continue;
+                const bool paused = mapjson::dndPaused(status, base::nowSecs());
+                if (s.user(ref).dnd != paused) {
+                    s.user(ref).dnd = paused;
+                    ++changed;
+                }
+            }
+            if (changed)
+                s.usersChanged();
+        },
+        Lane::Background
+    );
 }
 
 void SlackBackend::Read::refreshSelfPresence(std::function<void()> then) {

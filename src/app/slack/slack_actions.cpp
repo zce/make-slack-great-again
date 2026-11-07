@@ -1314,11 +1314,6 @@ void SlackBackend::scheduledGone(
         done(err.empty(), err);
 }
 
-void SlackBackend::userTyping(ConvRef, Ts) {
-    // users.typing is gone from the Web API, so this is a no-op; official
-    // clients send typing over their RTM socket.
-}
-
 // ── Read cursors ────────────────────────────────────────────────────────────
 
 void SlackBackend::markRead(ConvRef conv, Ts ts) {

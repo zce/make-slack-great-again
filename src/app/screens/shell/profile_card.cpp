@@ -21,7 +21,7 @@ namespace {
 
 // The card's metrics.
 constexpr float kShadow = 8, kRadius = 8, kPad = 16, kAv = 72, kAvRadius = 8, kAvGap = 14;
-constexpr float kBtnH = 36, kGap = 6, kDot = 8, kDotGap = 8;
+constexpr float kBtnH = 36, kGap = 6, kDot = 12, kDotGap = 8;
 constexpr int   kCopiedMs = 1200;
 
 // The theme colours the card uses, light then dark.
@@ -242,15 +242,9 @@ void ProfileCard::paint(gfx::Painter &p) {
     _name->paint(p, snapPx({textX, ty}));
     const float  cy = ty + _name->height() / 2;
     const PointF dot{textX + _name->width() + kDotGap + kDot / 2, cy};
-    if (u.dnd) { // presence.away with a surface.raised dash across
-        p.fillCircle(dot, kDot / 2, ui::color(C::PresenceAway));
-        p.fillRoundRect(
-            {dot.x - kDot / 2 + 2, dot.y - 0.75f, kDot - 4, 1.5f}, 0.75f, ui::color(C::FormBg)
-        );
-    } else if (u.active)
-        p.fillCircle(dot, kDot / 2, tone(Online));
-    else
-        p.strokeCircle(dot, kDot / 2 - 0.6f, 1.2f, tone(Tertiary));
+    using P = Avatar::Presence;
+    const P presence = Avatar::presenceOf(&u, true);
+    paintPresenceBadge(p, dot, presence, tone(Raised), tone(Tertiary), 4);
     ty += std::ceil(_name->height());
     for (const text::Layout *l : {_status.get(), _title.get()})
         if (l) {

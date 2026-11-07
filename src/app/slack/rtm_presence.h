@@ -8,8 +8,8 @@
 // rtm.connect works for a session token (not a granular OAuth one), and the
 // wss URL it returns carries no auth: the handshake MUST send the `d` cookie,
 // or Slack answers {"type":"error",…invalid_auth} and drops the socket ~5 s
-// later. Frames on the socket (every conversation's events) are ignored —
-// delivery stays with the polling; only hello, pong and error are read.
+// later. Frames on the socket (every conversation's events) are ignored except
+// user_typing; message delivery stays on polling.
 // Slack pongs RTM pings (unlike Socket Mode), so two missed pongs are a real
 // liveness signal (it also catches a laptop-sleep gap). Input is forwarded
 // as `tickle` frames, the official client's way of resetting auto-away.
@@ -22,6 +22,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace plat {
 class App;
@@ -49,8 +50,12 @@ public:
     // Real input: WhileUsing re-arms the idle clock and brings an idle link
     // back; both holding modes send a (throttled) tickle.
     void noteActivity();
+    // Reuse the existing active link, without opening a presence-changing
+    // connection solely for typing.
+    void sendTyping(std::string_view channel, model::Ts threadTs = 0);
 
     std::function<void(Link)> onStateChanged;
+    std::function<void(std::string channel, std::string user, model::Ts thread)> onUserTyping;
 
     // ── Test seams ──────────────────────────────────────────────────────────
     struct Timing {
