@@ -38,6 +38,39 @@ SlackBackend::~SlackBackend() {
     deleteRead(_read);
 }
 
+void SlackBackend::reconcileDirectConversation(
+    const std::string &id, const model::Conversation &info
+) {
+    const model::ConvRef ref = _store.findConversation(id);
+    if (ref == model::kNoConv)
+        return;
+    const model::Conversation &current = _store.conversation(ref);
+    if (info.lastRead <= current.lastRead && info.latest <= current.latest &&
+        info.unread <= current.unread && info.unread <= current.mentions)
+        return;
+
+    const bool readAdvanced = info.lastRead > current.lastRead;
+    uint32_t   newerUnread = 0;
+    if (readAdvanced) {
+        // The snapshot is authoritative through info.latest. Preserve live
+        // arrivals received after that snapshot while clearing older unread.
+        for (const model::Message &m : current.messages)
+            if (m.ts > info.latest && m.ts > info.lastRead && m.user != _store.me && !m.pending)
+                ++newerUnread;
+    }
+    _store.updateConversation(ref, [&](model::Conversation &x) {
+        x.lastRead = std::max(x.lastRead, info.lastRead);
+        x.latest   = std::max(x.latest, info.latest);
+        if (readAdvanced) {
+            x.unread   = info.unread + newerUnread;
+            x.mentions = info.unread + newerUnread;
+        } else {
+            x.unread   = std::max(x.unread, info.unread);
+            x.mentions = std::max(x.mentions, info.unread);
+        }
+    });
+}
+
 net::Client &SlackBackend::transfers() {
     if (!_transfers)
         _transfers = std::make_unique<net::Client>(_app);
