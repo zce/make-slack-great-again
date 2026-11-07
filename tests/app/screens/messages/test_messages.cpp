@@ -1498,6 +1498,21 @@ TEST("thread actions: replies and thread panel messages never offer nested Reply
         if (m.replyCount > 0) { root = m.ts; break; }
     REQUIRE(root);
     CHECK(menuLabels(e.list->menuItems(root)).starts_with("Reply in thread|"));
+    // A reply broadcast into the main timeline should offer Open thread,
+    // not create a nested reply. The separate Open action doesn't focus edit.
+    model::Message broadcast = msg(e.store.me, model::tsSecs(root) + 9100, "broadcast reply");
+    const Ts broadcastTs = broadcast.ts;
+    e.store.addMessage(design, std::move(broadcast));
+    e.store.updateMessage(design, broadcastTs, [root](model::Message &m) {
+        m.threadTs = root;
+    });
+    pump();
+    CHECK(menuLabels(e.list->menuItems(broadcastTs)).starts_with("Open thread|"));
+    e.list->runMenuAction(broadcastTs, MessageList::kOpenThread);
+    REQUIRE(e.threads.size() == 1);
+    CHECK(e.threads.back().first == design && e.threads.back().second == root);
+    e.threads.clear();
+
     e.list->showThread(design, root);
     pump(20);
     CHECK(menuLabels(e.list->menuItems(root)).find("Reply in thread") == std::string::npos);
