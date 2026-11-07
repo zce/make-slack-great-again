@@ -33,8 +33,8 @@ void Backend::search(std::string, std::function<void(std::vector<SearchHit>)> do
         done({});
 }
 
-void Backend::searchPage(std::string query, int page, SearchPageDone done) {
-    if (page != 1) {
+void Backend::searchPage(std::string query, std::string cursor, SearchPageDone done) {
+    if (cursor != "*") {
         if (done) done({});
         return;
     }

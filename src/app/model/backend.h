@@ -434,14 +434,14 @@ public:
     };
     struct SearchPage {
         std::vector<SearchHit> hits;
-        bool                  hasMore = false;
-        std::string           error; // nonempty on API/transport failure, never an empty success
+        std::string           nextCursor; // Slack's opaque next_cursor; empty at end
+        std::string           error;      // nonempty on API/transport failure, never an empty success
     };
     using SearchPageDone = std::function<void(SearchPage)>;
-    // Messages containing `query`, newest first. The old one-shot interface
-    // remains for simple backends; pageable services override searchPage().
+    // Messages containing `query`, newest first. Use "*" for the first page,
+    // then pass the previous page's nextCursor unchanged.
     virtual void search(std::string query, std::function<void(std::vector<SearchHit>)> done);
-    virtual void searchPage(std::string query, int page, SearchPageDone done);
+    virtual void searchPage(std::string query, std::string cursor, SearchPageDone done);
 
     // The sidebar's "Threads" page (Capabilities::threadsView):
     // the threads I follow, newest activity first. Copies,

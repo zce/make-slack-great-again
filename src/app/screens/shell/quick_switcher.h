@@ -114,9 +114,9 @@ private:
     void                                       refreshResults();
     void                                       queueSearch();
     void                                       loadMore();
-    void                                       requestPage(size_t origin, int page, uint32_t generation,
+    void                                       requestPage(size_t origin, std::string cursor, uint32_t generation,
                                                         const std::string &query);
-    void                                       receivePage(size_t origin, int page, uint32_t generation,
+    void                                       receivePage(size_t origin, std::string cursor, uint32_t generation,
                                                         model::Backend::SearchPage result);
     std::string                                searchQuery() const;
     void                                       clearScope();
@@ -134,8 +134,8 @@ private:
     std::vector<MessageMatch> _hits;
     size_t _pendingSearches = 0;
     model::ConvRef _scope = model::kNoConv;
-    std::vector<int> _nextPage, _failedPage;
-    std::vector<bool> _hasMorePage;
+    std::vector<std::string> _nextCursor, _failedCursor, _pageErrors;
+    std::vector<bool>        _hasMorePage;
     std::string _searchError;
     uint32_t                    _searchGeneration = 0;
     plat::TimerId               _searchTimer = 0;

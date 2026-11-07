@@ -432,8 +432,9 @@ QuickSwitcher::QuickSwitcher(
     const bool multi = _tabs.size() > 1;
     if (_scope != model::kNoConv && searchScopeQuery(ctx.store(), _scope).empty())
         _scope = model::kNoConv;
-    _nextPage.assign(_tabs.size(), 1);
-    _failedPage.assign(_tabs.size(), 0);
+    _nextCursor.assign(_tabs.size(), "*");
+    _failedCursor.assign(_tabs.size(), std::string());
+    _pageErrors.assign(_tabs.size(), std::string());
     _hasMorePage.assign(_tabs.size(), false);
     style().width(620).padding(10).spacing(8);
     // The tabs first — the card's header when there is a choice to make.
@@ -665,7 +666,7 @@ void QuickSwitcher::refilter(Scored *scored) {
 
 bool QuickSwitcher::hasMore() const {
     for (bool more : _hasMorePage) if (more) return true;
-    for (int failed : _failedPage) if (failed) return true;
+    for (const std::string &failed : _failedCursor) if (!failed.empty()) return true;
     return false;
 }
 
@@ -712,8 +713,9 @@ void QuickSwitcher::queueSearch() {
     }
     _hits.clear();
     _pendingSearches = 0;
-    _nextPage.assign(_tabs.size(), 1);
-    _failedPage.assign(_tabs.size(), 0);
+    _nextCursor.assign(_tabs.size(), "*");
+    _failedCursor.assign(_tabs.size(), std::string());
+    _pageErrors.assign(_tabs.size(), std::string());
     _hasMorePage.assign(_tabs.size(), false);
     _searchError.clear();
     const std::string query(searchQuery());
@@ -739,24 +741,26 @@ void QuickSwitcher::queueSearch() {
             refreshResults();
             return;
         }
-        for (size_t origin : targets) requestPage(origin, 1, generation, query);
+        for (size_t origin : targets) requestPage(origin, "*", generation, query);
     });
 }
 
-void QuickSwitcher::requestPage(size_t origin, int page, uint32_t generation,
+void QuickSwitcher::requestPage(size_t origin, std::string cursor, uint32_t generation,
                                 const std::string &query) {
     model::Backend *backend = _tabs[origin].backend;
     if (!backend && _tabs[origin].store == &_ctx.store()) backend = &_ctx.backend;
     if (!backend) return;
     std::weak_ptr<int> alive = _alive;
-    backend->searchPage(query, page,
-        [this, generation, origin, page, alive](model::Backend::SearchPage result) {
+    backend->searchPage(query, cursor,
+        [this, generation, origin, cursor = std::move(cursor), alive](
+            model::Backend::SearchPage result
+        ) {
             if (alive.expired() || generation != _searchGeneration) return;
-            receivePage(origin, page, generation, std::move(result));
+            receivePage(origin, cursor, generation, std::move(result));
         });
 }
 
-void QuickSwitcher::receivePage(size_t origin, int page, uint32_t generation,
+void QuickSwitcher::receivePage(size_t origin, std::string cursor, uint32_t generation,
                                 model::Backend::SearchPage result) {
     if (generation != _searchGeneration || origin >= _tabs.size()) return;
     const size_t oldMessages = _hits.size();
@@ -772,11 +776,13 @@ void QuickSwitcher::receivePage(size_t origin, int page, uint32_t generation,
         visible = _hits[size_t(previousAnchor.index)];
 
     if (!result.error.empty()) {
-        _failedPage[origin] = page;
+        _failedCursor[origin] = cursor;
+        _pageErrors[origin] = result.error;
     } else {
-        _failedPage[origin] = 0;
-        _nextPage[origin] = page + 1;
-        _hasMorePage[origin] = result.hasMore;
+        _failedCursor[origin].clear();
+        _pageErrors[origin].clear();
+        _nextCursor[origin] = result.nextCursor;
+        _hasMorePage[origin] = !result.nextCursor.empty();
         const model::Store &store = *_tabs[origin].store;
         for (auto &hit : result.hits) {
             if (hit.conv >= store.conversationCount()) continue;
@@ -790,9 +796,9 @@ void QuickSwitcher::receivePage(size_t origin, int page, uint32_t generation,
         });
     }
     _searchError.clear();
-    for (int failed : _failedPage)
-        if (failed) {
-            _searchError = "One or more workspaces could not be searched.";
+    for (const std::string &error : _pageErrors)
+        if (!error.empty()) {
+            _searchError = error;
             break;
         }
     const auto findMessage = [this](const MessageMatch &saved) {
@@ -831,19 +837,19 @@ void QuickSwitcher::loadMore() {
     if (_searching || !hasMore()) return;
     const uint32_t generation = _searchGeneration;
     const std::string query(searchQuery());
-    std::vector<std::pair<size_t, int>> targets;
+    std::vector<std::pair<size_t, std::string>> targets;
     for (size_t i = 0; i < _tabs.size(); ++i) {
         if (_scope != model::kNoConv && int(i) != _tab) continue;
-        if (_failedPage[i]) targets.emplace_back(i, _failedPage[i]);
-        else if (_hasMorePage[i]) targets.emplace_back(i, _nextPage[i]);
+        if (!_failedCursor[i].empty()) targets.emplace_back(i, _failedCursor[i]);
+        else if (_hasMorePage[i]) targets.emplace_back(i, _nextCursor[i]);
     }
     if (targets.empty()) return;
     _pendingSearches = targets.size();
     _searching = true;
     _searchError.clear();
     refreshResults();
-    for (const auto &[origin, page] : targets)
-        requestPage(origin, page, generation, query);
+    for (const auto &[origin, cursor] : targets)
+        requestPage(origin, cursor, generation, query);
 }
 
 void QuickSwitcher::highlight(int index) {

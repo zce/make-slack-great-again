@@ -158,7 +158,7 @@ public:
     void cancelScheduled(const std::string &id, Done done) override;
     void loadMembers(model::ConvRef conv, MembersDone done) override;
     void search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
-    void searchPage(std::string query, int page, SearchPageDone done) override;
+    void searchPage(std::string query, std::string cursor, SearchPageDone done) override;
     void markThreadRead(model::ConvRef conv, model::Ts root, model::Ts ts) override;
     void loadChannelCanvas(model::ConvRef conv, std::function<void(std::string)> done) override;
     void loadCanvasMeta(const std::string &fileId, CanvasMetaDone done) override;

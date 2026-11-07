@@ -612,7 +612,7 @@ void FakeBackend::search(std::string query, std::function<void(std::vector<Searc
 // The fixture backend honors the common Slack scope/author operators and
 // paginates its local results, so the popup can exercise real page transitions
 // without a network connection. Date operators are passed to Slack directly.
-void FakeBackend::searchPage(std::string query, int page, SearchPageDone done) {
+void FakeBackend::searchPage(std::string query, std::string cursor, SearchPageDone done) {
     std::string words, inChannel, inUser, fromUser;
     // Keep the simple fake text matcher; don't pass search operators into it.
     size_t begin = 0;
@@ -640,7 +640,7 @@ void FakeBackend::searchPage(std::string query, int page, SearchPageDone done) {
         }
         begin = end;
     }
-    search(words, [this, page, inChannel, inUser, fromUser,
+    search(words, [this, cursor = std::move(cursor), inChannel, inUser, fromUser,
                    done = std::move(done)](std::vector<SearchHit> hits) {
         std::vector<SearchHit> filtered;
         for (SearchHit &h : hits) {
@@ -660,12 +660,14 @@ void FakeBackend::searchPage(std::string query, int page, SearchPageDone done) {
             filtered.push_back(std::move(h));
         }
         constexpr size_t count = 20;
-        const size_t start = size_t(std::max(1, page) - 1) * count;
+        const size_t start = cursor.empty() || cursor == "*"
+            ? 0 : size_t(std::strtoull(cursor.c_str(), nullptr, 10));
         SearchPage result;
         if (start < filtered.size()) {
             const size_t end = std::min(start + count, filtered.size());
             result.hits.assign(filtered.begin() + start, filtered.begin() + end);
-            result.hasMore = end < filtered.size();
+            if (end < filtered.size())
+                result.nextCursor = std::to_string(end);
         }
         if (done) done(std::move(result));
     });

@@ -66,7 +66,7 @@ public:
     void deleteFile(model::ConvRef conv, model::Ts ts, const std::string &fileId) override;
     void userTyping(model::ConvRef conv, model::Ts threadTs) override;
     void search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
-    void searchPage(std::string query, int page, SearchPageDone done) override;
+    void searchPage(std::string query, std::string cursor, SearchPageDone done) override;
     // The demo feed: the threads I started or replied in, the last three
     // replies each, one page; every fixture thread starts out read.
     void loadThreadsView(std::string cursor, ThreadsViewDone done) override;

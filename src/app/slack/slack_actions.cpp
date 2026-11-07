@@ -1720,21 +1720,22 @@ void SlackBackend::setPhoto(std::string path, Done done) {
 // ── Search ──────────────────────────────────────────────────────────────────
 
 void SlackBackend::search(std::string query, std::function<void(std::vector<SearchHit>)> done) {
-    searchPage(std::move(query), 1, [done = std::move(done)](SearchPage result) {
+    searchPage(std::move(query), "*", [done = std::move(done)](SearchPage result) {
         if (done) done(std::move(result.hits));
     });
 }
 
-void SlackBackend::searchPage(std::string query, int page, SearchPageDone done) {
-    // Slack's search.messages supports page=1..100; keep the API's timestamp
-    // order, and let the caller merge results from multiple workspaces.
-    const int requestedPage = std::clamp(page, 1, 100);
+void SlackBackend::searchPage(std::string query, std::string cursor, SearchPageDone done) {
+    // search.messages supports cursormark pagination. Keep timestamp order
+    // so each workspace can be merged into one newest-first result stream.
+    if (cursor.empty())
+        cursor = "*";
     api("search.messages",
         net::formEncode(
-            {{"query", query}, {"count", "20"}, {"page", str::number(requestedPage)},
+            {{"query", query}, {"count", "20"}, {"cursor", cursor},
              {"sort", "timestamp"}, {"sort_dir", "desc"}, {"highlight", "true"}}
         ),
-        [this, requestedPage, done = std::move(done)](
+        [this, done = std::move(done)](
             const json::Document &doc, const std::string &err
         ) {
             if (err == "cancelled")
@@ -1747,8 +1748,7 @@ void SlackBackend::searchPage(std::string query, int page, SearchPageDone done) 
                 return;
             }
             const json::Value messages = doc.root()["messages"];
-            const int pages = int(messages["paging"]["pages"].integer());
-            result.hasMore = requestedPage < pages && requestedPage < 100;
+            result.nextCursor = std::string(doc.root()["response_metadata"]["next_cursor"].str());
             for (json::Value m : messages["matches"]) {
                 SearchHit h;
                 h.conv = _store.findConversation(m["channel"]["id"].str());
