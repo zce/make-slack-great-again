@@ -513,7 +513,7 @@ TEST("slack realtime: contention raises the parallel-usage notice once") {
 TEST("slack realtime: the session DM activity sweep reconciles unread counts") {
     if (!haveServer())
         return;
-    Env e(true, false); // session auth: no client.counts or Socket Mode
+    Env e(false, false); // OAuth: no client.counts or Socket Mode
     REQUIRE(e.connect());
     const ConvRef dm = e.conv("D1");
     REQUIRE(dm != kNoConv);
