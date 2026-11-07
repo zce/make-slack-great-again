@@ -16,6 +16,8 @@
 #include "base/time.h"
 #include "plat/testing.h"
 #include "screens/settings/settings_dialog.h"
+#include "text/fonts.h"
+#include "text/text.h"
 #include "app/mrkdwn/markdown.h"
 #include "screens/shell/composer.h"
 #include "screens/shell/shell.h"
@@ -205,6 +207,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     const shell::Settings def = shell::Settings::load(path);
     CHECK(def.useTray);
     CHECK(def.notifications);
+    CHECK(def.fontFamily.empty());
     CHECK(def.fontSize == 1);
     CHECK(def.paletteLight == int(ui::Palette::Purple));
     CHECK(def.paletteDark == int(ui::Palette::Charcoal));
@@ -220,6 +223,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.custom.primary             = 0xff123456;
     s.custom.brightness          = 3;
     s.custom.sidebarInverted     = false;
+    s.fontFamily                 = "Maple Mono NF CN";
     s.fontSize                   = 2;
     s.language                   = "ja";
     s.use24h                     = true;
@@ -260,6 +264,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK(r.custom.primary == 0xff123456u);
     CHECK(r.custom.brightness == 3);
     CHECK_FALSE(r.custom.sidebarInverted);
+    CHECK_STR(r.fontFamily, "Maple Mono NF CN");
     CHECK(r.fontSize == 2);
     CHECK(r.fontScale() > 1.1f);
     CHECK_STR(r.language, "ja");
@@ -411,13 +416,14 @@ TEST("settings: the pages and their sections, in order") {
 
     static const struct {
         SettingsDialog::Page page;
-        const char          *items[13];
+        const char          *items[14];
     } kPages[] = {
         {SettingsDialog::Page::Appearance,
          {"Color mode",
           "Color theme",
           "Light theme",
           "Dark theme",
+          "Font family",
           "Font size",
           "Language",
           "Date/Time",
@@ -649,6 +655,16 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     file::remove(path);
     Harness         h(path);
     SettingsDialog &d = h.open();
+    // Saving the family must not mutate live text layouts.
+    const std::string beforeFont = text::fonts::familyName(text::fonts::primary(text::Style{}));
+    auto *fontInput = static_cast<ui::TextField *>(d.find("Default"));
+    REQUIRE(fontInput != nullptr);
+    CHECK(fontInput->text().empty());
+    fontInput->setText("Maple Mono NF CN");
+    CHECK_STR(fontInput->text(), "Maple Mono NF CN");
+    CHECK_STR(d.draft().fontFamily, "Maple Mono NF CN");
+    CHECK(h.settings.fontFamily.empty());
+    CHECK_STR(text::fonts::familyName(text::fonts::primary(text::Style{})), beforeFont);
     h.click(d.find("Large"));
     h.click(d.find("24-hour clock (14:34)"));
     h.click(d.find("Show link previews"));
@@ -680,6 +696,9 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     d.showPage(SettingsDialog::Page::Appearance);
     pump();
     CHECK(static_cast<ui::SpinBox *>(d.find("16 days")) != nullptr);
+    auto *reopenedFont = static_cast<ui::TextField *>(d.find("Default"));
+    REQUIRE(reopenedFont != nullptr);
+    CHECK_STR(reopenedFont->text(), "Maple Mono NF CN");
 
     ui::View *save = d.find("Save");
     REQUIRE(save != nullptr);
@@ -687,6 +706,8 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     pump();
     h.click(save);
     CHECK(h.sh->settingsDialog() == nullptr);
+    CHECK_STR(h.settings.fontFamily, "Maple Mono NF CN");
+    CHECK_STR(text::fonts::familyName(text::fonts::primary(text::Style{})), beforeFont);
     CHECK(h.settings.fontSize == 2);
     CHECK(app().userTextScale() > 1.1f);
     CHECK(h.settings.use24h);
@@ -704,10 +725,11 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     // but the file may not be flushed when the Save click returns.
     REQUIRE(until([&] {
         const shell::Settings loaded = shell::Settings::load(path);
-        return loaded.fontSize == 2 && loaded.use24h && !loaded.linkPreviews &&
-               loaded.relevantDays == 16 && loaded.names == 2;
+        return loaded.fontSize == 2 && loaded.fontFamily == "Maple Mono NF CN" &&
+               loaded.use24h && !loaded.linkPreviews && loaded.relevantDays == 16 && loaded.names == 2;
     }));
     const shell::Settings r = shell::Settings::load(path);
+    CHECK_STR(r.fontFamily, "Maple Mono NF CN");
     CHECK(r.fontSize == 2 && r.use24h && !r.linkPreviews && r.relevantDays == 16);
     CHECK(h.settings.names == 2 && r.names == 2);
     file::remove(path);

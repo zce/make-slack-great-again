@@ -23,6 +23,12 @@ namespace text {
 // Must be called once before anything else (discovers fonts, builds or loads
 // the font index cache). False (with *error) if no usable font exists.
 bool init(std::string *error = nullptr);
+// Installed non-colour font families (lowercase identifiers).
+std::vector<std::string> uiFontFamilies();
+// Select the UI family for future layouts; call before creating views.
+// Empty or unavailable families use the existing default.
+bool setUiFontFamily(std::string_view family);
+
 // At exit (ui::App's destructor): frees the fonts and shaping state. Nothing
 // here may be used afterwards, short of init() again.
 void shutdown();

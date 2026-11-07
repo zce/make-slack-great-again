@@ -1344,6 +1344,14 @@ void AttributedText::append(std::string_view utf8, const Style &s) {
         spans.push_back({start, uint32_t(text.size()), s});
 }
 
+std::vector<std::string> uiFontFamilies() {
+    return fonts::uiFamilies();
+}
+
+bool setUiFontFamily(std::string_view family) {
+    return fonts::setUiFamily(family);
+}
+
 bool init(std::string *error) {
     return fonts::init(error);
 }

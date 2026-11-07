@@ -78,6 +78,7 @@ const struct {
     std::string Settings::*field;
     const char            *secret = nullptr;
 } kStrings[] = {
+    {"fontFamily", &Settings::fontFamily},
     {"language", &Settings::language},
     {"trayIconPath", &Settings::trayIconPath},
     {"soundId", &Settings::soundId},

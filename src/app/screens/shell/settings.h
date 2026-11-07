@@ -47,6 +47,7 @@ struct Settings {
     int                      paletteLight = 0, paletteDark = 1; // ui::Palette per content mode
     ui::CustomPalette        custom;
     int                      fontSize = 1; // 0 small, 1 medium, 2 large (App::setUserTextScale)
+    std::string              fontFamily; // empty = automatic UI font; applies on restart
     std::string              language = "system"; // "system", "en", "ja"
     bool                     use24h = false, threadsInline = false, linkPreviews = true;
     // use24h came from the file; without it the clock follows the language

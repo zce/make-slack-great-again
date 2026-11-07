@@ -7,6 +7,7 @@
 
 #include <hb.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -202,6 +203,35 @@ void cjkFallback() {
     // Laid out: three ideographs are about three ems wide (no tofu boxes).
     auto l = lay("日本語", 1e9f, 1);
     CHECK(l->width() > 15 * 2.5f && l->width() < 15 * 3.5f);
+}
+
+void uiFontFamily() {
+    const auto names = uiFontFamilies();
+    CHECK(!names.empty());
+    CHECK(std::is_sorted(names.begin(), names.end()));
+    const std::string original = fonts::familyName(fonts::primary(Style{}));
+    Style mono;
+    mono.mono = true;
+    const std::string originalMono = fonts::familyName(fonts::primary(mono));
+    const auto originalEmoji = fonts::emoji();
+    CHECK(std::find(names.begin(), names.end(), original) != names.end());
+    if (!names.empty()) {
+        const std::string &chosen = names.back();
+        std::string cased = chosen;
+        for (char &c : cased)
+            if (c >= 'a' && c <= 'z')
+                c = char(c - 'a' + 'A');
+        CHECK(setUiFontFamily(cased)); // UI keeps e.g. "Maple Mono NF CN"
+        CHECK(fonts::familyName(fonts::primary(Style{})) == chosen);
+        CHECK(setUiFontFamily("  " + cased + "  ")); // copy/paste whitespace
+        CHECK(fonts::familyName(fonts::primary(Style{})) == chosen);
+        CHECK(fonts::familyName(fonts::primary(mono)) == originalMono);
+        CHECK(fonts::emoji() == originalEmoji);
+    }
+    CHECK(!setUiFontFamily("__missing_msga_ui_font__"));
+    CHECK(fonts::familyName(fonts::primary(Style{})) == original);
+    CHECK(setUiFontFamily({}));
+    CHECK(fonts::familyName(fonts::primary(Style{})) == original);
 }
 
 void hitRoundtrip() {
@@ -967,6 +997,7 @@ constexpr Case kCases[] = {
     {"colrv1", colrV1},
     {"rtl", rtl},
     {"cjk_fallback", cjkFallback},
+    {"ui_font_family", uiFontFamily},
     {"hit_roundtrip", hitRoundtrip},
     {"inline_box", inlineBox},
     {"style_boundary", styleBoundary},

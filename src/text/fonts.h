@@ -9,6 +9,8 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <vector>
 
 struct hb_font_t;
 
@@ -40,6 +42,12 @@ bool init(std::string *error);
 void shutdown();
 
 // The UI family (or mono when s.mono) in the requested weight/italic.
+// Installed non-colour families in stable alphabetical order (lowercase keys).
+std::vector<std::string> uiFamilies();
+// Empty selects the default; an unavailable family falls back and returns false.
+// Call before creating views (existing layouts cannot change fonts in place).
+bool setUiFamily(std::string_view family);
+
 FontKey primary(const Style &s);
 // The colour emoji face, kNoFont when none is installed.
 FontKey emoji();

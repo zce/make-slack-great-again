@@ -44,6 +44,7 @@
 #include "screens/shell/context_menus.h"
 #include "screens/shell/desktop_entry.h"
 #include "screens/shell/settings.h"
+#include "text/text.h"
 #include "screens/shell/shell.h"
 #ifdef MSGA_LEGACY_IMPORT
 #include "app/legacy/legacy.h"
@@ -352,6 +353,9 @@ int main(int argc, char **argv) {
         : theme == "light" ? ui::ThemeMode::Light
                            : settings.theme
     );
+    // Font selection is applied before any UI layouts have been built.
+    // Missing families use the original automatic choice.
+    text::setUiFontFamily(settings.fontFamily);
     app->setUserTextScale(settings.fontScale());
     settings.applyPalettes();
 

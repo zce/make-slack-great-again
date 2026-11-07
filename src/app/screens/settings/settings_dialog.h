@@ -1,7 +1,7 @@
 // The Settings dialog: an in-window modal (ui::Dialog) with the section list
 // on the left and the chosen page on the right:
 //
-//   Appearance     color mode, color theme (palettes + custom), font size,
+//   Appearance     color mode, color theme (palettes + custom), font family/size,
 //                  language, date/time, threads, link previews, composer,
 //                  conversations, visual effects, tray icon — then Save
 //   Notifications  on/off, level, huddles, highlight, sound, samples — Save

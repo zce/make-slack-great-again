@@ -107,7 +107,7 @@ struct State {
     std::vector<Loaded>   loaded;
     std::vector<FileMap>  maps;
     FT_Library            ft = nullptr;
-    int                   ui = -1, mono = -1, emoji = -1;
+    int                   ui = -1, defaultUi = -1, mono = -1, emoji = -1;
     // fallback()'s answers, open-addressed: (cp + 1) << 16 | family
     // (0xFFFF = none); 0 is an empty slot. At most half full.
     std::vector<uint64_t> fbCache;
@@ -381,6 +381,7 @@ bool init(std::string *error) {
         g->ui = g->fallbackOrder[0];
     if (g->mono < 0)
         g->mono = g->ui;
+    g->defaultUi = g->ui;
     // Linear coverage looks thin when blended in sRGB; a mild boost (gamma
     // 1/1.2) brings dark-on-light text close to what users know from
     // FreeType+Cairo without colour-dependent caches.
@@ -407,6 +408,38 @@ void shutdown() {
             unmapFile(m.p, m.n);
     delete g;
     g = nullptr;
+}
+
+std::vector<std::string> uiFamilies() {
+    std::vector<std::string> names;
+    if (!g)
+        return names;
+    names.reserve(g->fams.size());
+    for (const Family &f : g->fams)
+        if (!(g->ix.faces[f.faces[0]].flags & kColor))
+            names.emplace_back(g->ix.str(f.name));
+    return names;
+}
+
+bool setUiFamily(std::string_view family) {
+    if (!g)
+        return false;
+    // The index stores ASCII-lowercase family names, but user-entered names
+    // keep their original casing in settings.json (e.g. "Maple Mono NF CN").
+    const std::string key = str::asciiLower(str::trim(family));
+    if (key.empty()) {
+        g->ui = g->defaultUi;
+        return true;
+    }
+    for (size_t i = 0; i < g->fams.size(); ++i) {
+        const Family &f = g->fams[i];
+        if (key == g->ix.str(f.name) && !(g->ix.faces[f.faces[0]].flags & kColor)) {
+            g->ui = int(i);
+            return true;
+        }
+    }
+    g->ui = g->defaultUi;
+    return false;
 }
 
 FontKey primary(const Style &s) {

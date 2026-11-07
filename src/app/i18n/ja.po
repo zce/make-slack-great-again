@@ -1014,6 +1014,22 @@ msgid "Color theme"
 msgstr "カラーテーマ"
 
 #: src/app/screens/settings/settings_dialog.cpp
+msgid "Font family"
+msgstr ""
+
+#: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/context_menus.cpp
+msgid "Default"
+msgstr "デフォルト"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Unavailable: "
+msgstr ""
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Font changes apply after restarting MSGA."
+msgstr ""
+
+#: src/app/screens/settings/settings_dialog.cpp
 msgid "Font size"
 msgstr "文字サイズ"
 
@@ -2312,10 +2328,6 @@ msgstr "セクションを上へ移動"
 #: src/app/screens/shell/context_menus.cpp
 msgid "Move section down"
 msgstr "セクションを下へ移動"
-
-#: src/app/screens/shell/context_menus.cpp
-msgid "Default"
-msgstr "デフォルト"
 
 #: src/app/screens/shell/context_menus.cpp
 msgid "Alphabetically"

@@ -17,6 +17,7 @@
 #include "base/str.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
+#include "text/text.h"
 
 #include <algorithm>
 #include <cmath>
@@ -430,6 +431,32 @@ void SettingsDialog::buildAppearance() {
     }
     buildCustomEditor();
 
+    heading(_content, tr("Font family"));
+    {
+        auto *g = group(_content, 4);
+        auto *field = g->add<TextField>(tr("Default"));
+        field->style().width(340);
+        field->setText(_draft.fontFamily);
+
+        // One editable value, no separate search/select step. The font index
+        // uses ASCII-lowercase keys; never rewrite the name the user typed.
+        const auto families = text::uiFontFamilies();
+        auto *warning = caption(g, {});
+        warning->setVisible(false);
+        auto update = [this, field, warning, families] {
+            _draft.fontFamily = field->text();
+            const std::string key = str::asciiLower(str::trim(_draft.fontFamily));
+            const bool available = key.empty() ||
+                                   std::binary_search(families.begin(), families.end(), key);
+            warning->setText(available ? std::string{}
+                                       : str::concat({tr("Unavailable: "), _draft.fontFamily}));
+            warning->setVisible(!available);
+        };
+        field->edit().onChange = update;
+        update();
+        caption(g, tr("Font changes apply after restarting MSGA."));
+    }
+
     heading(_content, tr("Font size"));
     radios(_content, {tr("Small"), tr("Medium (default)"), tr("Large")}, &d.fontSize);
 
@@ -771,6 +798,7 @@ void SettingsDialog::saveAppearance() {
         _s.*f = _draft.*f;
     for (int shell::Settings::*f : kAppearanceInts)
         _s.*f = _draft.*f;
+    _s.fontFamily         = _draft.fontFamily;
     _s.language           = _draft.language;
     _s.spellLanguages     = _draft.spellLanguages;
     _s.quickReactionNames = _draft.quickReactionNames;
