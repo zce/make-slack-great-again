@@ -47,11 +47,9 @@ void TextLink::refreshLook() {
 OverviewPage::OverviewPage(screens::Context &ctx, Avatars &avatars, std::string title)
     : _ctx(ctx), _avatars(avatars) {
     style().column().flex(1);
-    // The thread panel's header: 48 px, the title bold; a hairline under it.
-    auto *header = add<View>();
-    header->style().row().height(48).padding(16, 0, 8, 0).items(Align::Center).noShrink();
-    header->add<Label>(std::move(title), Font::Title)->style().flex(1);
-    _rule   = add<Separator>(false, C::FormDivider);
+    // The Shell's unified title bar owns page titles. Overview content
+    // begins directly with tabs/filters (Activity) or the scrollable cards.
+    (void)title;
     _scroll = add<ScrollView>();
     _scroll->style().flex(1);
     View *content = _scroll->content();

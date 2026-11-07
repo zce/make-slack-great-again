@@ -1464,10 +1464,11 @@ public:
 // the *whole window*, not just the space left of the close button.
 class TitleContent final : public View {
 public:
-    View *heading = nullptr, *search = nullptr;
+    View *heading = nullptr, *pageTitle = nullptr, *search = nullptr;
 
     void layout() override {
-        const bool centered = heading && !heading->visible();
+        const bool centered = heading && !heading->visible() &&
+                              (!pageTitle || !pageTitle->visible());
         float padL = 0, padR = 0;
         if (centered && parent() && search) {
             const float before = frame().x;
@@ -1521,6 +1522,11 @@ void Shell::buildTitleBar(View *parent) {
     _titleLabel->setAlign(text::LayoutOptions::Align::Center);
     _titleLabel->setHitTransparent(true);
     _titleLabel->style().margins(112, 0, 112, 1);
+    _pageTitle = _titleBar->add<Label>("", Font::UnifiedTitle);
+    _pageTitle->setAlign(text::LayoutOptions::Align::Center);
+    _pageTitle->setHitTransparent(true);
+    _pageTitle->style().margins(112, 0, 112, 1);
+    _pageTitle->setVisible(false);
 #else
     _titleBarH = kTitleBarH;
     _titleBar->style().row().height(kTitleBarH).noShrink().items(Align::Center);
@@ -1564,8 +1570,14 @@ void Shell::buildTitleBar(View *parent) {
     auto *content = _titleBar->add<TitleContent>();
     content->style().row().height(kTitleBarH).flex(1).items(Align::Center);
     _header = content->add<ConvHeader>(_ctx, _avatars);
+    _pageTitle = content->add<Label>("", Font::HeaderTitle, C::SidebarText);
+    _pageTitle->setMaxLines(1);
+    _pageTitle->setHitTransparent(true);
+    _pageTitle->style().flex(1).padding(16, 0, 8, 0);
+    _pageTitle->setVisible(false);
     auto *search = content->add<TitleSearchTrigger>();
     content->heading = _header;
+    content->pageTitle = _pageTitle;
     content->search = search;
     search->style().row().width(252).height(32).padding(12, 0).spacing(9)
         .items(Align::Center).noShrink();
@@ -2496,6 +2508,20 @@ void Shell::showPage(Page p) {
         if (o != p)
             leavePage(o);
     leaveConversationChrome(false);
+    // Overview pages use the same title slot as channel/DM headers.
+    if (_pageTitle) {
+        switch (p) {
+        case Page::Activity:  _pageTitle->setText(tr("Activity")); break;
+        case Page::Threads:   _pageTitle->setText(tr("Threads")); break;
+        case Page::Saved:     _pageTitle->setText(tr("Saved messages")); break;
+        case Page::Scheduled: _pageTitle->setText(tr("Scheduled messages")); break;
+        case Page::None:      break;
+        }
+        _pageTitle->setVisible(true);
+    }
+#ifdef __APPLE__
+    if (_titleLabel) _titleLabel->setVisible(false);
+#endif
     _sidebar->selectNav(p);
     page->setVisible(true);
     page->open();
@@ -2527,6 +2553,10 @@ void Shell::leavePage(Page p) {
     if (!pageOpen(p))
         return;
     pageView(p)->setVisible(false);
+    if (_pageTitle) _pageTitle->setVisible(false);
+#ifdef __APPLE__
+    if (_titleLabel) _titleLabel->setVisible(true);
+#endif
     if (_sidebar->selectedNav() == p)
         _sidebar->selectNav(Page::None);
     _composer->setVisible(true);

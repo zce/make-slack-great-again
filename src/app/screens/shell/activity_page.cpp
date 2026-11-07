@@ -158,12 +158,10 @@ void ActivityPage::Row::refreshLook() {
 
 ActivityPage::ActivityPage(screens::Context &ctx, Avatars &avatars)
     : OverviewPage(ctx, avatars, tr("Activity")) {
-    // The tabs go right under the title, in the conversation tabs' place
-    // (their own divider replaces the title's).
+    // Tabs occupy the content strip directly beneath the global titlebar.
     auto tabs = std::make_unique<TabStrip>();
     _tabs     = tabs.get();
-    adopt(std::move(tabs), 1);
-    _rule->setVisible(false);
+    adopt(std::move(tabs), 0);
     _tabs->setAccentLook();
     _tabs->addTab(tr("All"));
     _tabs->addTab(gfx::Icon::MessageCircle, tr("DMs"));
@@ -174,16 +172,15 @@ ActivityPage::ActivityPage(screens::Context &ctx, Avatars &avatars)
         reload();
     };
 
-    // The toolbar over the list: the unread filter, closer to the tabs and
-    // the list than the overview pages' usual 24 px.
-    View *content = _scroll->content();
-    content->style().padding(24, 16, 24, 24).spacing(16);
-    auto bar = std::make_unique<View>();
-    bar->style().row().items(Align::Center);
-    _unread = bar->add<ui::CheckBox>(tr("Unread only"));
+    // Filters belong on the right of the content tab strip, not in a
+    // second toolbar row. The list starts directly below this strip.
+    _tabs->add<View>()->style().flex(1);
+    _unread = _tabs->add<ui::CheckBox>(tr("Unread only"));
+    _unread->style().margins(0, 0, 20, 0);
     _unread->setFocusable(false);
     _unread->onChange = [this](bool on) { setUnreadOnly(on); };
-    content->adopt(std::move(bar), 0);
+    View *content = _scroll->content();
+    content->style().padding(24, 20, 24, 24).spacing(16);
 
     // One bordered card holds the rows (hairlines between them).
     _card = _list->add<View>();

@@ -436,6 +436,7 @@ private:
     Avatar                *_workspaceAvatar = nullptr;
     float                  _titleBarH  = 0;       // buildTitleBar
     ui::Label             *_titleLabel = nullptr; // macOS: the workspace, without a header
+    ui::Label             *_pageTitle = nullptr; // overview title in the unified titlebar
     WorkspaceStack        *_wsStack    = nullptr;
     std::vector<Workspace> _workspaces;
     std::string            _activeKey;

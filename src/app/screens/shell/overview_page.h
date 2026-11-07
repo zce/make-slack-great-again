@@ -1,6 +1,6 @@
 // The frame the sidebar's overview pages share (Threads, Saved messages,
-// Scheduled messages): a 48 px header with the page's title over a hairline,
-// then on the page's grey a scroll view with the status line ("Loading…",
+// Scheduled messages): the shared title is in the Shell titlebar, while the
+// content contains a scroll view with the status line ("Loading…",
 // "… will appear here") and the list of cards. The page follows the open
 // workspace's Store while it exists (onChange); a burst of changes rebuilds
 // it once (rebuildSoon).
@@ -64,7 +64,6 @@ protected:
 
     screens::Context    &_ctx;
     Avatars             &_avatars;
-    ui::View            *_rule   = nullptr; // the hairline under the title
     ui::ScrollView      *_scroll = nullptr;
     ui::Label           *_status = nullptr;
     ui::View            *_list   = nullptr; // the cards

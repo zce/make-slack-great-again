@@ -1336,6 +1336,7 @@ void MessageList::placeToolbar() {
         return;
     }
     _tbEmoji->setVisible(true);
+    _tbReply->setVisible(_root == 0 && !m->isReply());
     syncQuickReactions(true);
     _tbSave->setVisible(_ctx.backend.capabilities().messageReminders);
     const bool saved = m->saved || _ctx.store().reminderAt(_conv, m->ts) != 0;
@@ -1540,12 +1541,9 @@ bool MessageList::onEvent(ui::Event &e) {
 
 void MessageList::reply(Ts ts) {
     const model::Message *m = message(ts);
-    if (!m || m->pending || isSystem(*m))
+    if (!m || m->pending || isSystem(*m) || _root || m->isReply())
         return;
-    // A reply always belongs to its existing root: Slack has no nested threads.
-    const Ts root = m->isReply() ? m->threadTs : (_root ? _root : ts);
-    if (!root)
-        return;
+    const Ts root = ts;
     if (onReply)
         onReply(_conv, root);
     else if (_ctx.openThread)
@@ -1809,7 +1807,8 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
 
     // Frequent actions first, matching the hover toolbar and Slack's right-click
     // hierarchy. A reply in a thread opens that thread, never a nested thread.
-    addItem(items, kReply);
+    if (_root == 0 && !m->isReply())
+        addItem(items, kReply);
     addItem(items, kReact);
     addItem(items, kForward, bool(_ctx.forwardMessage));
     ui::addMenuSeparator(items);
