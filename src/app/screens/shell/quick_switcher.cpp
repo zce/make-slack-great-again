@@ -5,7 +5,6 @@
 #include "base/utf8.h"
 #include "gfx/icons_generated.h"
 #include "screens/common/avatar_initial.h"
-#include "screens/shell/shortcuts.h"
 #include "app/screens/common/message_text.h"
 #include "base/time.h"
 #include "screens/shell/shell_text.h"
@@ -509,28 +508,6 @@ QuickSwitcher::QuickSwitcher(
     _moreButton->style().alignSelf(Align::Center);
     _moreButton->setVisible(false);
     _moreButton->onClick = [this] { loadMore(); };
-    // Arrow keys aren't discoverable on a field that looks like plain search.
-    const char       *upDown = "\xE2\x86\x91\xE2\x86\x93", *leftRight = "\xE2\x86\x90\xE2\x86\x92";
-    const std::string enter = shortcuts::nativeKeys(shortcuts::Id::SendMessage);
-    auto             *hint  = add<Label>(
-        multi ? i18n::arg(
-                    tr("%1 to move \xC2\xB7 %2 to switch workspace \xC2\xB7 %3 to open"),
-                    upDown,
-                    leftRight,
-                    enter
-                )
-              : i18n::arg(tr("%1 to move \xC2\xB7 %2 to open"), upDown, enter),
-        Font::Small,
-        C::TextMuted
-    );
-    hint->setAlign(text::LayoutOptions::Align::Center);
-    auto *syntax = add<Label>("Filters: from:me · from:@user · after:YYYY-MM-DD · before:YYYY-MM-DD",
-                              Font::Small, C::TextMuted);
-    syntax->setAlign(text::LayoutOptions::Align::Center);
-    auto *keys = add<Label>(shortcuts::nativeKeys(shortcuts::Id::QuickSwitch) +
-                            " global · " + shortcuts::nativeKeys(shortcuts::Id::SearchMessages) +
-                            " in conversation · Esc close", Font::Small, C::TextMuted);
-    keys->setAlign(text::LayoutOptions::Align::Center);
     refreshStrip();
     refilter();
 }

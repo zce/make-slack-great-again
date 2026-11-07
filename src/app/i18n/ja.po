@@ -2478,14 +2478,6 @@ msgstr ""
 msgid "No results found."
 msgstr "結果が見つかりませんでした。"
 
-#: src/app/screens/shell/quick_switcher.cpp
-msgid "%1 to move · %2 to switch workspace · %3 to open"
-msgstr "%1 で移動 · %2 でワークスペースを切り替え · %3 で開く"
-
-#: src/app/screens/shell/quick_switcher.cpp
-msgid "%1 to move · %2 to open"
-msgstr "%1 で移動 · %2 で開く"
-
 #: src/app/screens/shell/saved_page.cpp
 msgid "Reminder set for %1"
 msgstr "リマインダー: %1"
@@ -3400,6 +3392,12 @@ msgstr "ダウンロードに失敗しました: %1"
 #: src/app/update/updater.cpp
 msgid "Downloaded update is corrupt (checksum mismatch)."
 msgstr "ダウンロードした更新ファイルが破損しています（チェックサム不一致）。"
+
+#~ msgid "%1 to move · %2 to switch workspace · %3 to open"
+#~ msgstr "%1 で移動 · %2 でワークスペースを切り替え · %3 で開く"
+
+#~ msgid "%1 to move · %2 to open"
+#~ msgstr "%1 で移動 · %2 で開く"
 
 #~ msgid "%1 does not support speech-to-text — connect an OpenAI-compatible provider in Settings → AI assistance"
 #~ msgstr "%1は音声の文字起こしに対応していません — 設定→「AIアシスタンス」でOpenAI互換のプロバイダーを接続してください"

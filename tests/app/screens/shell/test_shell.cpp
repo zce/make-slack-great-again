@@ -3834,12 +3834,10 @@ TEST("workspaces: the quick switcher has a tab per workspace; ←/→ and typing
     shell::QuickSwitcher *qs = w.sh->quickSwitcher();
     REQUIRE(qs);
     CHECK(qs->tab() == 0); // the open one's
-    CHECK(showsText(
-        w.win->topPopup(),
-        "\xE2\x86\x91\xE2\x86\x93 to move \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 to switch workspace "
-        "\xC2\xB7 " +
-            shell::shortcuts::nativeKeys(shell::shortcuts::Id::SendMessage) + " to open"
-    ));
+    // The popup stays compact; the input placeholder explains its purpose.
+    CHECK_FALSE(showsText(w.win->topPopup(), "Filters:"));
+    CHECK_FALSE(showsText(w.win->topPopup(), "to switch workspace"));
+    CHECK_FALSE(showsText(w.win->topPopup(), "in conversation · Esc close"));
     press(*w.win, plat::Key::Right);
     CHECK(qs->tab() == 1);
     press(*w.win, plat::Key::Left);
