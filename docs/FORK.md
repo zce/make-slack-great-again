@@ -18,15 +18,23 @@ The repository setting **Actions → General → Workflow permissions → Allow 
 
 ## CI and releases
 
-\`ci.yml\` builds and runs the full test suite on **Ubuntu 24.04/GCC and Ubuntu 26.04/Clang**. Pull requests upload the 24.04 build for manual testing, keeping its runtime baseline conservative. GitHub Actions are pinned to verified commits and Dependabot proposes grouped weekly updates; build dependencies come from the latest packages available in each Ubuntu LTS repository.
+`ci.yml` compiles on **Ubuntu 24.04/GCC and Ubuntu 26.04/Clang**. Every PR runs the full test suite with GCC and a Clang compile check. Pushes to `master` (and manual CI runs) run the full suite on both toolchains. CTest runs with two workers initially; tests sharing global resources must use `RESOURCE_LOCK` or `RUN_SERIAL`. The GCC PR job uploads a test-enabled executable as an Actions artifact for manual testing (14-day retention); it is **not** a production binary. Actions are pinned to reviewed commits.
 
-\`release.yml\` builds and **publishes a GitHub Release automatically on every push to \`master\`**, after a successful CI run on \`master\` and its own release build succeeds. The release tag is `v<upstream MSGA_VERSION>-zce.<release workflow run number>`. The upstream version remains an integer in `version.cmake`; do not invent a second CMake version source.
+On successful pushes to `master`, the GCC job also builds a separate production executable with tests, demo and upstream self-update disabled, then uploads `msga-linux-x86_64-release` with checksums and the dynamic dependency list (30-day retention). This artifact belongs to the exact CI run/commit and is **not** itself a public Release.
 
-The first release pipeline produces **Linux x86_64 only**. It uses Ubuntu 24.04's shared libraries, **not** upstream's static-musl release build, so the asset should not be claimed to work without dependencies on every Linux distro. Verify its runtime dependencies on the target distribution before replacing a daily driver. macOS and Windows packaging can be added later using their respective platform runners.
+**Official fork releases are manually triggered**, not automatically created for every merge. From Actions → Release → Run workflow on **master**, enter the next fork version without the leading `v` (e.g. `0.1.0` or `0.2.0-rc.1`); optionally supply a specific master CI run ID. Example:
 
-The fork **must never use the upstream in-app updater**: it downloads a binary from `msga.app`, which would silently replace our customized build. `MSGA_SELF_UPDATE` therefore defaults to OFF in the fork; CI and release also set it OFF explicitly. Install future releases from this repository's GitHub Releases page instead.
+```sh
+gh workflow run release.yml --ref master -f version=0.1.0
+```
 
-The release workflow needs `contents: write` access to create tags/releases. Releases are not triggered by upstream changes until the upstream-sync PR is reviewed and merged.
+The release workflow only accepts a **completed successful push-to-master CI run of the exact commit selected by the dispatch**. It downloads that run's production artifact, verifies its SHA256 checksum, and publishes it without rebuilding. If no matching successful CI run is available, it fails instead of publishing an older or unverified binary. Re-run CI for the current master or wait for its CI to finish, then trigger the release again. Existing tags/releases are never silently overwritten.
+
+The fork uses an independent, monotonically increasing **SemVer** release sequence: `v0.1.0`, `v0.1.1`, `v0.2.0`, etc. `v0.2.0-rc.1` is supported for pre-releases (not marked Latest). Stable releases are explicitly marked **Latest** on GitHub. The upstream integer `MSGA_VERSION` in `version.cmake` is retained for upstream runtime compatibility and is **not** the fork release number. Do not change it just to create a new fork release. Existing historical `v44-zce.*` tags remain intact. GitHub's Release page ordering is managed by GitHub and may depend on the tagged commit's date; the explicit Latest marker and release naming avoid relying on chronological ordering of historical tags.
+
+The first release pipeline produces **Linux x86_64 only**. It uses Ubuntu 24.04's shared libraries, **not** upstream's static-musl release build. Verify runtime dependencies on the target distribution before replacing a daily driver. macOS and Windows packages listed by upstream are not fork builds.
+
+The fork **must never use the upstream in-app updater**: it downloads a binary from `msga.app`, which would silently replace our customized build. `MSGA_SELF_UPDATE` defaults to OFF and is OFF explicitly in CI and release builds. Install new fork versions from this repository's GitHub Releases. The release workflow requires `actions: read` to access validated CI artifacts and `contents: write` to publish tags/releases. Upstream-sync PRs never publish automatically.
 
 ## Customization boundaries
 

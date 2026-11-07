@@ -20,9 +20,9 @@ Everything below the UI is msga's own code: a thin OS layer for windows, input a
 
 ## Download
 
-Prebuilt fork versions are published at [GitHub Releases](https://github.com/zce/make-slack-great-again/releases). The current fork release workflow builds a Linux x86_64 **dynamically linked** binary; it is not the upstream static-musl binary. Windows and macOS packages listed by upstream are **not** fork builds.
+Stable fork versions are published intentionally at [GitHub Releases](https://github.com/zce/make-slack-great-again/releases), using independent `vMAJOR.MINOR.PATCH` version tags. PR test builds are available as downloadable **Actions artifacts** on the associated PR's CI run; they are not formal releases. See [fork maintenance](docs/FORK.md) for release instructions.
 
-The upstream in-app updater is disabled so it cannot replace this customized build. Install fork updates from GitHub Releases.
+Linux x86_64 builds are **dynamically linked** against Ubuntu 24.04 libraries rather than being fully static-musl builds. Windows and macOS packages listed upstream are not fork builds. The upstream in-app updater is disabled so it cannot replace our custom version; install new fork builds from this repository's GitHub Releases.
 
 ## Connecting to Slack
 
