@@ -161,6 +161,9 @@ jobs:
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: MINGW64
+          # windows-2025 includes MSYS2 at C:\\msys64; reuse it instead of
+          # downloading and extracting a fresh base installation each run.
+          release: false
           update: true
           suppress-deprecation-warnings: msystem-mingw64
           install: >-
