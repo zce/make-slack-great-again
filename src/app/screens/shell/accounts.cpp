@@ -102,6 +102,8 @@ Accounts::Accounts(
 }
 
 Accounts::~Accounts() {
+    if (auto sock = _socketMode.lock())
+        sock->onConnectionChanged = nullptr;
     clearLink();
     plat::App &pa = _ctx.app.platform();
     // The screens let go first (their observers move to the blank Store):
@@ -270,8 +272,23 @@ void Accounts::adoptRecord(auth::WorkspaceRecord rec) {
 }
 
 void Accounts::networkChanged(bool online) {
+    _networkOnline = online;
     if (auto sock = _socketMode.lock())
         sock->networkChanged(online);
+    updateConnectionNotice();
+}
+
+void Accounts::updateConnectionNotice() {
+    if (!_networkOnline) {
+        _shell.setConnectionNotice(Shell::ConnectionNotice::Offline);
+        return;
+    }
+    auto sock = _socketMode.lock();
+    _shell.setConnectionNotice(
+        sock && _socketEverConnected && !sock->connected()
+            ? Shell::ConnectionNotice::Reconnecting
+            : Shell::ConnectionNotice::None
+    );
 }
 
 void Accounts::clearLink() {
@@ -549,6 +566,11 @@ std::shared_ptr<slack::SocketMode> Accounts::socketMode() {
         return nullptr;
     auto sock   = std::make_shared<slack::SocketMode>(_ctx.app.platform(), _client, xapp);
     _socketMode = sock;
+    sock->onConnectionChanged = [this](bool connected) {
+        if (connected)
+            _socketEverConnected = true;
+        updateConnectionNotice();
+    };
     return sock;
 }
 
@@ -624,6 +646,7 @@ void Accounts::activate(const std::string &key) {
     _activeKey = key;
     refreshRail();
     _shell.setSignedIn(true);
+    updateConnectionNotice();
     _shell.setLive(r->live);
     _shell.workspaceChanged();
     restoreLast(*r);
