@@ -696,10 +696,11 @@ void QuickSwitcher::refreshResults() {
     _status->setVisible(!_searchError.empty() || (_searching && total > 0));
     _status->setText(!_searchError.empty() ? "Search error: " + _searchError
                                         : tr("Searching\xE2\x80\xA6"));
-    // Normal pagination is automatic at the end of the message list.
-    // Keep an explicit action only for recovering from a failed request.
-    _moreButton->setVisible(!_searching && !_searchError.empty() && hasMore());
-    _moreButton->setLabel("Retry search");
+    // Scroll to fetch more when possible. Keep a fallback action when the
+    // current result set is too short to scroll, and for failed-page retries.
+    const bool retry = !_searchError.empty();
+    _moreButton->setVisible(!_searching && hasMore() && (retry || !_list->canScroll()));
+    _moreButton->setLabel(retry ? "Retry search" : "Load more results");
 }
 
 std::string QuickSwitcher::searchQuery() const {
@@ -840,10 +841,6 @@ void QuickSwitcher::receivePage(size_t origin, std::string cursor, uint32_t gene
         }
         _list->scrollToAnchor({newIndex, previousAnchor.offset});
     }
-    // If the first page is shorter than the viewport, fill it until it can
-    // scroll or Slack reports that there are no more matches.
-    if (!_searching && _searchError.empty() && _list->atEnd() && hasMore())
-        loadMore();
 }
 
 void QuickSwitcher::loadMore() {
