@@ -33,8 +33,8 @@ class MessageRow final : public Clickable {
 public:
     enum Action { React = 1, Forward, Save, More };
 
-    MessageRow(screens::Context &ctx, Avatars &avatars, const model::Message &m)
-        : _ts(m.ts) {
+    MessageRow(screens::Context &ctx, Avatars &avatars, ConvRef conv, const model::Message &m)
+        : _ctx(ctx), _conv(conv), _ts(m.ts) {
         setLook({C::None, C::None, C::None, C::None, 0});
         setCursor(plat::Cursor::Hand);
         style().stack();
@@ -79,6 +79,8 @@ public:
                 if (onAction) {
                     const RectF r = b->windowRect();
                     onAction(_ts, id, {r.x, r.y + r.h});
+                    if (id == Save)
+                        refreshSave();
                 }
             };
             return b;
@@ -86,8 +88,9 @@ public:
         addAction(gfx::Icon::Smile, "Add reaction", React);
         auto *forward = addAction(gfx::Icon::Forward, "Forward message", Forward);
         forward->setVisible(bool(ctx.forwardMessage));
-        auto *save = addAction(gfx::Icon::Bookmark, "Save for later", Save);
-        save->setVisible(ctx.backend.capabilities().messageReminders);
+        _save = addAction(gfx::Icon::Bookmark, "Save for later", Save);
+        _save->setVisible(ctx.backend.capabilities().messageReminders);
+        refreshSave();
         addAction(gfx::Icon::MoreHorizontal, "More actions", More);
         _bar->setVisible(false);
     }
@@ -110,14 +113,27 @@ public:
                 return true;
             }
         } else if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave) {
+            if (e.type == EventType::PointerEnter)
+                refreshSave();
             _bar->setVisible(e.type == EventType::PointerEnter);
         }
         return Clickable::onEvent(e);
     }
 
 private:
-    Ts    _ts = 0;
-    View *_bar = nullptr;
+    void refreshSave() {
+        if (!_save)
+            return;
+        const bool saved = bool(_ctx.store().findSaved(_conv, _ts));
+        _save->setIcon(saved ? gfx::Icon::BookmarkFilled : gfx::Icon::Bookmark);
+        _save->setTooltip(saved ? tr("Remove from saved") : tr("Save for later"));
+    }
+
+    screens::Context &_ctx;
+    ConvRef           _conv = model::kNoConv;
+    Ts                _ts = 0;
+    View             *_bar = nullptr;
+    IconButton       *_save = nullptr;
 };
 
 } // namespace
@@ -181,7 +197,7 @@ ThreadsPage::Card::Card(ThreadsPage &page, FollowedThread item)
     head->add<Label>(participants(), Font::Small, C::TextMuted)->setMaxLines(1);
 
     _body = cardBody(this);
-    auto *rootRow = _body->add<MessageRow>(ctx, page._avatars, _item.root);
+    auto *rootRow = _body->add<MessageRow>(ctx, page._avatars, _item.conv, _item.root);
     rootRow->onClick = [this] { openThread(); };
     rootRow->onAction = [this](Ts ts, int action, PointF at) { messageAction(ts, action, at); };
     // "Show N more replies": the rest lives in the thread panel.
@@ -220,13 +236,17 @@ std::string ThreadsPage::Card::participants() const {
 void ThreadsPage::Card::rebuildReplies() {
     _replies->clearChildren();
     for (const model::Message &m : _item.latestReplies) {
-        auto *row = _replies->add<MessageRow>(_page._ctx, _page._avatars, m);
+        auto *row = _replies->add<MessageRow>(_page._ctx, _page._avatars, _item.conv, m);
         row->onClick = [this] { openThread(); };
         row->onAction = [this](Ts ts, int action, PointF at) { messageAction(ts, action, at); };
     }
 }
 
 const model::Message *ThreadsPage::Card::message(Ts ts) const {
+    // The server feed is a snapshot; prefer live Store state for saved/pinned
+    // actions when the message is also present in the conversation cache.
+    if (const auto *live = _page._ctx.store().findMessage(_item.conv, ts))
+        return live;
     if (ts == _item.root.ts)
         return &_item.root;
     for (const model::Message &m : _item.latestReplies)

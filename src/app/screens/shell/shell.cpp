@@ -1581,6 +1581,8 @@ void Shell::buildTitleBar(View *parent) {
         tr("Refresh"), Button::Kind::Ghost, Button::Form::Small
     );
     _pageAction->setFocusable(false);
+    _pageAction->setTextColor(C::SidebarTextMuted);
+    _pageAction->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 6});
     _pageAction->style().noShrink();
     _pageAction->onClick = [this] {
         for (Page p : {Page::Activity, Page::Threads, Page::Saved, Page::Scheduled})
