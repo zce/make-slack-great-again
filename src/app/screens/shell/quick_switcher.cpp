@@ -363,7 +363,7 @@ public:
     std::unique_ptr<View> create(int kind) override {
         if (kind == 1) {
             auto header = std::make_unique<Label>("", Font::Small, C::TextMuted);
-            header->style().height(24).padding(60, 5, 8, 1);
+            header->style().height(24).padding(40, 5, 8, 1);
             header->setMaxLines(1);
             return header;
         }
@@ -392,6 +392,7 @@ public:
     }
 
     int selectionIndex(int visualIndex) const {
+        if (visualIndex < 0) return -1;
         int row = 0, selection = 0;
         const int sections[] = {
             int(_q._results.size()), int(_q._people.size()), int(_q._hits.size())
@@ -411,6 +412,7 @@ public:
         const Entry e = entry(i);
         if (e.type == Type::Header) {
             auto &header = static_cast<Label &>(v);
+            header.style().padding(e.section == Section::Messages ? 48 : 40, 5, 8, 1);
             header.setText(e.section == Section::Conversations ? tr("Conversations")
                              : e.section == Section::People ? tr("People") : tr("Messages"));
             return;
