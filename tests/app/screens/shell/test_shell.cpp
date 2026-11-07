@@ -2844,6 +2844,11 @@ TEST("overview pages: page titles live in the global titlebar") {
     REQUIRE(h.sh->pageTitle());
 #ifndef __APPLE__
     REQUIRE(h.sh->pageAction());
+    REQUIRE(h.sh->header().star());
+    // Refresh uses the Star's exact 28 px target, never a font-sized glyph.
+    CHECK(h.sh->pageAction()->currentStyle().w == h.sh->header().star()->currentStyle().w);
+    CHECK(h.sh->pageAction()->currentStyle().h == h.sh->header().star()->currentStyle().h);
+    CHECK(h.sh->pageAction()->childCount() == 0);
 #endif
     struct Check { shell::Shell::Page page; const char *title; };
     for (const Check x : {
