@@ -547,8 +547,8 @@ MessageList::MessageList(Context &ctx)
     };
     _typing = add<ui::Label>("", Font::Small, C::TextMuted);
     _typing->setMaxLines(1);
-    // The hover toolbar: the one-click reactions, Add reaction, Forward
-    // message, Save for later and More actions.
+    // Hover toolbar: one-click reactions, Add reaction, Reply in thread,
+    // Forward, Save for later and More. Shared message actions live below.
     _toolbar = add<ToolbarCard>();
     _tbQuick = _toolbar->add<ui::View>();
     _tbQuick->style().row().spacing(4).items(ui::Align::Center);
@@ -558,6 +558,11 @@ MessageList::MessageList(Context &ctx)
             const ui::RectF r = _tbEmoji->windowRect();
             openReactionPicker(_toolbarRow->ts(), {r.x, r.y + r.h, 0, 0});
         }
+    };
+    _tbReply          = _toolbar->add<ActionButton>(gfx::Icon::MessageSquareReply, tr("Reply in thread"));
+    _tbReply->onClick = [this] {
+        if (_toolbarRow)
+            reply(_toolbarRow->ts());
     };
     _tbForward          = _toolbar->add<ActionButton>(gfx::Icon::Forward, tr("Forward message"));
     _tbForward->onClick = [this] {
@@ -1534,10 +1539,17 @@ bool MessageList::onEvent(ui::Event &e) {
 // ── Actions ─────────────────────────────────────────────────────────────────
 
 void MessageList::reply(Ts ts) {
+    const model::Message *m = message(ts);
+    if (!m || m->pending || isSystem(*m))
+        return;
+    // A reply always belongs to its existing root: Slack has no nested threads.
+    const Ts root = m->isReply() ? m->threadTs : (_root ? _root : ts);
+    if (!root)
+        return;
     if (onReply)
-        onReply(_conv, ts);
+        onReply(_conv, root);
     else if (_ctx.openThread)
-        _ctx.openThread(_conv, ts);
+        _ctx.openThread(_conv, root);
 }
 
 void MessageList::openReactionPicker(Ts ts, ui::RectF anchor) {
@@ -1681,6 +1693,7 @@ constexpr ui::MenuDef kItemDefs[] = {
      N_("Open thread"),
      nullptr,
      "T"},
+    {MessageList::kReact, uint16_t(gfx::Icon::Smile), N_("Add reaction"), nullptr, "R"},
     {MessageList::kMuteThread, uint16_t(gfx::Icon::BellOff), N_("Mute thread"), nullptr, nullptr},
     {MessageList::kUnmuteThread, uint16_t(gfx::Icon::Bell), N_("Unmute thread"), nullptr, nullptr},
     {MessageList::kEdit, uint16_t(gfx::Icon::Edit3), N_("Edit message"), nullptr, "E"},
@@ -1691,6 +1704,11 @@ constexpr ui::MenuDef kItemDefs[] = {
      nullptr,
      nullptr},
     {MessageList::kCopyText, uint16_t(gfx::Icon::Copy), N_("Copy message"), nullptr, "Ctrl+C"},
+    {MessageList::kMarkUnread,
+     uint16_t(gfx::Icon::Mail),
+     N_("Mark unread from here"),
+     nullptr,
+     "U"},
     {MessageList::kPin, uint16_t(gfx::Icon::Pin), N_("Pin to channel"), nullptr, "P"},
     {MessageList::kUnpin, uint16_t(gfx::Icon::PinOff), N_("Unpin from channel"), nullptr, "P"},
     {MessageList::kSave, uint16_t(gfx::Icon::Bookmark), N_("Save for later"), nullptr, nullptr},
@@ -1781,33 +1799,31 @@ int64_t remindDue(int preset, int64_t now) {
 std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     std::vector<ui::MenuItem> items;
     const model::Message     *m = message(ts);
-    if (!m || m->pending)
+    if (!m || m->pending || isSystem(*m))
         return items;
     const Store &st        = _ctx.store;
     const bool   mine      = m->user == st.me && m->user != model::kNoUser;
     // Delete requires ownership or workspace administration, plus backend permission.
     const bool canDelete = (mine || (st.me != model::kNoUser && st.user(st.me).admin)) &&
                              _ctx.backend.canDeleteMessage(_conv, ts);
-    if (_root == 0 && !m->isReply())
-        addItem(items, kReply);
-    // Mute the thread this message belongs to (a root with replies, a reply);
-    // the thread panel has its own toggle.
-    if (_root == 0 && (m->replyCount > 0 || m->isReply())) {
-        const Ts root = m->isReply() ? m->threadTs : m->ts;
-        addItem(items, st.threadMuted(_conv, root) ? kUnmuteThread : kMuteThread);
-    }
+
+    // Frequent actions first, matching the hover toolbar and Slack's right-click
+    // hierarchy. A reply in a thread opens that thread, never a nested thread.
+    addItem(items, kReply);
+    addItem(items, kReact);
+    addItem(items, kForward, bool(_ctx.forwardMessage));
     ui::addMenuSeparator(items);
-    if (mine && onEdit) {
-        addItem(items, kEdit);
-        ui::addMenuSeparator(items);
-    }
+
     addItem(items, kCopyLink);
+    addItem(items, kCopyText);
     if (!firstLink(m->text).empty())
         addItem(items, kCopyLinkInText);
-    addItem(items, kCopyText);
+    // A reply has its own read cursor; do not move the channel's cursor
+    // backwards from a reply timestamp.
+    if (_root == 0 && !m->isReply())
+        addItem(items, kMarkUnread);
     ui::addMenuSeparator(items);
-    addItem(items, m->pinned ? kUnpin : kPin);
-    // Slack's Later list: session-token workspaces only (saved.*).
+
     if (_ctx.backend.capabilities().messageReminders) {
         const bool reminded = st.reminderAt(_conv, ts) != 0;
         if (m->saved && !reminded)
@@ -1816,21 +1832,24 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
             addItem(items, kSave);
         addItem(items, reminded ? kRemoveReminder : kRemind).hint = reminded ? "" : "\xE2\x80\xBA";
     }
+    addItem(items, m->pinned ? kUnpin : kPin);
+    if (_root == 0 && (m->replyCount > 0 || m->isReply())) {
+        const Ts root = m->isReply() ? m->threadTs : m->ts;
+        addItem(items, st.threadMuted(_conv, root) ? kUnmuteThread : kMuteThread);
+    }
+
     ui::addMenuSeparator(items);
-    addItem(items, kForward, bool(_ctx.forwardMessage));
-    // "Move to thread…": a top-level message without replies of its own, and
-    // only where the original can be deleted afterwards.
-    if (_root == 0 && canDelete && !m->isReply() && m->replyCount == 0 && !isSystem(*m))
+    if (mine && onEdit)
+        addItem(items, kEdit);
+    // "Move to thread…" is only for top-level messages the author can remove.
+    if (_root == 0 && canDelete && !m->isReply() && m->replyCount == 0)
         addItem(items, kMoveToThread);
-    // Always offered where AI is wired: without a provider it says so (and
-    // links to Settings → AI assistance).
+    // Preserve the existing summary entry (including its disabled state).
     addItem(items, kSummarize, _ctx.ai != nullptr);
     if (canDelete) {
         ui::addMenuSeparator(items);
         addItem(items, kDelete);
     }
-    if (!items.empty() && items.back().separator)
-        items.pop_back();
     return items;
 }
 
@@ -1945,6 +1964,13 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
     case kReply:
     case kOpenThread:
         reply(ts);
+        break;
+    case kReact:
+        openReactionPicker(ts, {at.x, at.y, 0, 0});
+        break;
+    case kMarkUnread:
+        if (_root == 0 && !msg->isReply())
+            _ctx.backend.markUnread(conv, ts);
         break;
     case kMuteThread:
     case kUnmuteThread:

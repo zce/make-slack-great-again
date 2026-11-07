@@ -222,7 +222,11 @@ public:
         if (_list &&
             (e.type == ui::EventType::PointerEnter || e.type == ui::EventType::PointerLeave))
             _list->fileHovered(this, _ts, _path, e.type == ui::EventType::PointerEnter);
-        return Clickable::onEvent(e); // nothing on right click
+        if (_list && e.type == ui::EventType::ContextMenu) {
+            _list->openFileMenu(_ts, _path, e.windowPos);
+            return true; // file actions take precedence over the message menu
+        }
+        return Clickable::onEvent(e);
     }
     void styleChanged() override {
         _n.reset();
@@ -2015,8 +2019,16 @@ bool MessageRow::onEvent(ui::Event &e) {
             return true;
         }
         return false;
+    case ui::EventType::ContextMenu:
+        // Rich links and file chips handle their own context menus first.
+        // Else this is the same menu as the hover toolbar's "…", also for
+        // keyboard Menu and long-press requests that reach the row.
+        if (_list.menuItems(_ts).empty())
+            return false;
+        _list.openMenu(_ts, e.windowPos);
+        return true;
     default:
-        return false; // no menu on right click (the toolbar's "…" has it)
+        return false;
     }
 }
 

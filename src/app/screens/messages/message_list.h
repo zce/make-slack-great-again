@@ -168,12 +168,14 @@ public:
     enum MenuId : int {
         kReply = 1,
         kOpenThread,
+        kReact,
         kMuteThread,
         kUnmuteThread,
         kEdit,
         kCopyLink,
         kCopyLinkInText,
         kCopyText,
+        kMarkUnread,
         kPin,
         kUnpin,
         kSave,
@@ -320,7 +322,8 @@ private:
     ui::View                  *_toolbar = nullptr, *_tbQuick = nullptr;
     std::vector<std::string>   _quickNames;  // what _tbQuick's buttons are for
     std::vector<std::string>   _quickImages; // and their pictures (Store::EmojiGlyph::image)
-    ui::Clickable             *_tbEmoji = nullptr, *_tbForward = nullptr, *_tbMore = nullptr;
+    ui::Clickable             *_tbEmoji = nullptr, *_tbReply = nullptr, *_tbForward = nullptr,
+                              *_tbMore = nullptr;
     class ActionButton        *_tbSave = nullptr;
     ui::View                  *_fileBar = nullptr, *_fileView = nullptr; // the hovered file
     Ts                         _fileTs = 0;
