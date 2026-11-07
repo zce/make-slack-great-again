@@ -3370,8 +3370,10 @@ TEST("headerless shell: search stays centered and message pane has symmetric sid
     // workspace navigation and the right-hand window controls.
     auto *titleContent = h.sh->header().parent();
     REQUIRE(titleContent);
-    REQUIRE(titleContent->childCount() >= 2);
-    auto *search = titleContent->child(1);
+    REQUIRE(titleContent->childCount() >= 3);
+    // The overview title occupies a separate, hidden slot while signed out.
+    // The search is still the last child and remains centered in that state.
+    auto *search = titleContent->child(titleContent->childCount() - 1);
     const auto r = search->windowRect();
     CHECK(std::abs(r.x + r.w / 2 - h.win->size().w / 2) < 2.f);
 
