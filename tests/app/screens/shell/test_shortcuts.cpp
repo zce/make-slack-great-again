@@ -49,9 +49,34 @@ void pump(int n = 10) {
         app().pump(2);
 }
 
+struct SearchBackend : fake::FakeBackend {
+    using fake::FakeBackend::FakeBackend;
+
+    struct Pending {
+        std::string query, cursor;
+        model::Backend::SearchPageDone done;
+    };
+    bool deferSearch = false;
+    std::vector<Pending> pending;
+
+    void searchPage(std::string query, std::string cursor,
+                    model::Backend::SearchPageDone done) override {
+        if (!deferSearch) {
+            fake::FakeBackend::searchPage(std::move(query), std::move(cursor), std::move(done));
+            return;
+        }
+        pending.push_back({std::move(query), std::move(cursor), std::move(done)});
+    }
+
+    void respond(size_t index, model::Backend::SearchPage page) {
+        auto done = std::move(pending.at(index).done);
+        if (done) done(std::move(page));
+    }
+};
+
 struct Harness {
     Store     store;
-    fake::FakeBackend backend{store, app().platform()};
+    SearchBackend backend{store, app().platform()};
 #ifdef MSGA_HAVE_MESSAGES
     screens::ImageCache images{app().platform()};
     screens::Context    ctx{app(), store, backend, images, {}, {}, {}, {}, {}};
@@ -329,6 +354,87 @@ TEST("search: fake backend paginates and scopes results") {
     REQUIRE(done);
     CHECK(third.hits.size() == 5);
     CHECK(third.nextCursor.empty());
+}
+
+TEST("search: stale responses cannot replace the active query") {
+    Harness h;
+    h.backend.deferSearch = true;
+    h.sh->showQuickSwitcher();
+    auto *search = h.sh->quickSwitcher();
+    REQUIRE(search != nullptr);
+
+    search->field().setText("old-query");
+    for (int i = 0; i < 1000 && h.backend.pending.size() < 1; ++i) pump(5);
+    REQUIRE(h.backend.pending.size() == 1);
+    search->field().setText("new-query");
+    for (int i = 0; i < 1000 && h.backend.pending.size() < 2; ++i) pump(5);
+    REQUIRE(h.backend.pending.size() == 2);
+    CHECK_STR(h.backend.pending[0].query, "old-query");
+    CHECK_STR(h.backend.pending[1].query, "new-query");
+
+    const auto result = [&](const char *text, Ts ts) {
+        Backend::SearchPage page;
+        Backend::SearchHit hit;
+        hit.conv = h.conv("C0DESIGN");
+        hit.ts = ts;
+        hit.text = text;
+        page.hits.push_back(std::move(hit));
+        return page;
+    };
+    h.backend.respond(1, result("new result", 1700000002000000));
+    REQUIRE(search->messageResults().size() == 1);
+    CHECK_STR(search->messageResults()[0].hit.text, "new result");
+
+    // The older query completes last. Its generation is stale and must be ignored.
+    h.backend.respond(0, result("stale result", 1700000001000000));
+    REQUIRE(search->messageResults().size() == 1);
+    CHECK_STR(search->messageResults()[0].hit.text, "new result");
+}
+
+TEST("search: backend failures stay distinct from empty results and remain retryable") {
+    Harness h;
+    h.backend.deferSearch = true;
+    h.sh->showQuickSwitcher();
+    auto *search = h.sh->quickSwitcher();
+    REQUIRE(search != nullptr);
+    search->field().setText("failing-query");
+    for (int i = 0; i < 1000 && h.backend.pending.empty(); ++i) pump(5);
+    REQUIRE(h.backend.pending.size() == 1);
+
+    Backend::SearchPage failure;
+    failure.error = "ratelimited";
+    h.backend.respond(0, std::move(failure));
+    CHECK_STR(search->emptyText(), "Search failed. Try again.");
+    CHECK(search->hasMore()); // the failed cursor remains available for retry
+}
+
+TEST("search: choosing a thread reply opens the correct thread") {
+    Harness h;
+    const ConvRef design = h.conv("C0DESIGN");
+    const Ts rootTs = h.store.conversation(design).latest + 1000000;
+    Message root;
+    root.ts = rootTs;
+    root.user = h.store.me;
+    root.text = "thread root";
+    h.store.setThreadRoot(design, std::move(root));
+    Message reply;
+    reply.ts = rootTs + 1000000;
+    reply.threadTs = rootTs;
+    reply.user = h.store.me;
+    reply.text = "unique-search-thread-reply";
+    h.store.addMessage(design, std::move(reply));
+
+    h.sh->showQuickSwitcher();
+    auto *search = h.sh->quickSwitcher();
+    REQUIRE(search != nullptr);
+    search->field().setText("unique-search-thread-reply");
+    for (int i = 0; i < 1000 && search->messageResults().empty(); ++i) pump(5);
+    REQUIRE(search->messageResults().size() == 1);
+    CHECK(search->messageResults()[0].hit.thread == rootTs);
+    search->choose(0);
+    pump();
+    CHECK(h.sh->current() == design);
+    CHECK(h.sh->threadOpen());
 }
 
 TEST("search: Slack highlighted Unicode preview removes markers and preserves bytes") {

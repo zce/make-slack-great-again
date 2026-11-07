@@ -594,6 +594,23 @@ TEST("slack write: search maps channel, ts and thread; unknown channels are skip
     CHECK_STR(Log().get("search.messages", 1)["form"]["cursor"].str(), "search-page-2");
 }
 
+TEST("slack write: search reports API errors separately from empty results") {
+    if (!haveServer())
+        return;
+    Env e;
+    script("search.messages", R"([{"ok":false,"error":"invalid_query"}])");
+    model::Backend::SearchPage page;
+    bool got = false;
+    e.be->searchPage("invalid search query", "*", [&](auto result) {
+        page = std::move(result);
+        got = true;
+    });
+    REQUIRE(pumpUntil([&] { return got; }));
+    CHECK_STR(page.error, "invalid_query");
+    CHECK(page.hits.empty());
+    CHECK(page.nextCursor.empty());
+}
+
 TEST("slack write: save and remind use saved.*; a rejection rolls back") {
     if (!haveServer())
         return;
