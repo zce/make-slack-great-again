@@ -2533,6 +2533,33 @@ TEST("avatars: files decode on the worker, never in get(); the cache is bounded"
     CHECK(av.bytes() <= 2 * 40 * 40 * 4);
 }
 
+TEST("navigation: parsed permalinks enter the correct channel and thread") {
+    Harness h;
+    const ConvRef target = h.conv("C0DESIGN");
+    REQUIRE(target != kNoConv);
+    const auto root = mrkdwn::parseMessageLink(
+        "https://lumen.slack.com/archives/C0DESIGN/p1792674458384049"
+    );
+    REQUIRE(root.valid());
+    const auto reply = mrkdwn::parseMessageLink(
+        "https://lumen.slack.com/archives/C0DESIGN/"
+        "p1793818271076489?thread_ts=1792674458.384049&cid=C0DESIGN"
+    );
+    REQUIRE(reply.valid());
+    // Parser integration + in-app Shell navigation, not desktop protocol E2E.
+    h.sh->open(h.conv("C0ENG"));
+    h.sh->jumpToMessage(target, model::parseTs(root.ts), model::parseTs(root.threadTs));
+    CHECK(h.sh->current() == target);
+    CHECK_FALSE(h.sh->threadOpen());
+    h.sh->open(h.conv("C0ENG"));
+    h.sh->jumpToMessage(target, model::parseTs(reply.ts), model::parseTs(reply.threadTs));
+    CHECK(h.sh->current() == target);
+    CHECK(h.sh->threadOpen());
+    const ConvRef before = h.sh->current();
+    h.sh->jumpToMessage(kNoConv, 0, 0);
+    CHECK(h.sh->current() == before);
+}
+
 // ── The Threads page ────────────────────────────────────────────────────────
 
 namespace {
