@@ -289,6 +289,9 @@ private:
     // on the paced lane (null: it failed; channel_not_found marks it dead).
     std::vector<std::string> directConversationIds() const;
     void sweepInfo(const std::string &id, std::function<void(model::Conversation *info)> done);
+    // Merge an authoritative DM snapshot without losing live messages received
+    // after the snapshot was taken.
+    void reconcileDirectConversation(const std::string &id, const model::Conversation &info);
     // A read call — or a write that is safe to repeat — with rate limits,
     // lost connections and transient errors waited out; background: the
     // paced 1.2 s lane, which holds while a Normal call is outstanding.
