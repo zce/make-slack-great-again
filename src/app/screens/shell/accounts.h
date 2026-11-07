@@ -147,6 +147,9 @@ private:
     std::unique_ptr<slack::OAuthFlow>     _oauth;
     std::unique_ptr<slack::TokenDeriver>  _remint;
     std::weak_ptr<slack::SocketMode>      _socketMode; // held by the Slack backends
+    bool _networkOnline = true;
+    bool _socketEverConnected = false;
+    void updateConnectionNotice();
 };
 
 } // namespace shell
