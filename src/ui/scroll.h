@@ -17,8 +17,9 @@ namespace ui {
 //   precise deltas → applied 1:1; with ScrollPhase (Wayland, macOS) a lift
 //                    (End) starts our own kinetic fling on Linux/Windows —
 //                    macOS sends Momentum events instead and we just apply them
-//   scrollbar      → thin overlay thumb, wider on hover, draggable; a press on
-//                    the track pages
+//   scrollbar      → overlay thumb, revealed by scrolling or hovering the edge,
+//                    hidden after idle (including the sidebar's thin thumb);
+//                    wider on hover, draggable; a press on the normal track pages
 //   keys           → PageUp/PageDown/Home/End/Up/Down when they bubble here
 // Moving the content blits the pixels already on the canvas (Window::
 // scrollBlit) and repaints only the strip that scrolled in — when the area
@@ -27,6 +28,7 @@ namespace ui {
 class ScrollArea : public View {
 public:
     ScrollArea();
+    ~ScrollArea() override;
 
     float         scrollOffset() const { return offset(); } // content px above the viewport
     virtual float contentExtent() const = 0; // total content height (may be estimated)
@@ -73,13 +75,17 @@ private:
     float barMargin() const; // above/below the thumb's track
     bool  inBarZone(PointF p) const;
     void  startGlide(float dy);
+    void  revealBar();
+    void  hideBarWhenIdle();
 
     enum class Anim : uint8_t { None, Glide, Fling, Custom };
     double _lastTick = 0, _lastPrecise = 0;
     float  _glideLeft = 0, _velocity = 0, _dragGrab = 0;
     Anim   _anim     = Anim::None;
-    bool   _barHover = false, _dragging = false;
-    C      _thinColor = C::None; // setThinThumb; None = the default bar
+    bool   _barHover = false, _dragging = false, _barVisible = false;
+    C      _thinColor = C::None; // setThinThumb; None = the standard-width bar
+    plat::TimerId _barTimer = 0;
+    double        _barActivityMs = 0;
 };
 
 // ── ScrollView ──────────────────────────────────────────────────────────────

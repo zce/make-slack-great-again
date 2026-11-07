@@ -17,6 +17,7 @@ constexpr float kMinThumb  = 24;
 constexpr float kBarWide   = 10; // hovered/dragged thumb width
 constexpr float kThinW     = 4;  // setThinThumb
 constexpr float kThinMin   = 20; // … and its minimum thumb height
+constexpr int   kBarHideMs = 1200; // one-shot idle timeout; no per-frame fade
 #ifndef __APPLE__
 // px/ms below which a lift does not fling (macOS sends its own Momentum events)
 constexpr float kMinFling = 0.08f;
@@ -48,8 +49,48 @@ ScrollArea::ScrollArea() {
     setRole(Role::ScrollArea);
 }
 
+ScrollArea::~ScrollArea() {
+    if (_barTimer)
+        app()->cancelTimer(_barTimer);
+}
+
 void ScrollArea::setThinThumb(C color) {
+    if (_thinColor == color)
+        return;
     _thinColor = color;
+    if (_barTimer) {
+        app()->cancelTimer(_barTimer);
+        _barTimer = 0;
+    }
+    _barVisible = false;
+    update(barZone());
+}
+
+// Keep one timer per active scroll area, not one timer per wheel/touchpad event.
+void ScrollArea::revealBar() {
+    if (!canScroll())
+        return;
+    _barActivityMs = app()->nowMs();
+    if (!_barVisible) {
+        _barVisible = true;
+        update(barZone());
+    }
+    if (!_barTimer)
+        _barTimer = app()->addTimer(kBarHideMs, false, [this] { hideBarWhenIdle(); });
+}
+
+void ScrollArea::hideBarWhenIdle() {
+    _barTimer = 0;
+    // Hover and drag keep the bar up without running a periodic timer.
+    // Leaving or releasing the bar starts a fresh one-shot deadline.
+    if (!_barVisible || _barHover || _dragging)
+        return;
+    const int remaining = int(std::ceil(_barActivityMs + kBarHideMs - app()->nowMs()));
+    if (remaining > 0) {
+        _barTimer = app()->addTimer(remaining, false, [this] { hideBarWhenIdle(); });
+        return;
+    }
+    _barVisible = false;
     update(barZone());
 }
 
@@ -74,6 +115,7 @@ void ScrollArea::moved(float oldOffset, float newOffset, bool blit) {
             else if (d)
                 update(); // transparent: what shows through does not move
         }
+        revealBar();
         update(barZone());
         w->refreshHover();
     }
@@ -104,20 +146,20 @@ bool ScrollArea::inBarZone(PointF p) const {
 }
 
 uint8_t ScrollArea::cursorAt(PointF p) const {
-    if (_thinColor != C::None && (_dragging || inBarZone(p)))
+    if (_thinColor != C::None && (_dragging || (_barVisible && inBarZone(p))))
         return uint8_t(plat::Cursor::ResizeV);
     return View::cursorAt(p);
 }
 
 View *ScrollArea::hitTest(PointF p) {
     // The bar sits above the rows: a press there drags it, not the row.
-    if (inBarZone(p))
+    if (inBarZone(p) && _barVisible)
         return this;
     return View::hitTest(p);
 }
 
 void ScrollArea::paintOver(gfx::Painter &p) {
-    if (!canScroll())
+    if (!canScroll() || !_barVisible)
         return;
     const RectF r = thumbRect();
     const C     c = _thinColor != C::None    ? _thinColor
@@ -235,7 +277,7 @@ bool ScrollArea::onEvent(Event &e) {
         }
     }
     case EventType::PointerDown: {
-        if (e.button != plat::Button::Left || !inBarZone(e.pos))
+        if (e.button != plat::Button::Left || !inBarZone(e.pos) || !_barVisible)
             return false;
         stopScrolling();
         const RectF r = thumbRect();
@@ -257,9 +299,15 @@ bool ScrollArea::onEvent(Event &e) {
             update(barZone());
             return true;
         }
-        const bool hov = inBarZone(e.pos);
+        // A thin thumb reveals from the right-edge strip, but only the thumb
+        // itself handles a press. Sidebar rows remain clickable beside it.
+        const bool hov = _thinColor == C::None
+                             ? inBarZone(e.pos)
+                             : canScroll() && e.pos.x >= width() - kBarZone &&
+                                   e.pos.x < width() && e.pos.y >= 0 && e.pos.y < height();
         if (hov != _barHover) {
             _barHover = hov;
+            revealBar(); // hover reveals; leaving starts the idle timeout
             update(barZone());
         }
         return false;
@@ -268,6 +316,16 @@ bool ScrollArea::onEvent(Event &e) {
         if (_dragging) {
             _dragging = false;
             _barHover = inBarZone(e.pos);
+            revealBar();
+            update(barZone());
+            return true;
+        }
+        return false;
+    case EventType::PointerCancel:
+        if (_dragging) {
+            _dragging = false;
+            _barHover = false;
+            revealBar();
             update(barZone());
             return true;
         }
@@ -275,6 +333,7 @@ bool ScrollArea::onEvent(Event &e) {
     case EventType::PointerLeave:
         if (_barHover && !_dragging) {
             _barHover = false;
+            revealBar();
             update(barZone());
         }
         return false;

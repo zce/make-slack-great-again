@@ -297,6 +297,32 @@ TEST("scroll: ScrollView clamps, ensureVisible, scrollbar drag") {
     CHECK(sv->scrollOffset() == 800);
 }
 
+TEST("scroll: overlay thumb reveals on hover and scrolling, then hides at idle") {
+    Win   w(300, 200);
+    auto *sv  = w.root().add<ui::ScrollView>();
+    auto *col = sv->content();
+    for (int i = 0; i < 20; ++i)
+        col->add<Box>(300, 50);
+    w.frame();
+
+    // While hidden, the track must not steal clicks from the content.
+    CHECK(sv->hitTest({296, 150}) != sv);
+    w.move(296, 150);
+    CHECK(sv->hitTest({296, 150}) == sv);
+    w.move(150, 150);
+    CHECK(w.until([&] { return sv->hitTest({296, 150}) != sv; }));
+
+    sv->scrollBy(100);
+    CHECK(sv->scrollOffset() == 100);
+    CHECK(sv->hitTest({296, 150}) == sv);
+    CHECK(w.until([&] { return sv->hitTest({296, 150}) != sv; }));
+
+    // Hover can always restore the drag affordance without moving the content.
+    w.move(296, 150);
+    CHECK(sv->hitTest({296, 150}) == sv);
+    CHECK(sv->scrollOffset() == 100);
+}
+
 TEST("scroll: a thin thumb grabs only on itself and keeps its width") {
     Win                w(300, 200);
     auto              *sv  = w.root().add<ui::ScrollView>();
@@ -320,6 +346,38 @@ TEST("scroll: a thin thumb grabs only on itself and keeps its width") {
     w.frame();
     CHECK(sv->scrollOffset() == 100);
     // Dragging the thumb still scrolls.
+    w.move(296, 40);
+    w.press();
+    w.move(296, 400);
+    w.release();
+    CHECK(sv->scrollOffset() == 800);
+}
+
+TEST("scroll: thin sidebar thumb auto-hides and restores from edge hover") {
+    Win                w(300, 200);
+    auto              *sv  = w.root().add<ui::ScrollView>();
+    auto              *col = sv->content();
+    std::vector<Box *> boxes;
+    for (int i = 0; i < 20; ++i)
+        boxes.push_back(col->add<Box>(300, 50));
+    sv->setThinThumb(ui::C::SidebarScrollbar);
+    w.frame();
+
+    CHECK(sv->hitTest({296, 40}) != sv); // starts visually hidden
+    sv->scrollBy(100);
+    CHECK(sv->hitTest({296, 40}) == sv);
+    w.move(150, 150);
+    CHECK(w.until([&] { return sv->hitTest({296, 40}) != sv; }));
+
+    // A 12px reveal zone is easier to hit than the invisible 4px thumb.
+    w.move(291, 150);
+    CHECK(sv->hitTest({296, 40}) == sv);
+    CHECK(sv->hitTest({291, 150}) == boxes[5]); // outside the thumb: row hit
+    w.press();
+    w.release();
+    CHECK(sv->scrollOffset() == 100); // not a track-page click
+
+    // The revealed thin thumb is still draggable.
     w.move(296, 40);
     w.press();
     w.move(296, 400);
