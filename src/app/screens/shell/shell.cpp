@@ -758,11 +758,11 @@ public:
         composer = add<Composer>(ctx, drafts);
 #endif
     }
-    void show(ConvRef conv, Ts root) {
+    void show(ConvRef conv, Ts root, Ts jumpTarget) {
         this->conv = conv;
         this->root = root;
 #ifdef MSGA_HAVE_MESSAGES
-        panel->show(conv, root);
+        panel->show(conv, root, jumpTarget);
         typing->setTarget(conv, root);
 #else
         where->setText(convTitle(_ctx.store(), conv));
