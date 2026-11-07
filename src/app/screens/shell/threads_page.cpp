@@ -118,7 +118,7 @@ public:
 private:
     Ts    _ts = 0;
     View *_bar = nullptr;
-}
+};
 
 } // namespace
 
