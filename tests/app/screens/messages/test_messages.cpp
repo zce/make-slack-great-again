@@ -2439,7 +2439,13 @@ TEST("image: the limit covers the audio and file downloads and counts the worksp
 
     // Settings → Clear cache: every blob, the kept data left to its owner.
     remote.clear();
-    REQUIRE(until([&] { return remote.diskBytes() == 0 && !file::exists(paths[2]); }));
+    // clear() publishes zero immediately, while the worker removes blobs one
+    // by one. Wait for every blob, not just the first one, before asserting.
+    REQUIRE(until(
+        [&] {
+            return remote.diskBytes() == 0 && !file::exists(paths[2]) && !file::exists(more);
+        }
+    ));
     CHECK_FALSE(file::exists(more));
     CHECK(file::exists(paths[3]));
     file::remove(paths[3]);

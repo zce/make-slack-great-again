@@ -529,16 +529,33 @@ TEST("slack realtime: a reconnect backfills the roster and the DM badges") {
     Env e;
     REQUIRE(e.connect());
     REQUIRE(e.live());
+    const ConvRef dm = e.conv("D1");
+    REQUIRE(dm != kNoConv);
+    // OAuth's initial roster enrichment also reads conversations.info. Wait
+    // for that snapshot, then change the fake answer so this test verifies
+    // that reconnect resync applies the newer unread count.
+    REQUIRE(pumpUntil(
+        [&] {
+            return count("conversations.info") > 0 && e.store.conversation(dm).unread == 4;
+        },
+        5000
+    ));
     const int lists = count("users.conversations");
-    CHECK(e.store.conversation(e.conv("D1")).unread == 0);
+    set(R"({
+      "conversations.info?channel=D1": {"ok": true, "channel": {
+        "id": "D1", "is_im": true, "user": "UMIRA",
+        "unread_count": 7, "last_read": "1700000000.000000",
+        "latest": {"ts": "1700000500.000000"}
+      }}
+    })");
     // Slack drops the socket: a later hello is a reconnect after a gap.
     ctl("POST", "/_ctl/ws/close", R"({"code": 1001})");
     REQUIRE(pumpUntil([&] { return count("ws-open") == 2 && e.socket->connected(); }));
     REQUIRE(pumpUntil([&] { return count("users.conversations") > lists; }));
     // resyncUnreads: conversations.info on the DM, merged upward.
-    REQUIRE(pumpUntil([&] { return e.store.conversation(e.conv("D1")).unread == 4; }, 5000));
-    CHECK(e.store.conversation(e.conv("D1")).mentions == 4);
-    CHECK(e.store.conversation(e.conv("D1")).lastRead == model::parseTs("1700000000.000000"));
+    REQUIRE(pumpUntil([&] { return e.store.conversation(dm).unread == 7; }, 5000));
+    CHECK(e.store.conversation(dm).mentions == 7);
+    CHECK(e.store.conversation(dm).lastRead == model::parseTs("1700000000.000000"));
 }
 
 TEST("slack realtime: reconnect resync clears DMs read on another client") {
