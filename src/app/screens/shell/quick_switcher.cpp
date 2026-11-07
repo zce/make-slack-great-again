@@ -22,7 +22,8 @@ namespace shell {
 
 namespace {
 
-constexpr float kListH = 360; // compact, scrollable search results
+constexpr float kListH = 380; // compact, scrollable search results
+constexpr float kMessageRowH = 60;
 constexpr size_t kPreviewChars = 180;
 
 // Issue #60: fuzzy, not substring ("xdg" lands on #xd-general). None
@@ -332,7 +333,7 @@ public:
             timestamp->setMaxLines(1);
             timestamp->style().noShrink();
             snippet = body->add<Label>("", Font::Small, C::TextMuted);
-            snippet->setMaxLines(2);
+            snippet->setMaxLines(1);
             snippet->setVisible(false);
         }
         Avatar   *avatar = nullptr;
@@ -363,7 +364,7 @@ public:
     std::unique_ptr<View> create(int kind) override {
         if (kind == 1) {
             auto header = std::make_unique<Label>("", Font::Small, C::TextMuted);
-            header->style().height(24).padding(40, 5, 8, 1);
+            header->style().height(24).padding(0, 5, 8, 1);
             header->setMaxLines(1);
             return header;
         }
@@ -412,7 +413,7 @@ public:
         const Entry e = entry(i);
         if (e.type == Type::Header) {
             auto &header = static_cast<Label &>(v);
-            header.style().padding(e.section == Section::Messages ? 48 : 40, 5, 8, 1);
+            header.style().padding(0, 5, 8, 1);
             header.setText(e.section == Section::Conversations ? tr("Conversations")
                              : e.section == Section::People ? tr("People") : tr("Messages"));
             return;
@@ -461,7 +462,7 @@ public:
                 hit.user < tab.store->userCount() ? &tab.store->user(hit.user) : nullptr;
             const std::string sender = user ? std::string(user->label()) : hit.sender;
 
-            r.style().height(72).padding(10, 6).spacing(10).items(Align::Center);
+            r.style().height(kMessageRowH).padding(10, 6).spacing(10).items(Align::Center);
             r.avatar->style().size(28, 28);
             r.avatar->setVisible(!sender.empty());
             r.icon->setVisible(sender.empty());
@@ -496,7 +497,7 @@ public:
     float estimateHeight(int i) const override {
         switch (entry(i).type) {
         case Type::Header: return 24;
-        case Type::Message: return 72;
+        case Type::Message: return kMessageRowH;
         default: return 36;
         }
     }
