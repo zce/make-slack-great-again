@@ -452,8 +452,11 @@ TEST("slack realtime: the network coming back reconnects a dropped socket at onc
     slack::SocketMode::Timing t;
     t.backoffMs = t.backoffMaxMs = 60'000; // a retry the test would never see
     sock.setTimingForTest(t);
+    std::vector<bool> connectivity;
+    sock.onConnectionChanged = [&](bool connected) { connectivity.push_back(connected); };
     sock.start();
     REQUIRE(pumpUntil([&] { return sock.connected(); }, 5000));
+    CHECK(connectivity == std::vector<bool>{true});
     // The OS reports the network the way main.cpp hands it on (headless
     // plat's fake reachability source).
     plat::App &pa = app();
@@ -467,15 +470,18 @@ TEST("slack realtime: the network coming back reconnects a dropped socket at onc
     REQUIRE(hooks->simulateSystemEvent(plat::EventType::NetworkChanged, true));
     REQUIRE(pumpUntil([&] { return count("ws-ping") >= 1; }));
     CHECK(count("ws-open") == 1);
+    CHECK(connectivity == std::vector<bool>{true}); // a ping is not a disconnect
     // The network drops the socket; the backoff would wait a minute.
     ctl("POST", "/_ctl/ws/close", R"({"code": 1001})");
     REQUIRE(pumpUntil([&] { return !sock.connected(); }));
+    CHECK(connectivity == (std::vector<bool>{true, false}));
     REQUIRE(hooks->simulateSystemEvent(plat::EventType::NetworkChanged, false));
     pumpFor(150);
     CHECK(count("ws-open") == 1); // offline: nothing to do
     REQUIRE(hooks->simulateSystemEvent(plat::EventType::NetworkChanged, true));
     REQUIRE(pumpUntil([&] { return count("ws-open") == 2 && sock.connected(); }, 3000));
     CHECK(count("apps.connections.open") == 2);
+    CHECK(connectivity == (std::vector<bool>{true, false, true}));
     pa.setEventHandler({});
     sock.stop();
 }
