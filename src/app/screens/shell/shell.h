@@ -228,6 +228,8 @@ public:
     // The workspace rail.
     ui::View                   *rail() const { return _rail; }
     ConvHeader                 &header() { return *_header; }
+    ui::Label                  *pageTitle() const { return _pageTitle; } // tests
+    ui::Button                 *pageAction() const { return _pageAction; }
     ConvTabs                   &tabs() { return *_tabs; }
     TypingIndicator            &typing() { return *_typing; }
     DraftStash                 &drafts() { return _drafts; }
@@ -437,6 +439,8 @@ private:
     float                  _titleBarH  = 0;       // buildTitleBar
     ui::Label             *_titleLabel = nullptr; // macOS: the workspace, without a header
     ui::Label             *_pageTitle = nullptr; // overview title in the unified titlebar
+    ui::View              *_pageHeading = nullptr; // title and optional page actions (non-macOS)
+    ui::Button            *_pageAction = nullptr;
     WorkspaceStack        *_wsStack    = nullptr;
     std::vector<Workspace> _workspaces;
     std::string            _activeKey;

@@ -1570,14 +1570,29 @@ void Shell::buildTitleBar(View *parent) {
     auto *content = _titleBar->add<TitleContent>();
     content->style().row().height(kTitleBarH).flex(1).items(Align::Center);
     _header = content->add<ConvHeader>(_ctx, _avatars);
-    _pageTitle = content->add<Label>("", Font::HeaderTitle, C::SidebarText);
+    _pageHeading = content->add<View>();
+    _pageHeading->style().row().flex(1).padding(16, 0, 8, 0).spacing(8)
+        .items(Align::Center);
+    _pageTitle = _pageHeading->add<Label>("", Font::HeaderTitle, C::SidebarText);
     _pageTitle->setMaxLines(1);
     _pageTitle->setHitTransparent(true);
-    _pageTitle->style().flex(1).padding(16, 0, 8, 0);
-    _pageTitle->setVisible(false);
+    _pageTitle->style().shrink = 1;
+    _pageAction = _pageHeading->add<Button>(
+        tr("Refresh"), Button::Kind::Ghost, Button::Form::Small
+    );
+    _pageAction->setFocusable(false);
+    _pageAction->style().noShrink();
+    _pageAction->onClick = [this] {
+        for (Page p : {Page::Activity, Page::Threads, Page::Saved, Page::Scheduled})
+            if (pageOpen(p)) {
+                pageView(p)->open();
+                return;
+            }
+    };
+    _pageHeading->setVisible(false);
     auto *search = content->add<TitleSearchTrigger>();
     content->heading = _header;
-    content->pageTitle = _pageTitle;
+    content->pageTitle = _pageHeading;
     content->search = search;
     search->style().row().width(252).height(32).padding(12, 0).spacing(9)
         .items(Align::Center).noShrink();
@@ -2517,7 +2532,11 @@ void Shell::showPage(Page p) {
         case Page::Scheduled: _pageTitle->setText(tr("Scheduled messages")); break;
         case Page::None:      break;
         }
+#ifndef __APPLE__
+        if (_pageHeading) _pageHeading->setVisible(true);
+#else
         _pageTitle->setVisible(true);
+#endif
     }
 #ifdef __APPLE__
     if (_titleLabel) _titleLabel->setVisible(false);
@@ -2553,8 +2572,9 @@ void Shell::leavePage(Page p) {
     if (!pageOpen(p))
         return;
     pageView(p)->setVisible(false);
-    if (_pageTitle) _pageTitle->setVisible(false);
+    if (_pageHeading) _pageHeading->setVisible(false);
 #ifdef __APPLE__
+    if (_pageTitle) _pageTitle->setVisible(false);
     if (_titleLabel) _titleLabel->setVisible(true);
 #endif
     if (_sidebar->selectedNav() == p)
