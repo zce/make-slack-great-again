@@ -71,7 +71,7 @@ public:
 
     void    showConversation(ConvRef conv);
     // Thread mode (the thread panel): the root, a "N replies" divider, the replies.
-    void    showThread(ConvRef conv, Ts root);
+    void    showThread(ConvRef conv, Ts root, Ts jumpTarget = 0);
     void    clear(); // shows nothing, stops observing
     ConvRef conversation() const { return _conv; }
     Ts      threadRoot() const { return _root; }
