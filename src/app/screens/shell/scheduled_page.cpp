@@ -56,6 +56,14 @@ public:
         }
         auto *cancelBtn    = footer->add<TextLink>(tr("Cancel"), Font::Control, C::Link, false);
         cancelBtn->onClick = [this] { cancel(); };
+        _error = body->add<Label>("", Font::Caption, C::Danger);
+        _error->setVisible(false);
+    }
+
+    void showFailure(const std::string &error) {
+        _busy = false;
+        _error->setText(error.empty() ? tr("Action failed. Please check its status.") : error);
+        _error->setVisible(true);
     }
 
     bool canSendNow() const { return _item.threadKnown; }
@@ -67,16 +75,18 @@ public:
             return;
         _busy                     = true;
         screens::Context   &ctx   = _page._ctx;
-        std::weak_ptr<int>  alive = _page._alive;
+        std::weak_ptr<int>  alive = _alive;
         const std::string   ws    = ctx.store().workspaceId;
         const ScheduledItem item  = _item;
-        ScheduledPage      *page  = &_page;
+        Card *card = this;
         ctx.backend.cancelScheduled(
-            item.id, [page, &ctx, alive, ws, item](bool ok, const std::string &) {
+            item.id, [card, &ctx, alive, ws, item](bool ok, const std::string &error) {
                 if (alive.expired() || ctx.store().workspaceId != ws)
                     return;
-                if (!ok)
-                    return page->reset(); // the banner said why; the card again
+                if (!ok) {
+                    card->showFailure(error);
+                    return; // Do not post if unscheduling is unconfirmed.
+                }
                 ctx.backend.send(item.conv, item.text, item.thread, nullptr);
             }
         );
@@ -85,12 +95,14 @@ public:
         if (_busy)
             return;
         _busy                    = true;
-        std::weak_ptr<int> alive = _page._alive;
-        ScheduledPage     *page  = &_page;
-        _page._ctx.backend.cancelScheduled(_item.id, [page, alive](bool ok, const std::string &) {
-            if (!ok && !alive.expired())
-                page->reset();
-        });
+        std::weak_ptr<int> alive = _alive;
+        Card *card = this;
+        _page._ctx.backend.cancelScheduled(
+            _item.id, [card, alive](bool ok, const std::string &error) {
+                if (!alive.expired() && !ok)
+                    card->showFailure(error);
+            }
+        );
     }
     const ScheduledItem &item() const { return _item; }
 
@@ -98,6 +110,8 @@ private:
     ScheduledPage &_page;
     ScheduledItem  _item;
     bool           _busy = false; // a click went out (the list answers by rebuilding)
+    ui::Label     *_error = nullptr;
+    std::shared_ptr<int> _alive = std::make_shared<int>(0);
 };
 
 ScheduledPage::ScheduledPage(screens::Context &ctx, Avatars &avatars)
