@@ -1,6 +1,6 @@
 # Make Slack Great Again (zce fork)
 
-> **Slack-focused fork.** Claude Code workspaces and agent sessions are not included in this build. This fork follows [upstream](https://github.com/punarinta/make-slack-great-again), with changes isolated for easier synchronization. See [fork maintenance](docs/FORK.md).
+> **Slack-focused fork.** Claude Code workspaces and agent sessions are not included in this build. This fork follows [upstream](https://github.com/punarinta/make-slack-great-again), with changes isolated for easier synchronization. This README is the canonical guide to the fork's behavior, setup, build, maintenance and releases.
 
 A fast native Slack client built in C++, on its own platform, network and graphics layers: no Electron, no web view, no GUI toolkit.
 
@@ -18,7 +18,7 @@ This fork keeps the upstream native C++ Slack client and concentrates its change
 
 - Removed the Claude Code workspace and agent-session integration, including its agent UI, process/worktree handling, approvals, linked agent threads and related voice-dictation code, assets and tests.
 - Kept Slack-native messaging features and the independent **Summarize down** capability; removing the agent integration does not remove ordinary Slack bot messages.
-- Kept the fork maintainable alongside upstream through a dedicated sync workflow and documented fork-specific changes.
+- Kept upstream synchronization reviewable: daily sync proposals are opened as PRs rather than applied directly to `master`.
 
 Implementation: [#3](https://github.com/zce/make-slack-great-again/pull/3), [#8](https://github.com/zce/make-slack-great-again/pull/8), [#1](https://github.com/zce/make-slack-great-again/pull/1).
 
@@ -28,8 +28,9 @@ Implementation: [#3](https://github.com/zce/make-slack-great-again/pull/3), [#8]
 - Added dedicated Sidebar handling for custom Sections and Slack Connect **Externals**, with workspace-specific section ordering and collapsed-unread preferences.
 - Improved message hover actions and context menus, including clearer **Reply in thread** behavior and returning focus to the existing thread composer when replying inside a thread.
 - Added keyboard navigation between unread conversations and a shortcut to jump to the first unread message. A selected conversation remains visible in a collapsed group after it becomes read, until navigation moves elsewhere.
+- Reconciled DM unread state after remote reads so badges and unread navigation stay consistent across clients.
 
-Implementation: [#4](https://github.com/zce/make-slack-great-again/pull/4), [#11](https://github.com/zce/make-slack-great-again/pull/11), [#12](https://github.com/zce/make-slack-great-again/pull/12), [#13](https://github.com/zce/make-slack-great-again/pull/13).
+Implementation: [#4](https://github.com/zce/make-slack-great-again/pull/4), [#11](https://github.com/zce/make-slack-great-again/pull/11), [#12](https://github.com/zce/make-slack-great-again/pull/12), [#13](https://github.com/zce/make-slack-great-again/pull/13), [#36](https://github.com/zce/make-slack-great-again/pull/36).
 
 ### Unified message search
 
@@ -56,10 +57,10 @@ Implementation: [#15](https://github.com/zce/make-slack-great-again/pull/15), [#
 ### Slack links and message navigation
 
 - Added routing for Slack's native `slack://` channel/user/open links alongside MSGA's `msga://` links.
-- Improved permalink handling for older messages, thread roots and specific thread replies, including workspace and channel context.
+- Improved permalink parsing and navigation for older messages, thread roots and exact replies, including workspace/channel context, ordered history loading and cancellation of stale navigation requests.
 - The command line can open an unmodified Slack HTTPS permalink. MSGA does not take over every HTTPS link in the browser by default.
 
-Implementation: [#2](https://github.com/zce/make-slack-great-again/pull/2), [#9](https://github.com/zce/make-slack-great-again/pull/9).
+Implementation: [#2](https://github.com/zce/make-slack-great-again/pull/2), [#9](https://github.com/zce/make-slack-great-again/pull/9), [#33](https://github.com/zce/make-slack-great-again/pull/33).
 
 ### Linux desktop integration
 
@@ -96,7 +97,7 @@ Implementation: [#1](https://github.com/zce/make-slack-great-again/pull/1), [#17
 
 ## Download
 
-Stable fork versions are published intentionally at [GitHub Releases](https://github.com/zce/make-slack-great-again/releases), using independent `vMAJOR.MINOR.PATCH` version tags. PR test builds are available as downloadable **Actions artifacts** on the associated PR's CI run; they are not formal releases. See [fork maintenance](docs/FORK.md) for release instructions.
+Stable fork versions are published intentionally at [GitHub Releases](https://github.com/zce/make-slack-great-again/releases), using independent `vMAJOR.MINOR.PATCH` version tags. PR test builds are available as downloadable **Actions artifacts** on the associated PR's CI run; they are not formal releases. See [Maintaining this fork](#maintaining-this-fork) for the release process.
 
 Linux x86_64 builds are **dynamically linked** against Ubuntu 24.04 libraries rather than being fully static-musl builds. Windows and macOS packages listed upstream are not fork builds. The upstream in-app updater is disabled so it cannot replace our custom version; install new fork builds from this repository's GitHub Releases.
 
@@ -108,6 +109,33 @@ Grab a [fork release](https://github.com/zce/make-slack-great-again/releases) an
 - **Your own Slack app.** Register a free Slack app for live message push (Socket Mode), then paste its client ID, client secret and app-level token into **Settings → System → Slack connection**.
 
 Both are covered step by step in the **[Slack setup guide](https://github.com/punarinta/make-slack-great-again/blob/master/docs/SETUP_SLACK.md)**. Most people want session sign-in, because it needs no setup at all.
+
+## Slack deep links
+
+MSGA accepts Slack message permalinks and the native Slack URI routes for opening workspaces, channels and users.
+
+- **Slack HTTPS permalink:** `https://<workspace>.slack.com/archives/<channel>/p<timestamp>?thread_ts=<root-ts>&cid=<channel>`
+- **MSGA message permalink:** the same path under `msga://`, for example `msga://<workspace>.slack.com/archives/<channel>/p<timestamp>?thread_ts=<root-ts>&cid=<channel>`.
+- **MSGA thread link:** `msga://thread/<channel>/<root-ts>`.
+- **Slack native routes:** `slack://open?team=<team-id>`, `slack://channel?team=<team-id>&id=<channel-id>`, and `slack://user?team=<team-id>&id=<user-id>`. A channel route may also include `message=<timestamp>` and `thread_ts=<root-ts>` to open a specific reply. The same `open`, `channel` and `user` routes are accepted under `msga://`.
+
+A specific reply is identified by its message timestamp; `thread_ts` identifies its parent thread. When a target is not cached, MSGA loads older channel history or the thread before applying the jump. It stops when the exact target is found or the available history is exhausted, and ignores stale navigation requests.
+
+To open an official HTTPS permalink from a terminal, pass it directly to MSGA:
+
+```sh
+msga 'https://<workspace>.slack.com/archives/<channel>/p<timestamp>?thread_ts=<root-ts>&cid=<channel>'
+```
+
+MSGA does not intercept all HTTPS links in the browser. On Linux, its desktop entry advertises both `msga://` and `slack://`; the OS's default `slack://` handler is not changed automatically. To select MSGA explicitly, first record the current handler, then run:
+
+```sh
+xdg-mime query default x-scheme-handler/slack
+xdg-mime default msga.desktop x-scheme-handler/slack
+xdg-mime query default x-scheme-handler/slack
+```
+
+Use the original value from the first command to restore the previous handler. Slack's `slack://app`, `slack://file` and `slack://share-file` routes are not implemented.
 
 ## Network proxy on Linux
 
@@ -145,7 +173,7 @@ You can build msga yourself, for example to bake your own Slack app keys into th
 
 To build in your own Slack app's keys, follow the **[Slack setup guide](https://github.com/punarinta/make-slack-great-again/blob/master/docs/SETUP_SLACK.md)**: create a Slack app with its scopes, Socket Mode and events. The guide ends by writing the keys into `credentials.cmake` (copy `credentials.cmake.example`; the file is gitignored). The same file takes an optional GIPHY key for the GIF picker. Keys pasted in **Settings → System** take precedence over the built-in ones.
 
-The upstream app version lives in `version.cmake` (tracked in git). Fork GitHub Release tags append a fork build number automatically; see [fork maintenance](docs/FORK.md).
+The upstream app version lives in `version.cmake` (tracked in git). Fork GitHub Release tags use an independent SemVer sequence; see [Maintaining this fork](#maintaining-this-fork).
 
 ### Step 2. Configure build environment
 
@@ -215,6 +243,49 @@ Both build scripts take the same options:
 `scripts/release.sh` (Linux, macOS) and `scripts\release.ps1` (Windows) make a stripped release-flags build for the machine you're on, always from a clean configure with no tests. They write to `build-release/` and print the per-module size report. `release.ps1` links the exe fully static, like the shipped one.
 
 For the source layout and the size rules, see [src/README.md](https://github.com/punarinta/make-slack-great-again/blob/master/src/README.md).
+
+## Maintaining this fork
+
+This section is the source of truth for fork-specific development, upstream synchronization, CI and release operations. Keep these instructions here rather than maintaining a second fork guide.
+
+### Branches and upstream synchronization
+
+- `master` is the reviewed branch used for releases. Do not commit directly to it; use short-lived `feat/*`, `fix/*` or `docs/*` branches and pull requests.
+- `.github/workflows/upstream-sync.yml` checks upstream daily and can also be run manually. It merges `punarinta/make-slack-great-again:master` into `automation/upstream-sync` and opens or updates a reviewable PR. It never updates `master` automatically.
+- Merge upstream-sync PRs with a **merge commit**. Do not squash or rebase them: preserving the common upstream ancestry keeps future syncs manageable.
+- A merge conflict intentionally fails the workflow and must be resolved by a maintainer. Never force-update `master`.
+- The repository setting **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** must be enabled for the scheduled workflow to open PRs.
+
+### CI
+
+The `.github/workflows/ci.yml` workflow runs on pull requests, pushes to `master` and manual dispatches:
+
+- **Pull requests:** Ubuntu 24.04/GCC builds and runs the full test suite; Ubuntu 26.04/Clang performs a compile check. The GCC job uploads a test-enabled Linux executable for manual testing (14-day retention). This is not a production release binary.
+- **Master pushes and manual runs:** both compiler jobs run the full test suite. CTest currently starts with two workers; tests sharing global resources must declare `RESOURCE_LOCK` or `RUN_SERIAL`.
+- **Successful master pushes:** the GCC job makes a separate production build with tests, demo and upstream self-update disabled. It uploads the dynamically linked Linux x86_64 executable, SHA256 checksum and `DEPENDENCIES.txt` (30-day retention).
+- Actions are pinned to reviewed commit SHAs. Keep PR test artifacts and production release artifacts distinct.
+
+### Releases
+
+Public fork releases are **manual**, not an automatic side effect of merging a PR. From Actions → Release → Run workflow on `master`, enter the next version without the leading `v`. The same operation can be started with GitHub CLI:
+
+```sh
+gh workflow run release.yml --ref master -f version=0.1.0
+```
+
+The optional `ci_run_id` input is an advanced override. The release workflow waits up to **20 minutes** for the successful push-triggered CI run for the exact selected `master` commit. It validates the run's branch, repository and commit, downloads that run's production artifact, verifies its SHA256 checksum and publishes it **without rebuilding**. If CI fails or does not finish within the wait window, no release is published. Existing tags and releases are never silently overwritten.
+
+Fork release versions use an independent, monotonically increasing **SemVer** sequence (`v0.1.0`, `v0.1.1`, `v0.2.0`, etc.). A version such as `v0.2.0-rc.1` is published as a pre-release; stable releases are marked **Latest**. The upstream integer `MSGA_VERSION` in `version.cmake` is retained for runtime compatibility and is **not** the fork release number. Do not change it just to publish a fork release; historical `v44-zce.*` tags remain intact.
+
+The current fork release workflow publishes **Linux x86_64 only**. The binary is dynamically linked against Ubuntu 24.04 system libraries rather than built as a static-musl executable. Check the attached `DEPENDENCIES.txt` when evaluating runtime compatibility on another distribution. macOS and Windows packages listed by upstream are not fork releases.
+
+The upstream in-app updater must remain disabled: it downloads from `msga.app` and could replace the customized fork build. CI and release builds explicitly set `MSGA_SELF_UPDATE=OFF`. Install fork updates from this repository's [GitHub Releases](https://github.com/zce/make-slack-great-again/releases). The release workflow requires `actions: read` to download the validated CI artifact and `contents: write` to publish tags and releases.
+
+### Contribution notes
+
+- Keep fork-specific changes focused and preserve Slack messaging, credentials, notifications and message routing.
+- Remove unwanted integrations end-to-end after tracing their contracts, UI, background work, tests and assets; hiding an entry point alone does not remove the integration from the binary.
+- The optional **Summarize down** feature is independent of Claude Code agent sessions and voice dictation, and remains supported.
 
 ## License
 
