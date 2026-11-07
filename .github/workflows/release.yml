@@ -147,7 +147,7 @@ jobs:
           CI_RUN_ID: ${{ steps.verify.outputs.run_id }}
         run: |
           set -euo pipefail
-          notes="Verified fork build from master (commit \`${GITHUB_SHA}\`, CI run ${CI_RUN_ID}). Linux x86_64 dynamically linked binary; upstream in-app updater disabled. See docs/FORK.md for dependencies."
+          notes="Verified fork build from master (commit \`${GITHUB_SHA}\`, CI run ${CI_RUN_ID}). Linux x86_64 dynamically linked binary; upstream in-app updater disabled. See README.md for platform and runtime guidance; the Linux dependency list is attached as DEPENDENCIES.txt."
           if [[ "$TAG" == *-rc.* ]]; then
             gh release create "$TAG" dist/* \
               --target "$GITHUB_SHA" \
