@@ -1375,7 +1375,9 @@ void Sidebar::applyCollapse(SectionHeader *h) {
     const bool reveal = h->collapsed &&
                         showUnreadWhenCollapsed(sectionKey(h->kind, h->sectionId));
     for (ConvRow *r : h->rows)
-        r->setVisible(!h->collapsed || (reveal && r->unread));
+        // Keep the selected row in place after opening it marks it read.
+        // Leaving it removes this exception on the next refreshSections().
+        r->setVisible(!h->collapsed || (reveal && (r->unread || r->conv == _selected)));
     for (View *v : h->extras)
         v->setVisible(!h->collapsed);
     h->update();
@@ -1641,6 +1643,26 @@ std::vector<ConvRef> Sidebar::order() const {
         if (r->visible())
             out.push_back(r->conv);
     return out;
+}
+
+ConvRef Sidebar::adjacentUnread(ConvRef from, bool next) const {
+    // _rows already follows the user's section ordering and each section's
+    // active sort. Do not use order(): a collapsed section may hide its
+    // unread rows, but keyboard navigation must still reach them.
+    if (_rows.empty())
+        return kNoConv;
+    const auto it = std::find_if(_rows.begin(), _rows.end(), [from](const ConvRow *r) {
+        return r->conv == from;
+    });
+    const size_t n = _rows.size();
+    const size_t start = it == _rows.end() ? (next ? n - 1 : 0) : size_t(it - _rows.begin());
+    for (size_t step = 1; step <= n; ++step) {
+        const size_t index = next ? (start + step) % n : (start + n - step % n) % n;
+        const ConvRow *r = _rows[index];
+        if (r->conv != from && r->unread)
+            return r->conv;
+    }
+    return kNoConv;
 }
 
 std::vector<std::string> Sidebar::sectionTitles() const {

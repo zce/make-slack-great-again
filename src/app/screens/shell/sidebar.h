@@ -135,6 +135,9 @@ public:
     model::ConvRef              selected() const { return _selected; }
     // Conversations in on-screen order (the quick switcher's empty query).
     std::vector<model::ConvRef> order() const;
+    // Walk unread conversations in the same section/row order as the Sidebar,
+    // including unread rows hidden by collapsed groups. Wrap at either end.
+    model::ConvRef adjacentUnread(model::ConvRef from, bool next) const;
 
     // What a row shows (tests, and the tray/badge code).
     struct RowState {

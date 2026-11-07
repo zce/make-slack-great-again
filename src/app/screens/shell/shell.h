@@ -294,6 +294,8 @@ private:
     void        buildMain(ui::View *parent);
     void        showMessageArea(); // out of a full-width thread panel
     void        closeThreadOnEscape();
+    void        navigateUnread(bool next);
+    void        jumpToUnread();
     void        addWorkspace(ui::PointF anchor);
     void        showWorkspacePicker(ui::PointF anchor);
     void        togglePin();  // "Pin window on top"

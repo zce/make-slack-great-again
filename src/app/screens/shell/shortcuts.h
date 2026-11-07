@@ -33,6 +33,9 @@ enum class Id : uint8_t {
     SearchMessages,
     QuickSwitch,
     OpenSettings,
+    PreviousUnread,
+    NextUnread,
+    JumpToUnread,
     // ── Composer scope ──────────────────────────────────────────────────────
     Bold,
     Italic,

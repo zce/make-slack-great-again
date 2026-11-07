@@ -118,6 +118,8 @@ public:
     // conversation's first page is still loading — once it is in. A target
     // that page doesn't have is dropped; so is one the loaded list lacks.
     void jumpTo(Ts ts);
+    // Revisit the first unread boundary captured when this conversation opened.
+    void jumpToUnread();
 
     // "Reply in thread" from the toolbar or menu (default: Context::openThread).
     std::function<void(ConvRef, Ts)> onReply;
@@ -356,6 +358,8 @@ private:
     SavedAnchor                _openAnchor;
     Ts                         _openLastRead   = 0;
     bool                       _openPending    = false;
+    Ts                         _unreadCursor   = 0;
+    bool                       _unreadJump     = false;
     bool                       _reading        = true;
     // Inline threads, dismissed previews, folded images, expanded cards.
     bool                       _threadsInline  = false;

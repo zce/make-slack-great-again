@@ -2748,6 +2748,18 @@ msgid "Undo send"
 msgstr "送信を取り消す"
 
 #: src/app/screens/shell/shortcuts.cpp
+msgid "Previous unread conversation"
+msgstr ""
+
+#: src/app/screens/shell/shortcuts.cpp
+msgid "Next unread conversation"
+msgstr ""
+
+#: src/app/screens/shell/shortcuts.cpp
+msgid "Jump to first unread message"
+msgstr ""
+
+#: src/app/screens/shell/shortcuts.cpp
 msgid "Bulleted list"
 msgstr "箇条書きリスト"
 

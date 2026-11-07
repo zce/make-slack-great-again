@@ -749,6 +749,47 @@ TEST("sections: collapsed groups may reveal only unread conversations") {
     CHECK(sb.rowState(random).visible);
 }
 
+TEST("sections: a selected read conversation stays visible until selection leaves") {
+    Harness h;
+    auto &sb = h.sh->sidebar();
+    const ConvRef eng = h.conv("C0ENG"), rel = h.conv("C0RELEASES");
+    REQUIRE(sb.toggleSection("Channels"));
+    sb.toggleCollapsedUnreads("#channels");
+    REQUIRE(sb.rowState(eng).visible);
+    sb.select(eng);
+    h.backend.markRead(eng, h.store.conversation(eng).latest);
+    pump();
+    CHECK(sb.rowState(eng).visible);
+    CHECK(sb.rowState(eng).selected);
+    CHECK_FALSE(sb.rowState(eng).bold);
+    sb.select(rel);
+    pump();
+    CHECK_FALSE(sb.rowState(eng).visible);
+    CHECK(sb.rowState(rel).visible);
+    CHECK(sb.rowState(rel).selected);
+    REQUIRE(sb.toggleSection("Channels"));
+    CHECK(sb.rowState(eng).visible);
+}
+
+TEST("sections: unread keyboard order includes collapsed rows and skips read rows") {
+    Harness h;
+    auto &sb = h.sh->sidebar();
+    const ConvRef eng = h.conv("C0ENG"), rel = h.conv("C0RELEASES");
+    REQUIRE(sb.toggleSection("Channels"));
+    // Even with unread exposure disabled, the keyboard reaches these rows.
+    CHECK_FALSE(sb.rowState(eng).visible);
+    CHECK_FALSE(sb.rowState(rel).visible);
+    const auto from = sb.adjacentUnread(eng, true);
+    CHECK(from != kNoConv);
+    CHECK(from != eng);
+    CHECK(sb.adjacentUnread(from, false) != from);
+    // Read items are not candidates, even when the currently selected row
+    // remains visible in a collapsed section.
+    h.backend.markRead(eng, h.store.conversation(eng).latest);
+    pump();
+    CHECK(sb.adjacentUnread(rel, true) != eng);
+}
+
 TEST("sections: collapsed unread preferences persist per workspace") {
     Harness h;
     shell::Sidebar &sb = h.sh->sidebar();

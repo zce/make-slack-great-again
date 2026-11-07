@@ -133,6 +133,9 @@ TEST("shortcuts: one row per action, the help panel's rows in order") {
         "Emoji picker",
         "Cancel / exit edit",
         "Undo send",
+        "Previous unread conversation",
+        "Next unread conversation",
+        "Jump to first unread message",
     };
     size_t n = 0;
     for (size_t i = 0; i < tableSize(); ++i)
@@ -588,6 +591,28 @@ TEST("navigation: the swipe recognizer, stream by stream") {
         e.dy = 1;
         CHECK(n.feed(e, 0) == A::Pass);
     }
+}
+
+TEST("shortcuts: unread navigation follows Sidebar order and leaves plain Alt arrows untouched") {
+    Harness h;
+    const ConvRef eng = h.conv("C0ENG"), rel = h.conv("C0RELEASES");
+    auto &sb = h.sh->sidebar();
+    REQUIRE(sb.rowState(eng).bold && sb.rowState(rel).bold);
+    const ConvRef first = sb.adjacentUnread(h.sh->current(), true);
+    REQUIRE(first != kNoConv);
+    h.chord(kAlt | kShift, K::Down);
+    CHECK(h.sh->current() == first);
+    CHECK(sb.selected() == first);
+    CHECK(sb.adjacentUnread(first, true) != first);
+    h.chord(kAlt | kShift, K::Up);
+    CHECK(sb.selected() == h.sh->current());
+
+    // The unread cursor is not changed by shortcut enumeration itself.
+    const Ts cursor = h.store.conversation(rel).lastRead;
+    (void)sb.adjacentUnread(rel, false);
+    CHECK(h.store.conversation(rel).lastRead == cursor);
+    h.chord(kCtrl, K::J);
+    CHECK(h.sh->current() != kNoConv);
 }
 
 TEST("shortcuts: bindings that must not exist are gone") {

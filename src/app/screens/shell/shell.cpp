@@ -1209,6 +1209,9 @@ Shell::Shell(
     shortcuts::install(win, Id::CloseThread, [this] { closeThreadOnEscape(); });
     shortcuts::install(win, Id::SearchMessages, [this] { showQuickSwitcher(true); });
     shortcuts::install(win, Id::QuickSwitch, [this] { showQuickSwitcher(); });
+    shortcuts::install(win, Id::PreviousUnread, [this] { navigateUnread(false); });
+    shortcuts::install(win, Id::NextUnread, [this] { navigateUnread(true); });
+    shortcuts::install(win, Id::JumpToUnread, [this] { jumpToUnread(); });
     win.keyFilter = [this](const Event &e) {
         noteActivity();
         typeIntoComposer(e);
@@ -2316,6 +2319,32 @@ NavLocation Shell::here(ConvRef conv) const {
         _activeKey,
         conv < _ctx.store().conversationCount() ? _ctx.store().conversation(conv).id : std::string()
     };
+}
+
+// Follow the Sidebar's existing section and row sort, not the last-opened
+// history. Opening a conversation uses the normal reading behavior; this
+// shortcut never calls markRead itself.
+void Shell::navigateUnread(bool next) {
+    if (!_signedIn || topDialog() || _settingsDlg || _win.topPopup())
+        return;
+    if (View *f = _win.focusView(); f && f->role() == Role::TextInput &&
+        !_composer->isAncestorOf(f) && !_thread->composer->isAncestorOf(f))
+        return;
+    const ConvRef target = _sidebar->adjacentUnread(_current, next);
+    if (target != kNoConv)
+        open(target);
+}
+
+void Shell::jumpToUnread() {
+    if (!_signedIn || _current == kNoConv || topDialog() || _settingsDlg || _win.topPopup())
+        return;
+    if (View *f = _win.focusView(); f && f->role() == Role::TextInput &&
+        !_composer->isAncestorOf(f) && !_thread->composer->isAncestorOf(f))
+        return;
+#ifdef MSGA_HAVE_MESSAGES
+    showMessageArea();
+    static_cast<screens::MessageList *>(_messages)->jumpToUnread();
+#endif
 }
 
 // Back/forward history: a jump being applied keeps the forward stack

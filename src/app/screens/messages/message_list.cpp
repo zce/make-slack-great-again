@@ -732,6 +732,7 @@ void MessageList::clear() {
     _conv     = model::kNoConv;
     _root     = 0;
     _jumpTs   = 0;
+    _unreadJump = false;
     hideToolbar();
     _items.clear();
     resetRows();
@@ -757,6 +758,8 @@ void MessageList::showConversation(ConvRef conv) {
     _openPending  = conv != model::kNoConv;
     _openAnchor   = {};
     _openLastRead = 0;
+    _unreadCursor = _openPending ? _ctx.store().conversation(conv).lastRead : 0;
+    _unreadJump = false;
     if (_openPending) {
         const std::string &id = _ctx.store().conversation(conv).id;
         for (const SavedAnchor &a : _anchors)
@@ -784,6 +787,7 @@ void MessageList::showThread(ConvRef conv, Ts root) {
     _conv          = conv;
     _root          = root;
     _jumpTs        = 0;
+    _unreadJump    = false;
     _loadingThread = false;
     // A thread reads from its root down; a short one sits at the top.
     _list->setBottomAligned(false);
@@ -1298,13 +1302,23 @@ void MessageList::checkEdges() {
         }
     }
     const int first = _list->firstVisible();
+    if (_unreadJump && !c.messages.empty() &&
+        (!c.hasMoreBefore || c.messages.front().ts <= _unreadCursor)) {
+        const auto it = std::upper_bound(
+            c.messages.begin(), c.messages.end(), _unreadCursor,
+            [](Ts ts, const model::Message &m) { return ts < m.ts; }
+        );
+        if (it != c.messages.end())
+            scrollToMessage(it->ts, false, false);
+        _unreadJump = false;
+    }
     if (c.hasMoreBefore && !_loadingOlder &&
-        (c.messages.empty() || _jumpTs || (first >= 0 && first <= 3))) {
+        (c.messages.empty() || _jumpTs || _unreadJump || (first >= 0 && first <= 3))) {
         _loadingOlder              = true;
         const Ts            before = c.messages.empty() ? 0 : c.messages.front().ts;
         const ConvRef       conv   = _conv;
         std::weak_ptr<char> alive  = _alive;
-        _ctx.backend.loadHistory(conv, before, [this, alive, conv](bool, const std::string &) {
+        _ctx.backend.loadHistory(conv, before, [this, alive, conv, before](bool ok, const std::string &) {
             if (alive.expired())
                 return;
             _loadingOlder = false;
@@ -1312,6 +1326,9 @@ void MessageList::checkEdges() {
                 // The page is in: a jump target it didn't bring won't come.
                 if (!applyJump())
                     _jumpTs = 0;
+                if (!ok || (!_ctx.store().conversation(conv).messages.empty() &&
+                    _ctx.store().conversation(conv).messages.front().ts >= before && before != 0))
+                    _unreadJump = false; // failure or no pagination progress
                 updateState(); // an empty first page changes no messages
                 scheduleEdgeCheck();
             }
@@ -2201,6 +2218,15 @@ void MessageList::openCsvPreview(const model::File &f) {
         removeTempDownload(temp);
         model::jobs().end(job);
     });
+}
+
+void MessageList::jumpToUnread() {
+    if (_conv == model::kNoConv || _root != 0)
+        return;
+    _unreadJump = true;
+    // A saved position or a previous read may already have moved the cursor.
+    // Use the opening boundary so Ctrl+J still reaches the original unread.
+    scheduleEdgeCheck();
 }
 
 void MessageList::jumpTo(Ts ts) {

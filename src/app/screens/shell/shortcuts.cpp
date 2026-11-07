@@ -47,6 +47,13 @@ const Def kDefs[] = {
      N_("Search earlier prompts"),
      {{K::R, Ctrl}, kNone}},
 
+    {Id::PreviousUnread, Scope::Window, true, N_("Previous unread conversation"),
+     {{K::Up, Alt | Shift}, kNone}},
+    {Id::NextUnread, Scope::Window, true, N_("Next unread conversation"),
+     {{K::Down, Alt | Shift}, kNone}},
+    {Id::JumpToUnread, Scope::Window, true, N_("Jump to first unread message"),
+     {{K::J, Ctrl}, kNone}},
+
     // ── Not advertised in the panel ─────────────────────────────────────────
     {Id::Underline, Scope::Composer, false, N_("Underline"), {{K::U, Ctrl}, kNone}},
     {Id::CodeBlock, Scope::Composer, false, N_("Code block"), {{K::C, Ctrl | Alt | Shift}, kNone}},
