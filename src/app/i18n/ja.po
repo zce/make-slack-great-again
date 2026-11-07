@@ -2495,6 +2495,10 @@ msgid "Unknown channel"
 msgstr "不明なチャンネル"
 
 #: src/app/screens/shell/quick_switcher.cpp
+msgid "Unknown sender"
+msgstr ""
+
+#: src/app/screens/shell/quick_switcher.cpp
 msgid "Search messages, channels or people…"
 msgstr ""
 
