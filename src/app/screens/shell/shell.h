@@ -210,6 +210,9 @@ public:
     // Starts notifying about incoming messages (after the initial load); also
     // ends the first-load state (waiting()).
     void setLive(bool on);
+    enum class ConnectionNotice { None, Offline, Reconnecting };
+    void setConnectionNotice(ConnectionNotice state);
+    ConnectionNotice connectionNotice() const { return _connectionNoticeState; }
     // The first workspace load with nothing cached: the conversation
     // column hidden and the message area's loading ring (with its hints)
     // until the conversations arrive. On while signed in with none yet.
@@ -441,6 +444,9 @@ private:
     ui::Label             *_pageTitle = nullptr; // overview title in the unified titlebar
     ui::View              *_pageHeading = nullptr; // title and optional page actions (non-macOS)
     ui::Clickable         *_pageAction = nullptr;
+    ui::Label             *_connectionNotice = nullptr;
+    ConnectionNotice       _connectionNoticeState = ConnectionNotice::None;
+    void updatePageRefresh();
     WorkspaceStack        *_wsStack    = nullptr;
     std::vector<Workspace> _workspaces;
     std::string            _activeKey;
