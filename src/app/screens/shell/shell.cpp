@@ -726,6 +726,13 @@ public:
         composer =
             static_cast<Composer *>(panel->setComposer(std::make_unique<Composer>(ctx, drafts)));
         composer->setThreadMode(true);
+        // Reply from any message in this thread focuses its existing composer
+        // rather than reopening a new thread or leaving keyboard focus behind.
+        panel->list().onReply = [this](ConvRef c, Ts root) {
+            if ((c != conv || root != this->root) && _ctx.openThread)
+                _ctx.openThread(c, root);
+            composer->edit().focus();
+        };
         // "Also send to channel": one reply's worth; an edit or attachments
         // untick it until they are gone.
         composer->broadcastWanted      = [this] { return panel->broadcastWanted(); };
@@ -1815,7 +1822,13 @@ void Shell::buildMain(View *parent) {
     stack->style().stack().flex(1);
 #ifdef MSGA_HAVE_MESSAGES
     _messages = stack->add<screens::MessageList>(_ctx);
-    static_cast<screens::MessageList *>(_messages)->setTypingRow(false);
+    auto *messageList = static_cast<screens::MessageList *>(_messages);
+    messageList->setTypingRow(false);
+    messageList->onReply = [this](ConvRef c, Ts root) {
+        openThread(c, root);
+        if (Composer *reply = threadComposer())
+            reply->edit().focus();
+    };
 #else
     _messages = stack->add<MessageStandIn>(_ctx, _avatars);
 #endif
