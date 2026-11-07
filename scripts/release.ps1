@@ -26,16 +26,43 @@ if ((Test-Path $BuildDir) -and -not (Test-Path (Join-Path $BuildDir 'build.ninja
 
 # Reconfigure every time: MSGA_DEMO / MSGA_BUILD_TESTS are cached options, so a
 # hand-run `cmake -DMSGA_DEMO=ON build-release` would otherwise stick.
-cmake -S $ProjectRoot -B $BuildDir -G Ninja `
-    -DCMAKE_BUILD_TYPE=MinSizeRel `
-    -DMSGA_STATIC=ON `
-    -DMSGA_DEMO=OFF `
-    -DMSGA_BUILD_TESTS=OFF `
-    -DMSGA_SIZE_MAP=ON
+# Keep FetchContent sources outside build-release so CI can cache the pinned
+# FreeType/HarfBuzz sources across clean release builds.
+$FetchContentDir = Join-Path $ProjectRoot '.ci-cache\fetchcontent'
+$ConfigureArgs = @(
+    '-S', $ProjectRoot,
+    '-B', $BuildDir,
+    '-G', 'Ninja',
+    '-DCMAKE_BUILD_TYPE=MinSizeRel',
+    '-DMSGA_STATIC=ON',
+    '-DMSGA_DEMO=OFF',
+    '-DMSGA_BUILD_TESTS=OFF',
+    '-DMSGA_SIZE_MAP=ON',
+    "-DFETCHCONTENT_BASE_DIR=$FetchContentDir"
+)
+
+# ccache is optional for local builds and enabled in CI when the MSYS2 package
+# is installed. Keep the same release configuration with or without it.
+$Ccache = Get-Command ccache -ErrorAction SilentlyContinue
+if ($Ccache) {
+    $ConfigureArgs += '-DCMAKE_C_COMPILER_LAUNCHER=ccache'
+    $ConfigureArgs += '-DCMAKE_CXX_COMPILER_LAUNCHER=ccache'
+    & ccache --zero-stats
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+cmake @ConfigureArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 cmake --build $BuildDir --target msga --parallel $Nproc
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+if ($Ccache) {
+    Write-Host ''
+    Write-Host 'Compiler cache statistics:'
+    & ccache --show-stats
+    Write-Host ''
+}
 
 # mingw links with ld.bfd and no -s (see CMakeLists.txt), so strip here.
 $Exe = Join-Path $BuildDir 'msga.exe'

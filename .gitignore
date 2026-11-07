@@ -9,3 +9,4 @@ credentials.cmake
 .DS_Store
 result
 __pycache__
+.ci-cache/

@@ -144,6 +144,11 @@ jobs:
     name: Windows x86_64 / MinGW
     runs-on: windows-2025
     timeout-minutes: 45
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 1G
+      CCACHE_COMPILERCHECK: content
     steps:
       # MSYS2 tools expect LF in checked-out source files.
       - name: Configure Git line endings
@@ -163,6 +168,24 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-python
+            mingw-w64-x86_64-ccache
+      # The font libraries are pinned by URL_HASH in font_libs.cmake.
+      # Keep their extracted FetchContent sources outside build-release, which
+      # the release script deliberately recreates on a clean runner.
+      - name: Cache Windows FetchContent sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: windows-fetchcontent-${{ hashFiles('src/text/font_libs.cmake') }}
+      # ccache's compiler identity check protects this rolling MSYS2 toolchain
+      # cache when GCC or its dependencies change.
+      - name: Cache Windows compiler outputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/ccache
+          key: windows-ccache-${{ hashFiles('scripts/msys2.ps1', 'src/text/font_libs.cmake') }}-${{ github.sha }}
+          restore-keys: |
+            windows-ccache-${{ hashFiles('scripts/msys2.ps1', 'src/text/font_libs.cmake') }}-
       - name: Build Windows release executable
         shell: pwsh
         env:
