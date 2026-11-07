@@ -1488,6 +1488,28 @@ TEST("actions: the message menu, item for item, acts through the backend") {
     }
 }
 
+TEST("thread actions: replies and thread panel messages never offer nested Reply") {
+    Env e(true);
+    const ConvRef design = e.conv("C0DESIGN");
+    e.list->showConversation(design);
+    pump(10);
+    Ts root = 0;
+    for (const model::Message &m : e.store.conversation(design).messages)
+        if (m.replyCount > 0) { root = m.ts; break; }
+    REQUIRE(root);
+    CHECK(menuLabels(e.list->menuItems(root)).starts_with("Reply in thread|"));
+    e.list->showThread(design, root);
+    pump(20);
+    CHECK(menuLabels(e.list->menuItems(root)).find("Reply in thread") == std::string::npos);
+    const auto *replies = e.store.replies(design, root);
+    REQUIRE(replies && !replies->empty());
+    const Ts reply = replies->back().ts;
+    CHECK(menuLabels(e.list->menuItems(reply)).find("Reply in thread") == std::string::npos);
+    CHECK(menuLabels(e.list->menuItems(reply)).find("Add reaction") != std::string::npos);
+    e.list->runMenuAction(reply, MessageList::kReply);
+    CHECK(e.threads.empty()); // cannot initiate a nested thread via an old menu id
+}
+
 TEST("actions: Save for later and Remind me need messageReminders (session tokens)") {
     // An OAuth workspace has no saved.* — no items, no toolbar Save.
     Env           e(true);

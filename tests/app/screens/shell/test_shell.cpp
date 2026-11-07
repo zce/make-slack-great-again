@@ -2578,6 +2578,54 @@ TEST("threads page: the sidebar entry opens the followed threads, newest first")
     CHECK(h.sh->composer().visible());
 }
 
+TEST("threads page: hover and right-click actions work on roots and replies") {
+    Harness h;
+    h.sh->showPage(shell::Shell::Page::Threads);
+    shell::ThreadsPage &page = *h.sh->threadsPage();
+    waitForThreads(page);
+    REQUIRE(page.cardCount() > 0);
+    auto &card = page.card(0);
+    auto labels = [](const std::vector<ui::MenuItem> &items) {
+        std::string out;
+        for (const auto &item : items) {
+            if (!out.empty()) out += '|';
+            out += item.separator ? "-" : item.label;
+        }
+        return out;
+    };
+    const std::string rootMenu = labels(card.messageMenuItems(card.root()));
+    CHECK(rootMenu.starts_with("Open thread|Add reaction|Forward message|-|Copy link|Copy message"));
+    CHECK(rootMenu.find("Reply in thread") == std::string::npos);
+    const auto *replies = h.store.replies(card.conv(), card.root());
+    REQUIRE(replies && !replies->empty());
+    const std::string replyMenu = labels(card.messageMenuItems(replies->back().ts));
+    CHECK(replyMenu.find("Add reaction") != std::string::npos);
+    CHECK(replyMenu.find("Reply in thread") == std::string::npos);
+
+    // First message row has a compact toolbar that appears on hover.
+    pump(4);
+    auto *row = card.child(1)->child(0);
+    REQUIRE(row != nullptr);
+    REQUIRE(row->childCount() == 2);
+    auto *bar = row->child(1);
+    CHECK_FALSE(bar->visible());
+    const ui::RectF r = row->windowRect();
+    auto *hooks = app().platform().testHooks();
+    hooks->injectPointerMove(h.win->native(), {r.x + 90, r.y + 8});
+    pump(4);
+    CHECK(bar->visible());
+    CHECK(bar->childCount() == 4);
+    CHECK_STR(bar->child(0)->tooltip(), "Add reaction");
+    CHECK_STR(bar->child(3)->tooltip(), "More actions");
+
+    hooks->injectButton(h.win->native(), plat::Button::Right, true);
+    hooks->injectButton(h.win->native(), plat::Button::Right, false);
+    pump(4);
+    REQUIRE(h.win->topPopup() != nullptr);
+    auto *menu = static_cast<ui::Menu *>(h.win->topPopup());
+    CHECK(labels(menu->items()).find("Reply in thread") == std::string::npos);
+}
+
 TEST("threads page: a card's reply box posts into the thread and the card follows") {
     Harness h;
     h.sh->showPage(shell::Shell::Page::Threads);
@@ -2762,6 +2810,38 @@ TEST("activity page: the sidebar entry opens the feed, newest first; the tabs fi
     CHECK(!h.sh->pageOpen(shell::Shell::Page::Activity));
     CHECK(h.sh->sidebar().selectedNav() != shell::Sidebar::Nav::Activity);
     CHECK(h.sh->composer().visible());
+}
+
+TEST("overview pages: page titles live in the global titlebar") {
+    Harness h;
+    REQUIRE(h.sh->pageTitle());
+#ifndef __APPLE__
+    REQUIRE(h.sh->pageAction());
+#endif
+    struct Check { shell::Shell::Page page; const char *title; };
+    for (const Check x : {
+        Check{shell::Shell::Page::Activity, "Activity"},
+        Check{shell::Shell::Page::Threads, "Threads"},
+        Check{shell::Shell::Page::Saved, "Saved messages"}
+    }) {
+        h.sh->showPage(x.page);
+        pump(2);
+        CHECK(h.sh->pageOpen(x.page));
+        CHECK_STR(h.sh->pageTitle()->text(), x.title);
+        CHECK(h.sh->pageTitle()->parent()->visible() ||
+              h.sh->pageTitle()->visible());
+        CHECK_FALSE(h.sh->header().visible());
+    }
+    h.sh->showPage(shell::Shell::Page::Activity);
+    pump(2);
+    CHECK(h.sh->activityPage()->child(0) == &h.sh->activityPage()->tabs());
+    CHECK(h.sh->activityPage()->tabs().frame().y == 0);
+    h.sh->open(h.conv("C0DESIGN"));
+    CHECK_FALSE(h.sh->pageOpen(shell::Shell::Page::Activity));
+#ifndef __APPLE__
+    CHECK_FALSE(h.sh->pageTitle()->parent()->visible());
+#endif
+    CHECK(h.sh->header().visible());
 }
 
 TEST("activity page: an item opens its message or its thread and is read") {
