@@ -41,17 +41,16 @@ namespace {
 } // namespace
 
 #if !defined(_WIN32) && !defined(__APPLE__)
-TEST("identity: the directories earlier versions used") {
-    // plat's own directories (the headless backend's in tests) + the
-    // organization "msga" and application "MSGA" names under them.
+TEST("identity: Linux XDG directories") {
+    // Linux adds a single application directory under each XDG base path.
     plat::App        &pa     = app().platform();
     const std::string config = pa.standardDir(plat::StandardDir::Config);
     const std::string data   = pa.standardDir(plat::StandardDir::Data);
     CHECK_STR(identity::appId(), "msga");
     CHECK_STR(identity::configDir(pa), config + "/msga");
-    CHECK_STR(identity::dataDir(pa), data + "/msga/MSGA");
-    CHECK_STR(identity::cacheDir(pa), pa.standardDir(plat::StandardDir::Cache) + "/msga/MSGA");
-    CHECK_STR(identity::crashLogPath(pa), data + "/msga/MSGA/crash.log");
+    CHECK_STR(identity::dataDir(pa), data + "/msga");
+    CHECK_STR(identity::cacheDir(pa), pa.standardDir(plat::StandardDir::Cache) + "/msga");
+    CHECK_STR(identity::crashLogPath(pa), data + "/msga/crash.log");
     CHECK_STR(shell::Settings::defaultPath(pa), config + "/msga/settings.json");
     CHECK_STR(auth::WorkspaceStore::defaultPath(pa), config + "/msga/workspaces.json");
     // Earlier versions' INI settings file is XDG_CONFIG_HOME/msga/msga.conf.
