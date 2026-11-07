@@ -1195,8 +1195,7 @@ void SlackBackend::Read::enrichDmActivity() {
                 sweepAt = base::nowSecs();
                 extrasChanged();
             }
-            const ConvRef r = s.findConversation(id);
-            if (!info || r == kNoConv)
+            if (!info)
                 return;
             b.reconcileDirectConversation(id, *info);
         });
