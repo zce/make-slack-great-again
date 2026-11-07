@@ -642,11 +642,26 @@ void SlackBackend::Live::applyPatches() {
         if (info.lastRead <= c.lastRead && info.latest <= c.latest && info.unread <= c.unread &&
             info.unread <= c.mentions)
             continue;
-        s.updateConversation(r, [&info](model::Conversation &x) {
+        const bool readAdvanced = info.lastRead > c.lastRead;
+        uint32_t   newerUnread = 0;
+        if (readAdvanced) {
+            // The snapshot is authoritative through info.latest. Preserve
+            // live arrivals received after that snapshot while allowing a
+            // read on another client to clear the older unread count.
+            for (const model::Message &m : c.messages)
+                if (m.ts > info.latest && m.ts > info.lastRead && m.user != s.me && !m.pending)
+                    ++newerUnread;
+        }
+        s.updateConversation(r, [&](model::Conversation &x) {
             x.lastRead = std::max(x.lastRead, info.lastRead);
             x.latest   = std::max(x.latest, info.latest);
-            x.unread   = std::max(x.unread, info.unread);
-            x.mentions = std::max(x.mentions, info.unread);
+            if (readAdvanced) {
+                x.unread   = info.unread + newerUnread;
+                x.mentions = info.unread + newerUnread;
+            } else {
+                x.unread   = std::max(x.unread, info.unread);
+                x.mentions = std::max(x.mentions, info.unread);
+            }
         });
     }
     patches.clear();
