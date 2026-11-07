@@ -441,6 +441,47 @@ TEST("drafts: stashed per conversation and thread on every leave path") {
     CHECK_FALSE(h.sh->drafts().has({design, root}));
 }
 
+#ifdef MSGA_HAVE_MESSAGES
+TEST("thread: Reply in thread from the main hover toolbar focuses the reply composer") {
+    Harness h;
+    const ConvRef design = h.conv("C0DESIGN");
+    const Ts root = h.backend.findTs(design, "Can someone export the hero");
+    REQUIRE(root != 0);
+    REQUIRE(h.store.findMessage(design, root)->replyCount == 0);
+    auto *messages = static_cast<screens::MessageList *>(h.sh->messagesView());
+    messages->scrollToMessage(root, false, false);
+    pump();
+    int i = -1;
+    for (size_t j = 0; j < messages->items().size(); ++j)
+        if (messages->items()[j].ts == root &&
+            messages->items()[j].kind == screens::Kind::Message) {
+            i = int(j);
+            break;
+        }
+    REQUIRE(i >= 0);
+    ui::View *row = messages->list().viewFor(i);
+    REQUIRE(row != nullptr);
+    const ui::RectF rect = row->windowRect();
+    app().platform().testHooks()->injectPointerMove(
+        h.win->native(), {rect.x + std::min(180.f, rect.w / 2), rect.y + rect.h / 2}
+    );
+    pump();
+    ui::View *reply = nullptr;
+    std::function<void(ui::View *)> find = [&](ui::View *v) {
+        if (v->tooltip() == "Reply in thread" && v->visible())
+            reply = v;
+        for (size_t j = 0; j < v->childCount(); ++j)
+            find(v->child(j));
+    };
+    find(messages);
+    REQUIRE(reply != nullptr);
+    static_cast<ui::Clickable *>(reply)->activate();
+    pump();
+    CHECK(h.sh->threadOpen());
+    CHECK(h.sh->threadComposer()->edit().focused());
+}
+#endif
+
 // ── Quick switcher ──────────────────────────────────────────────────────────
 
 TEST("global search: Ctrl+K includes message text, not only conversation names") {
