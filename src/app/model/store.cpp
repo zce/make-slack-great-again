@@ -660,16 +660,18 @@ void Store::addPage(ConvRef ref, std::vector<Message> page) {
         c.latest = std::max(c.latest, list.back().ts);
 
     for (Ts ts : updated)
-        emit({ChangeKind::Update, ref, thread, ts});
+        emit({ChangeKind::Update, ref, thread, ts, 0, MessageOrigin::History});
     if (nBefore)
-        emit({ChangeKind::Prepend, ref, thread, 0, nBefore});
+        emit({ChangeKind::Prepend, ref, thread, 0, nBefore, MessageOrigin::History});
     for (Ts ts : inserted)
-        emit({ChangeKind::Insert, ref, thread, ts});
+        emit({ChangeKind::Insert, ref, thread, ts, 0, MessageOrigin::History});
     if (nAfter)
-        emit({ChangeKind::Append, ref, thread, 0, nAfter});
+        emit({ChangeKind::Append, ref, thread, 0, nAfter, MessageOrigin::History});
 }
 
-void Store::addMessage(ConvRef ref, Message m) {
+void Store::addMessage(
+    ConvRef ref, Message m, MessageOrigin origin, bool notificationEligible
+) {
     if (ref >= _convs.size())
         return;
     Conversation &c      = _convs[ref];
@@ -695,7 +697,7 @@ void Store::addMessage(ConvRef ref, Message m) {
         existing && (thread || indexOf(ref, ts) != SIZE_MAX)) {
         // A push for something we have (our own send echoed back): replace.
         *existing = std::move(m);
-        emit({ChangeKind::Update, ref, thread, ts});
+        emit({ChangeKind::Update, ref, thread, ts, 0, origin, false});
         if (typingChanged)
             emit({ChangeKind::Typing, ref, thread});
         return;
@@ -720,7 +722,8 @@ void Store::addMessage(ConvRef ref, Message m) {
              thread,
              atEnd ? 0 : ts,
              atEnd ? 1u : 0u,
-             true}
+             origin,
+             notificationEligible}
         );
         if (root)
             emit({ChangeKind::Update, ref, 0, thread});
@@ -743,7 +746,8 @@ void Store::addMessage(ConvRef ref, Message m) {
              0,
              atEnd ? 0 : ts,
              atEnd ? 1u : 0u,
-             true}
+             origin,
+             notificationEligible}
         );
         emit({ChangeKind::Meta, ref});
     }
@@ -1154,10 +1158,12 @@ bool Store::textChangesSince(uint64_t since, std::vector<TextChange> *out) const
     return true;
 }
 
-void Store::announceReply(ConvRef c, const Message &m) {
+void Store::announceReply(
+    ConvRef c, const Message &m, MessageOrigin origin, bool notificationEligible
+) {
     const Message *was = _arrived;
     _arrived           = &m;
-    emit({ChangeKind::Arrived, c, m.threadTs, m.ts});
+    emit({ChangeKind::Arrived, c, m.threadTs, m.ts, 0, origin, notificationEligible});
     _arrived = was;
 }
 

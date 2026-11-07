@@ -37,19 +37,29 @@ enum class ChangeKind : uint8_t {
     Arrived,
 };
 
+// The source of a message-list change. Recovery updates unread state but is
+// deliberately silent; only Live deliveries can be notification candidates.
+enum class MessageOrigin : uint8_t {
+    None,
+    History,
+    Live,
+    Recovery,
+    Local,
+};
+
 struct Change {
-    ChangeKind kind   = ChangeKind::Update;
-    ConvRef    conv   = kNoConv;
-    Ts         thread = 0; // 0: the conversation's top-level list; else that thread's replies
-    Ts         ts     = 0; // Insert / Update / Remove
-    uint32_t   count  = 0; // Append / Prepend
-    // True for Append/Insert from addMessage (live), never from addPage
-    // (history, cache restores or thread loads).
-    bool       live   = false;
+    ChangeKind    kind   = ChangeKind::Update;
+    ConvRef       conv   = kNoConv;
+    Ts            thread = 0; // 0: the conversation's top-level list; else that thread's replies
+    Ts            ts     = 0; // Insert / Update / Remove
+    uint32_t      count  = 0; // Append / Prepend
+    MessageOrigin origin = MessageOrigin::None;
+    bool          notificationEligible = false;
 
     bool isArrival() const {
-        return kind == ChangeKind::Arrived ||
-               (live && (kind == ChangeKind::Append || kind == ChangeKind::Insert));
+        return origin == MessageOrigin::Live && notificationEligible &&
+               (kind == ChangeKind::Arrived || kind == ChangeKind::Append ||
+                kind == ChangeKind::Insert);
     }
 };
 
@@ -182,11 +192,12 @@ public:
     // Insert. Does not touch unread counts or roots' reply counters — a page
     // is what the server already counted.
     void addPage(ConvRef c, std::vector<Message> page);
-    // One live message (a send, a push event). A top-level message bumps
-    // `latest` and, when it's someone else's and after lastRead, the unread
-    // (and mention) count; a reply updates its root's replyCount,
-    // latestReply and replyUsers. Clears that user's typing indicator.
-    void addMessage(ConvRef c, Message m);
+    // One message-list insertion. Origin is explicit: history and recovery
+    // never announce; local optimistic/confirmed sends never announce; only
+    // live incoming deliveries may. A top-level message bumps `latest` and,
+    // when it's someone else's and after lastRead, unread/mentions; a reply
+    // updates its root's replyCount, latestReply and replyUsers.
+    void addMessage(ConvRef c, Message m, MessageOrigin origin, bool notificationEligible);
     // Edits a message in place (top-level or reply), then fires Update.
     bool updateMessage(ConvRef c, Ts ts, const std::function<void(Message &)> &fn);
     bool removeMessage(ConvRef c, Ts ts); // a removed reply also decrements its root
@@ -240,7 +251,9 @@ public:
     // The live reply a ChangeKind::Arrived announces (null outside one).
     const Message *arrived() const { return _arrived; }
     // One such reply: fires Arrived (the caller counted it on its root).
-    void           announceReply(ConvRef c, const Message &m);
+    void           announceReply(
+        ConvRef c, const Message &m, MessageOrigin origin, bool notificationEligible
+    );
     // Followed threads with unread replies (the
     // sidebar's Threads entry is bright while > 0). Fires Meta (kNoConv).
     int            unreadThreads() const { return _unreadThreads; }

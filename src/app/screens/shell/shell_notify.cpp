@@ -170,15 +170,13 @@ model::NotifyLevel Shell::effectiveLevel(const model::Conversation &c) const {
 // to an unloaded thread. Historical addPage also emits Append/Insert for UI
 // rendering, but must never trigger desktop notifications.
 void Shell::messagesArrived(model::Store &st, const std::string &key, const model::Change &ch) {
-    if (ch.conv >= st.conversationCount())
+    if (!ch.isArrival() || ch.conv >= st.conversationCount())
         return;
     if (ch.kind == model::ChangeKind::Arrived) {
         if (const model::Message *m = st.arrived())
             maybeNotify(st, key, ch.conv, *m, true);
         return;
     }
-    if (!ch.live)
-        return;
     if (ch.kind == model::ChangeKind::Insert) {
         if (const model::Message *m = st.findMessage(ch.conv, ch.ts))
             maybeNotify(st, key, ch.conv, *m, true);

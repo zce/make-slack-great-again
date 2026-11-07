@@ -1927,7 +1927,7 @@ struct HostingHarness {
         f.path     = "https://files.example/F0HOSTED/photo_360.png"; // a thumbnail
         f.original = "https://files.example/F0HOSTED/photo.png";
         m.extras().files.push_back(std::move(f));
-        store.addMessage(design, std::move(m));
+        store.addMessage(design, std::move(m), model::MessageOrigin::Live, true);
         sh->open(design);
         pump();
     }
@@ -3330,7 +3330,7 @@ struct TwoWorkspaces {
         m.ts   = st.conversation(c).latest + 1000;
         m.user = st.findUser("U0MIRA");
         m.text = text;
-        st.addMessage(c, std::move(m));
+        st.addMessage(c, std::move(m), model::MessageOrigin::Live, true);
     }
 };
 
@@ -4113,7 +4113,7 @@ TEST("forward: with two workspaces a picker sends it into the other one") {
     m.ts   = w.a.conversation(design).latest + 1000;
     m.user = w.a.me;
     m.text = "ask <@U0MIRA>";
-    w.a.addMessage(design, std::move(m));
+    w.a.addMessage(design, std::move(m), model::MessageOrigin::Live, true);
     const Ts ts = w.a.conversation(design).messages.back().ts;
     w.ctx.forwardMessage(design, ts, {});
     pump();
@@ -4194,7 +4194,7 @@ TEST("notifications: history and cached thread pages are silent, live messages a
             page.push_back(std::move(m));
             st.addPage(c, std::move(page));
         } else {
-            st.addMessage(c, std::move(m));
+            st.addMessage(c, std::move(m), model::MessageOrigin::Live, true);
         }
         pump();
     };
@@ -4227,7 +4227,7 @@ TEST("notifications: channel lastRead filters live posts, not independent thread
         m.threadTs = thread;
         m.user = author;
         m.text = text;
-        st.addMessage(c, std::move(m));
+        st.addMessage(c, std::move(m), model::MessageOrigin::Live, true);
         pump();
     };
     const uint64_t before = lastNotification(nullptr);

@@ -414,13 +414,13 @@ TEST("store: history append is not a live message arrival") {
     CHECK_FALSE(r.log[0].isArrival());
 
     r.log.clear();
-    f.s.addMessage(f.c, msg(300, f.mira, "new"));
+    f.s.addMessage(f.c, msg(300, f.mira, "new"), model::MessageOrigin::Live, true);
     REQUIRE(r.log.size() >= 1);
     CHECK(r.log[0].kind == ChangeKind::Append);
     CHECK(r.log[0].isArrival());
 
     r.log.clear();
-    f.s.addMessage(f.c, msg(200, f.mira, "late"));
+    f.s.addMessage(f.c, msg(200, f.mira, "late"), model::MessageOrigin::Live, true);
     REQUIRE(r.log.size() >= 1);
     CHECK(r.log[0].kind == ChangeKind::Insert);
     CHECK(r.log[0].isArrival());
@@ -453,10 +453,10 @@ TEST("store: live messages count unread and mentions, markRead recounts") {
     Fixture  f;
     Recorder r;
     f.s.observe(f.c, r.fn());
-    f.s.addMessage(f.c, msg(100, f.mira, "hello"));
-    f.s.addMessage(f.c, msg(200, f.mira, "hey <@U1> look"));
-    f.s.addMessage(f.c, msg(300, f.me, "mine"));
-    f.s.addMessage(f.c, msg(400, f.mira, "<!here> standup"));
+    f.s.addMessage(f.c, msg(100, f.mira, "hello"), model::MessageOrigin::Live, true);
+    f.s.addMessage(f.c, msg(200, f.mira, "hey <@U1> look"), model::MessageOrigin::Live, true);
+    f.s.addMessage(f.c, msg(300, f.me, "mine"), model::MessageOrigin::Live, true);
+    f.s.addMessage(f.c, msg(400, f.mira, "<!here> standup"), model::MessageOrigin::Live, true);
     const auto &c = f.s.conversation(f.c);
     CHECK(c.unread == 3);
     CHECK(c.mentions == 2);
@@ -470,7 +470,7 @@ TEST("store: live messages count unread and mentions, markRead recounts") {
     CHECK(c.mentions == 0);
     // Out-of-order live message: Insert, not Append.
     r.log.clear();
-    f.s.addMessage(f.c, msg(250, f.mira));
+    f.s.addMessage(f.c, msg(250, f.mira), model::MessageOrigin::Live, true);
     CHECK((r.log[0].kind == ChangeKind::Insert && r.log[0].ts == 250));
 }
 
@@ -493,7 +493,7 @@ TEST("store: thread replies update their root") {
     f.s.addPage(f.c, page({100}, f.mira));
     Recorder r;
     f.s.observe(f.c, r.fn());
-    f.s.addMessage(f.c, msg(150, f.me, "reply", 100));
+    f.s.addMessage(f.c, msg(150, f.me, "reply", 100), model::MessageOrigin::Live, true);
     const Message *root = f.s.findMessage(f.c, 100);
     REQUIRE(root);
     CHECK(root->replyCount == 1);
@@ -559,11 +559,11 @@ TEST("store: observers filter by conversation and survive self-removal") {
         f.s.unobserve(self); // removing itself mid-dispatch is safe
         f.s.observe(c2, [&](const Change &) { second += 100; }); // joins after this dispatch
     });
-    f.s.addMessage(c2, msg(100, f.mira)); // Append + Meta
+    f.s.addMessage(c2, msg(100, f.mira), model::MessageOrigin::Live, true); // Append + Meta
     CHECK(mine == 0);
     CHECK(second == 101); // the self-remover once, then the new observer on Meta
     CHECK(any == 2);
-    f.s.addMessage(f.c, msg(100, f.mira));
+    f.s.addMessage(f.c, msg(100, f.mira), model::MessageOrigin::Live, true);
     CHECK(mine == 2);
     CHECK(second == 101);
 }
@@ -578,7 +578,7 @@ TEST("store: typing indicators end with the author's message") {
     CHECK(r.log.size() == 1);
     f.s.setTyping(f.c, f.me, 0, true); // never show myself
     CHECK(f.s.typing(f.c).size() == 1);
-    f.s.addMessage(f.c, msg(100, f.mira));
+    f.s.addMessage(f.c, msg(100, f.mira), model::MessageOrigin::Live, true);
     CHECK(f.s.typing(f.c).empty());
     CHECK(r.log.back().kind == ChangeKind::Typing);
 }
@@ -738,7 +738,7 @@ TEST("store: a closed DM reopens with its next message") {
     d.dmUser         = f.mira;
     d.member         = false;
     const ConvRef dm = f.s.addConversation(std::move(d));
-    f.s.addMessage(dm, msg(500, f.mira));
+    f.s.addMessage(dm, msg(500, f.mira), model::MessageOrigin::Live, true);
     CHECK(f.s.conversation(dm).member);
 }
 

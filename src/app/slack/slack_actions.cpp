@@ -399,7 +399,7 @@ struct SlackBackend::Write {
         if (st->broadcast) // the subtype the server gives it, so the channel shows it too
             m.extras().subtype = "thread_broadcast";
         st->text = std::move(text);
-        store().addMessage(conv, std::move(m));
+        store().addMessage(conv, std::move(m), model::MessageOrigin::Local, false);
         sends.push_back(st);
         return st;
     }
@@ -504,7 +504,7 @@ struct SlackBackend::Write {
         st->server       = ts;
         store().removeMessage(st->conv, st->local);
         if (ts) {
-            store().addMessage(st->conv, std::move(m));
+            store().addMessage(st->conv, std::move(m), model::MessageOrigin::Local, false);
             if (confirmed.size() >= 16)
                 confirmed.erase(confirmed.begin());
             confirmed.push_back({st->conv, st->local, ts});

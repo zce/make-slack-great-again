@@ -270,7 +270,7 @@ void FakeBackend::sendWithFiles(
             m.extras().files.push_back(fileFromLocalPath(path, 5000 + int(_uploads++)));
     }
     const Ts ts = m.ts;
-    _store.addMessage(conv, std::move(m));
+_store.addMessage(conv, std::move(m), model::MessageOrigin::Local, false);
     // Confirm asynchronously: a real server never answers synchronously.
     later(kSendConfirmMs, [this, conv, ts, threadTs, done = std::move(done)] {
         if (!_store.findMessage(conv, ts)) { // undone while in flight (undo send)
@@ -996,7 +996,7 @@ Ts FakeBackend::postAs(ConvRef conv, model::UserRef user, std::string text, Ts t
     m.user      = user;
     m.text      = std::move(text);
     const Ts ts = m.ts;
-    _store.addMessage(conv, std::move(m));
+_store.addMessage(conv, std::move(m), model::MessageOrigin::Live, true);
     scheduleUnfurl(conv, ts);
     return ts;
 }
