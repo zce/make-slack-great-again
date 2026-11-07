@@ -49,6 +49,10 @@ public:
     virtual void clear() = 0;
 
     const std::string &statusText() const { return _statusText; }
+    bool refreshing() const { return _refreshing; }
+    bool canRetry() const { return bool(_retryAction); }
+    void retry() { if (_retryAction) _retryAction(); }
+    std::function<void()> onRefreshStateChanged;
 
     void paint(gfx::Painter &p) override; // one grey surface; the cards are white
 
@@ -61,16 +65,21 @@ protected:
     bool         rebuildQueued() const { return _rebuildQueued; }
     virtual void rebuild() {}
     void         setStatus(std::string text);
+    void         setRetry(std::function<void()> action);
+    void         setRefreshing(bool loading);
 
     screens::Context    &_ctx;
     Avatars             &_avatars;
     ui::ScrollView      *_scroll = nullptr;
     ui::Label           *_status = nullptr;
+    ui::Button          *_retry = nullptr;
     ui::View            *_list   = nullptr; // the cards
     std::shared_ptr<int> _alive  = std::make_shared<int>(0);
 
 private:
     std::string              _statusText;
+    std::function<void()>    _retryAction;
+    bool                     _refreshing = false;
     bool                     _rebuildQueued = false;
     model::Store::ObserverId _observer      = 0;
 };
