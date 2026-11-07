@@ -342,22 +342,46 @@ public:
     void bind(View &v, int i) override {
         Row &r = static_cast<Row &>(v);
         const size_t index = size_t(i);
-        const size_t messages = _q._hits.size(), conversations = _q._results.size();
+        const size_t conversations = _q._results.size(), people = _q._people.size();
+        const size_t messageStart = conversations + people;
         const model::Store &st = *_q._tabs[size_t(_q._tab)].store;
         r.index = i;
-        const bool isMessage = index < messages;
-        const bool firstMessage = isMessage && index == 0;
-        const bool firstConversation = index == messages && conversations > 0;
-        const bool firstPerson = index == messages + conversations;
-        const bool showCategory = firstMessage || firstConversation || firstPerson;
+        const bool isConversation = index < conversations;
+        const bool isPerson = index >= conversations && index < messageStart;
+        const bool isMessage = index >= messageStart;
+        const bool firstConversation = isConversation && index == 0;
+        const bool firstPerson = isPerson && index == conversations;
+        const bool firstMessage = isMessage && index == messageStart;
+        const bool showCategory = firstConversation || firstPerson || firstMessage;
         r.category->setVisible(showCategory);
         if (showCategory)
-            r.category->setText(firstMessage ? tr("Messages")
-                                : firstConversation ? tr("Conversations") : tr("People"));
+            r.category->setText(firstConversation ? tr("Conversations")
+                                : firstPerson ? tr("People") : tr("Messages"));
         r.snippet->setVisible(isMessage);
         r.style().height(isMessage ? (showCategory ? 92 : 72) : (showCategory ? 56 : 36));
-        if (isMessage) {
-            const auto &match = _q._hits[index];
+        if (isConversation) {
+            const ConvRef c = _q._results[index];
+            const auto &cv = st.conversation(c);
+            const std::string nm = st.displayName(c);
+            const bool person = cv.isDirect();
+            r.avatar->setVisible(person);
+            r.icon->setVisible(!person);
+            if (person) {
+                r.avatar->setInitial(nm);
+                r.avatar->setBitmap(
+                    cv.kind == model::ConvKind::Dm ? _q._avatars.get(st.user(cv.dmUser).avatar, 40)
+                                                   : nullptr);
+            } else r.icon->setIcon(convIcon(cv));
+            r.name->setText(nm);
+        } else if (isPerson) {
+            const auto &u = st.user(_q._people[index - conversations]);
+            r.avatar->setVisible(true);
+            r.icon->setVisible(false);
+            r.avatar->setInitial(u.label());
+            r.avatar->setBitmap(_q._avatars.get(u.avatar, 40));
+            r.name->setText(std::string(u.label()));
+        } else {
+            const auto &match = _q._hits[index - messageStart];
             const auto &tab = _q._tabs[match.workspace];
             r.avatar->setVisible(false);
             r.icon->setVisible(true);
@@ -373,35 +397,15 @@ public:
             heading += " \xC2\xB7 " + base::formatDateTime(model::tsSecs(hit.ts));
             r.name->setText(std::move(heading));
             r.snippet->setRichText(searchHighlightedPreview(*tab.store, match.hit.text));
-        } else if (index < messages + conversations) {
-            const ConvRef c = _q._results[index - messages];
-            const auto &cv = st.conversation(c);
-            const std::string nm = st.displayName(c);
-            const bool person = cv.isDirect();
-            r.avatar->setVisible(person);
-            r.icon->setVisible(!person);
-            if (person) {
-                r.avatar->setInitial(nm);
-                r.avatar->setBitmap(
-                    cv.kind == model::ConvKind::Dm ? _q._avatars.get(st.user(cv.dmUser).avatar, 40)
-                                                   : nullptr);
-            } else r.icon->setIcon(convIcon(cv));
-            r.name->setText(nm);
-        } else {
-            const auto &u = st.user(_q._people[index - messages - conversations]);
-            r.avatar->setVisible(true);
-            r.icon->setVisible(false);
-            r.avatar->setInitial(u.label());
-            r.avatar->setBitmap(_q._avatars.get(u.avatar, 40));
-            r.name->setText(std::string(u.label()));
         }
         r.setChecked(i == _q._current);
     }
     float estimateHeight(int i) const override {
-        const size_t messages = _q._hits.size(), conversations = _q._results.size();
-        const bool message = size_t(i) < messages;
-        const bool header = i == 0 || size_t(i) == messages ||
-                            size_t(i) == messages + conversations;
+        const size_t conversations = _q._results.size(), people = _q._people.size();
+        const size_t messageStart = conversations + people;
+        const bool message = size_t(i) >= messageStart;
+        const bool header = i == 0 || size_t(i) == conversations ||
+                            size_t(i) == messageStart;
         return message ? (header ? 92 : 72) : (header ? 56 : 36);
     }
 
@@ -497,6 +501,11 @@ QuickSwitcher::QuickSwitcher(
     _list = add<VirtualList>(_rows.get());
     _list->setGap(1);
     _list->style().height(kListH);
+    // Pagination belongs to the message stream, which is the final section.
+    _list->onScroll = [this] {
+        if (!_searching && _searchError.empty() && _list->atEnd() && hasMore())
+            loadMore();
+    };
     // In the list's place when nothing matches.
     _empty = add<Label>(tr("No results found."), Font::Body, C::TextMuted);
     _empty->setAlign(text::LayoutOptions::Align::Center);
@@ -632,8 +641,10 @@ void QuickSwitcher::refilter(Scored *scored) {
     QuickSwitchTab &tab = _tabs[size_t(_tab)];
     _results = scored ? ranked(std::move(*scored))
                       : quickSwitchFilter(_field->text(), tab.order, names(tab));
-    _people.clear();
     const std::string query = utf8::foldCase(str::trim(_field->text()));
+    // The popup is a quick picker, not a full conversation directory.
+    if (!query.empty() && _results.size() > 4) _results.resize(4);
+    _people.clear();
     if (!query.empty()) {
         const model::Store &store = *tab.store;
         // A DM already found above represents its peer. Everyone else is
@@ -654,7 +665,7 @@ void QuickSwitcher::refilter(Scored *scored) {
                 str::concat({person.label(), " ", person.name, " ", person.realName}));
             if (names.find(query) != std::string::npos) {
                 _people.push_back(u);
-                if (_people.size() >= 30) break; // bound the results list
+                if (_people.size() >= 3) break; // keep suggestions compact
             }
         }
     }
@@ -685,9 +696,10 @@ void QuickSwitcher::refreshResults() {
     _status->setVisible(!_searchError.empty() || (_searching && total > 0));
     _status->setText(!_searchError.empty() ? "Search error: " + _searchError
                                         : tr("Searching\xE2\x80\xA6"));
-    _moreButton->setVisible(!_searching && hasMore());
-    _moreButton->setLabel(!_searchError.empty() ? "Retry search"
-                                                : "Load more results");
+    // Normal pagination is automatic at the end of the message list.
+    // Keep an explicit action only for recovering from a failed request.
+    _moreButton->setVisible(!_searching && !_searchError.empty() && hasMore());
+    _moreButton->setLabel("Retry search");
 }
 
 std::string QuickSwitcher::searchQuery() const {
@@ -763,17 +775,16 @@ void QuickSwitcher::requestPage(size_t origin, std::string cursor, uint32_t gene
 void QuickSwitcher::receivePage(size_t origin, std::string cursor, uint32_t generation,
                                 model::Backend::SearchPage result) {
     if (generation != _searchGeneration || origin >= _tabs.size()) return;
-    const size_t oldMessages = _hits.size();
+    const size_t oldMessageStart = _results.size() + _people.size();
     const int previous = _current;
     std::optional<MessageMatch> selected;
-    if (_keyboardSelection && previous >= 0 && size_t(previous) < oldMessages)
-        selected = _hits[size_t(previous)];
+    if (_keyboardSelection && previous >= int(oldMessageStart))
+        selected = _hits[size_t(previous) - oldMessageStart];
     const bool keepViewport = _list->scrollOffset() > 1;
     const VirtualList::Anchor previousAnchor = _list->anchor();
     std::optional<MessageMatch> visible;
-    if (keepViewport && previousAnchor.index >= 0 &&
-        size_t(previousAnchor.index) < oldMessages)
-        visible = _hits[size_t(previousAnchor.index)];
+    if (keepViewport && previousAnchor.index >= int(oldMessageStart))
+        visible = _hits[size_t(previousAnchor.index) - oldMessageStart];
 
     if (!result.error.empty()) {
         _failedCursor[origin] = cursor;
@@ -805,16 +816,14 @@ void QuickSwitcher::receivePage(size_t origin, std::string cursor, uint32_t gene
         for (size_t i = 0; i < _hits.size(); ++i) {
             const auto &now = _hits[i];
             if (now.workspace == saved.workspace && now.hit.conv == saved.hit.conv &&
-                now.hit.ts == saved.hit.ts) return int(i);
+                now.hit.ts == saved.hit.ts)
+                return int(_results.size() + _people.size() + i);
         }
         return -1;
     };
-    const int added = int(_hits.size() - oldMessages);
-    if (_keyboardSelection) {
-        if (selected) {
-            const int newIndex = findMessage(*selected);
-            if (newIndex >= 0) _current = newIndex;
-        } else if (previous >= int(oldMessages)) _current = previous + added;
+    if (_keyboardSelection && selected) {
+        const int newIndex = findMessage(*selected);
+        if (newIndex >= 0) _current = newIndex;
     }
     if (_pendingSearches) --_pendingSearches;
     _searching = _pendingSearches != 0;
@@ -824,13 +833,17 @@ void QuickSwitcher::receivePage(size_t origin, std::string cursor, uint32_t gene
         if (_list->visible())
             _list->scrollToItem(_current, VirtualList::ItemAlign::Nearest, false);
     } else if (keepViewport) {
-        int newIndex = previousAnchor.index + added;
+        int newIndex = previousAnchor.index;
         if (visible) {
             const int relocated = findMessage(*visible);
             if (relocated >= 0) newIndex = relocated;
         }
         _list->scrollToAnchor({newIndex, previousAnchor.offset});
     }
+    // If the first page is shorter than the viewport, fill it until it can
+    // scroll or Slack reports that there are no more matches.
+    if (!_searching && _searchError.empty() && _list->atEnd() && hasMore())
+        loadMore();
 }
 
 void QuickSwitcher::loadMore() {
@@ -864,32 +877,21 @@ void QuickSwitcher::highlight(int index) {
 
 
 void QuickSwitcher::choose(int index) {
-    const size_t messages = _hits.size(), conversations = _results.size();
-    const size_t people = _people.size();
-    if (index < 0 || size_t(index) >= messages + conversations + people) return;
-    if (size_t(index) < messages) {
-        const MessageMatch match = _hits[size_t(index)];
-        const QuickSwitchTab &tab = _tabs[match.workspace];
-        const bool here = tab.store == &_ctx.store();
-        const auto open = _ctx.openMessage;
-        const auto in = onChooseMessageIn;
-        close();
-        if (here && open) open(match.hit.conv, match.hit.ts, match.hit.thread);
-        else if (!here && in) in(tab.key, match.hit.conv, match.hit.ts, match.hit.thread);
-        return;
-    }
+    const size_t conversations = _results.size(), people = _people.size();
+    const size_t messageStart = conversations + people;
+    if (index < 0 || size_t(index) >= messageStart + _hits.size()) return;
     const QuickSwitchTab &tab = _tabs[size_t(_tab)];
     const std::string key = tab.key;
     const bool here = tab.store == &_ctx.store();
-    if (size_t(index) < messages + conversations) {
-        const ConvRef c = _results[size_t(index) - messages];
+    if (size_t(index) < conversations) {
+        const ConvRef c = _results[size_t(index)];
         const auto open = here ? _ctx.openConversation : std::function<void(ConvRef)>();
         const auto in = onChooseIn;
         close();
         if (open) open(c);
         else if (!here && in) in(key, c);
-    } else {
-        const model::UserRef user = _people[size_t(index) - messages - conversations];
+    } else if (size_t(index) < messageStart) {
+        const model::UserRef user = _people[size_t(index) - conversations];
         const auto open = _ctx.openConversation;
         const auto in = onChoosePersonIn;
         model::Backend *backend = tab.backend ? tab.backend : &_ctx.backend;
@@ -899,6 +901,17 @@ void QuickSwitcher::choose(int index) {
                 if (conv != model::kNoConv && open) open(conv);
             });
         } else if (in) in(key, user);
+    } else {
+        const MessageMatch match = _hits[size_t(index) - messageStart];
+        const QuickSwitchTab &messageTab = _tabs[match.workspace];
+        const bool messageHere = messageTab.store == &_ctx.store();
+        const auto openMessage = _ctx.openMessage;
+        const auto openIn = onChooseMessageIn;
+        close();
+        if (messageHere && openMessage)
+            openMessage(match.hit.conv, match.hit.ts, match.hit.thread);
+        else if (!messageHere && openIn)
+            openIn(messageTab.key, match.hit.conv, match.hit.ts, match.hit.thread);
     }
 }
 
