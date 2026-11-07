@@ -633,12 +633,8 @@ void SlackBackend::Live::resyncUnreads() {
 }
 
 void SlackBackend::Live::applyPatches() {
-    for (const auto &[id, info] : patches) {
-        const ConvRef r = s.findConversation(id);
-        if (r == kNoConv)
-            continue;
+    for (const auto &[id, info] : patches)
         b.reconcileDirectConversation(id, info);
-    }
     patches.clear();
 }
 
