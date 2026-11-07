@@ -29,7 +29,7 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: write
       actions: read
@@ -55,32 +55,73 @@ jobs:
             exit 1
           fi
 
+          # The release button can be clicked immediately after a push. The
+          # corresponding CI run may not have been registered yet, or may still
+          # be running. Wait for that exact master push instead of racing it.
           run_id="$REQUESTED_RUN_ID"
-          if [[ -z "$run_id" ]]; then
-            run_id="$(gh api "repos/${GH_REPO}/actions/workflows/ci.yml/runs?branch=master&event=push&per_page=50" |
-              jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success")] | first | .id // empty')"
-          fi
-          if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
-            echo "No successful master CI for this commit; run CI first and optionally supply ci_run_id" >&2
+          if [[ -n "$run_id" && ! "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "ci_run_id must be a numeric GitHub Actions run ID" >&2
             exit 1
           fi
 
-          gh api "repos/${GH_REPO}/actions/runs/${run_id}" |
-            jq -e --arg sha "$GITHUB_SHA" --arg repo "$GH_REPO" '
-              .name == "CI" and
-              .event == "push" and
-              .head_branch == "master" and
-              .status == "completed" and
-              .conclusion == "success" and
-              .head_sha == $sha and
-              .head_repository.full_name == $repo' >/dev/null || {
-                echo "CI run is not a successful master push for this exact commit" >&2
+          max_attempts=80
+          poll_interval=15
+          ci_status=""
+          ci_conclusion=""
+
+          for attempt in $(seq 1 "$max_attempts"); do
+            if [[ -z "$run_id" ]]; then
+              runs_json="$(gh api "repos/${GH_REPO}/actions/workflows/ci.yml/runs" \
+                -f branch=master -f event=push -F per_page=50)"
+              run_id="$(jq -r --arg sha "$GITHUB_SHA" '
+                [.workflow_runs[]
+                  | select(.head_sha == $sha and .head_branch == "master" and .event == "push")]
+                | sort_by(.created_at) | last | .id // empty
+              ' <<< "$runs_json")"
+            fi
+
+            if [[ -z "$run_id" ]]; then
+              echo "[$attempt/$max_attempts] Waiting for the master CI run for $GITHUB_SHA to appear..."
+            else
+              run_json="$(gh api "repos/${GH_REPO}/actions/runs/${run_id}")"
+              jq -e --arg sha "$GITHUB_SHA" --arg repo "$GH_REPO" '
+                .name == "CI" and
+                .event == "push" and
+                .head_branch == "master" and
+                .head_sha == $sha and
+                .head_repository.full_name == $repo
+              ' <<< "$run_json" >/dev/null || {
+                echo "CI run $run_id is not the master push for this exact commit" >&2
                 exit 1
               }
 
+              ci_status="$(jq -r '.status' <<< "$run_json")"
+              ci_conclusion="$(jq -r '.conclusion // ""' <<< "$run_json")"
+
+              if [[ "$ci_status" == "completed" ]]; then
+                if [[ "$ci_conclusion" != "success" ]]; then
+                  echo "Master CI run $run_id completed with conclusion: $ci_conclusion" >&2
+                  exit 1
+                fi
+                break
+              fi
+
+              echo "[$attempt/$max_attempts] Master CI run $run_id is $ci_status; waiting..."
+            fi
+
+            if (( attempt < max_attempts )); then
+              sleep "$poll_interval"
+            fi
+          done
+
+          if [[ "$ci_status" != "completed" || "$ci_conclusion" != "success" ]]; then
+            echo "Timed out waiting for successful master CI for $GITHUB_SHA (waited up to 20 minutes)" >&2
+            exit 1
+          fi
+
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Verified CI run $run_id for $GITHUB_SHA"
+          echo "Verified successful CI run $run_id for $GITHUB_SHA"
 
       - name: Download production binary from validated CI
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
