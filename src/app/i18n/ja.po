@@ -2330,8 +2330,8 @@ msgid "Unreads on top"
 msgstr "未読を上に表示"
 
 #: src/app/screens/shell/context_menus.cpp
-msgid "Show unread conversations when collapsed"
-msgstr ""
+msgid "Show unread when collapsed"
+msgstr "折りたたみ時も未読を表示"
 
 #: src/app/screens/shell/context_menus.cpp
 msgid "Notify you about…"
