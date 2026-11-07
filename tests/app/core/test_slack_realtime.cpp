@@ -537,7 +537,7 @@ TEST("slack realtime: reconnect resync clears DMs read on another client") {
     const ConvRef dm = e.conv("D1");
     REQUIRE(dm != kNoConv);
 
-    const reconnect = [&](int opens) {
+    const auto reconnect = [&](int opens) {
         ctl("POST", "/_ctl/ws/close", R"({"code": 1001})");
         REQUIRE(pumpUntil([&] { return count("ws-open") == opens && e.socket->connected(); }));
     };
