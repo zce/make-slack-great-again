@@ -1489,6 +1489,27 @@ public:
     }
 };
 
+// Match the conversation star: a bare titlebar action with ink-only hover.
+class PageRefreshButton final : public Clickable {
+public:
+    PageRefreshButton() {
+        setLook({C::None, C::None, C::None, C::None, 0});
+        setRole(Role::Button);
+        setTooltip(tr("Refresh"));
+        style().size(28, 28).noShrink().items(Align::Center);
+        _glyph = add<Label>("↻", Font::HeaderTitle, C::SidebarTextMuted);
+        _glyph->setHitTransparent(true);
+    }
+    bool onEvent(Event &e) override {
+        const bool handled = Clickable::onEvent(e);
+        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
+            _glyph->setColor(hovered() ? C::SidebarText : C::SidebarTextMuted);
+        return handled;
+    }
+private:
+    Label *_glyph = nullptr;
+};
+
 // Search stays gently highlighted; hovering adds only one more wash from the
 // active palette instead of jumping to the opaque selected-channel colour.
 class TitleSearchTrigger final : public Clickable {
@@ -1577,14 +1598,7 @@ void Shell::buildTitleBar(View *parent) {
     _pageTitle->setMaxLines(1);
     _pageTitle->setHitTransparent(true);
     _pageTitle->style().shrink = 1;
-    _pageAction = _pageHeading->add<Button>(
-        "↻", Button::Kind::Ghost, Button::Form::Small
-    );
-    _pageAction->setFocusable(false);
-    _pageAction->setTooltip(tr("Refresh"));
-    _pageAction->setTextColor(C::SidebarTextMuted);
-    _pageAction->setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 6});
-    _pageAction->style().noShrink();
+    _pageAction = _pageHeading->add<PageRefreshButton>();
     _pageAction->onClick = [this] {
         for (Page p : {Page::Activity, Page::Threads, Page::Saved, Page::Scheduled})
             if (pageOpen(p)) {
