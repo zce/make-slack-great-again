@@ -176,7 +176,7 @@ ActivityPage::ActivityPage(screens::Context &ctx, Avatars &avatars)
     // second toolbar row. The list starts directly below this strip.
     _tabs->add<View>()->style().flex(1);
     _unread = _tabs->add<ui::CheckBox>(tr("Unread only"));
-    _unread->style().margins(0, 0, 20, 0);
+    _unread->style().alignSelf(Align::Center).margins(0, 0, 20, 0);
     _unread->setFocusable(false);
     _unread->onChange = [this](bool on) { setUnreadOnly(on); };
     View *content = _scroll->content();
