@@ -1198,13 +1198,7 @@ void SlackBackend::Read::enrichDmActivity() {
             const ConvRef r = s.findConversation(id);
             if (!info || r == kNoConv)
                 return;
-            const model::Conversation &c = s.conversation(r);
-            if (info->lastRead <= c.lastRead && info->latest <= c.latest)
-                return;
-            s.updateConversation(r, [&](model::Conversation &x) {
-                x.lastRead = std::max(x.lastRead, info->lastRead);
-                x.latest   = std::max(x.latest, info->latest);
-            });
+            b.reconcileDirectConversation(id, *info);
         });
 }
 
