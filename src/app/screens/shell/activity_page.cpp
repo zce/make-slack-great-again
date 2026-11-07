@@ -169,7 +169,7 @@ ActivityPage::ActivityPage(screens::Context &ctx, Avatars &avatars)
     _tabs->addTab(gfx::Icon::MessagesSquare, tr("Threads"));
     _tabs->onSelect = [this](int i) {
         _filter = kTabs[i];
-        reload();
+        reload(true);
     };
 
     // Filters belong on the right of the content tab strip, not in a
@@ -200,7 +200,7 @@ void ActivityPage::setFilter(Filter f) {
         if (kTabs[i] == f && _tabs->active() != i) {
             _tabs->setActive(i);
             _filter = f;
-            reload();
+            reload(true);
         }
 }
 
@@ -209,7 +209,7 @@ void ActivityPage::setUnreadOnly(bool on) {
         return;
     _unreadOnly = on;
     _unread->setChecked(on);
-    reload();
+    reload(true);
 }
 
 void ActivityPage::open() {
@@ -219,14 +219,24 @@ void ActivityPage::open() {
 void ActivityPage::clear() {
     ++_generation; // an answer in flight is dropped
     _loading = false;
+    setRefreshing(false);
+    setRetry({});
     _nextCursor.clear();
     _items.clear();
     rebuild();
     setStatus({});
 }
 
-void ActivityPage::reload() {
-    _loading = false; // a tab switch outranks the load in flight
+void ActivityPage::reload(bool filterChanged) {
+    if (_loading && !filterChanged)
+        return; // Refresh is single-flight; a tab switch supersedes the old request.
+    if (filterChanged) {
+        ++_generation;
+        _loading = false;
+        _items.clear();
+        _nextCursor.clear();
+        rebuild();
+    }
     loadPage({});
 }
 
@@ -239,29 +249,30 @@ void ActivityPage::loadPage(std::string cursor) {
     if (_loading)
         return;
     _loading = true;
+    setRefreshing(true);
+    setRetry({});
     _more->setEnabled(false);
     const bool first = cursor.empty();
-    if (first) {
-        _items.clear();
-        _nextCursor.clear();
-        rebuild();
+    if (first && _items.empty())
         setStatus(tr("Loading activity…"));
-    }
     const uint32_t     gen   = ++_generation;
     std::weak_ptr<int> alive = _alive;
     _ctx.backend.loadActivity(
         _filter,
         _unreadOnly,
         std::move(cursor),
-        [this, alive, gen](bool ok, model::Backend::ActivityFeed page) {
+        [this, alive, gen, first](bool ok, model::Backend::ActivityFeed page) {
             if (alive.expired() || gen != _generation)
                 return;
             _loading = false;
+            setRefreshing(false);
             _more->setEnabled(true);
             if (!ok) {
+                setRetry([this, first] {
+                    loadPage(first ? std::string() : _nextCursor);
+                });
                 // Slack's code with it: the one clue a report can carry.
-                if (_items.empty())
-                    setStatus(
+                setStatus(
                         page.error.empty()
                             ? std::string(tr("Couldn't load activity. Try again later."))
                             : str::concat(
@@ -272,6 +283,11 @@ void ActivityPage::loadPage(std::string cursor) {
                               )
                     );
                 return;
+            }
+            setRetry({});
+            if (first) {
+                _items.clear();
+                _nextCursor.clear();
             }
             for (Item &it : page.items)
                 if (it.conv < _ctx.store().conversationCount())
