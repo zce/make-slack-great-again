@@ -308,27 +308,27 @@ TEST("search: fake backend paginates and scopes results") {
     h.store.addPage(design, std::move(messages));
     Backend::SearchPage first, second, third;
     bool done = false;
-    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", 1,
+    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", "*",
                          [&](Backend::SearchPage r) { first = std::move(r); done = true; });
     for (int i = 0; i < 1000 && !done; ++i) pump(5);
     REQUIRE(done);
     CHECK(first.hits.size() == 20);
-    CHECK(first.hasMore);
+    CHECK_STR(first.nextCursor, "20");
     done = false;
-    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", 2,
+    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", first.nextCursor,
                          [&](Backend::SearchPage r) { second = std::move(r); done = true; });
     for (int i = 0; i < 1000 && !done; ++i) pump(5);
     REQUIRE(done);
     CHECK(second.hits.size() == 20);
-    CHECK(second.hasMore);
+    CHECK_STR(second.nextCursor, "40");
     CHECK(second.hits[0].ts < first.hits.back().ts);
     done = false;
-    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", 3,
+    h.backend.searchPage("search-pagination-token in:<#C0DESIGN>", second.nextCursor,
                          [&](Backend::SearchPage r) { third = std::move(r); done = true; });
     for (int i = 0; i < 1000 && !done; ++i) pump(5);
     REQUIRE(done);
     CHECK(third.hits.size() == 5);
-    CHECK_FALSE(third.hasMore);
+    CHECK(third.nextCursor.empty());
 }
 
 TEST("search: Slack highlighted Unicode preview removes markers and preserves bytes") {
