@@ -166,8 +166,9 @@ model::NotifyLevel Shell::effectiveLevel(const model::Conversation &c) const {
     return c.effectiveNotify(defaultLevel());
 }
 
-// One workspace's new messages (an Append to a list, or a reply to a thread
-// not loaded: Arrived).
+// Announce only actual arrivals: live Append/Insert or an Arrived reply
+// to an unloaded thread. Historical addPage also emits Append/Insert for UI
+// rendering, but must never trigger desktop notifications.
 void Shell::messagesArrived(model::Store &st, const std::string &key, const model::Change &ch) {
     if (ch.conv >= st.conversationCount())
         return;
@@ -176,6 +177,15 @@ void Shell::messagesArrived(model::Store &st, const std::string &key, const mode
             maybeNotify(st, key, ch.conv, *m, true);
         return;
     }
+    if (!ch.live)
+        return;
+    if (ch.kind == model::ChangeKind::Insert) {
+        if (const model::Message *m = st.findMessage(ch.conv, ch.ts))
+            maybeNotify(st, key, ch.conv, *m, true);
+        return;
+    }
+    if (ch.kind != model::ChangeKind::Append)
+        return;
     const std::vector<model::Message> *list =
         ch.thread ? st.replies(ch.conv, ch.thread) : &st.conversation(ch.conv).messages;
     if (!list)
@@ -205,6 +215,10 @@ void Shell::maybeNotify(
     if (&st == &_ctx.store() && _signedIn && reading() && conv == _current)
         return;
     const model::Conversation &c = st.conversation(conv);
+    // A live delivery may already have been read on another client.
+    // Channel lastRead is NOT a thread read cursor.
+    if (!m.isReply() && m.ts <= c.lastRead)
+        return;
     if (!c.member || effectiveLevel(c) == model::NotifyLevel::Nothing)
         return;
     const Ts   root    = m.isReply() ? m.threadTs : 0;

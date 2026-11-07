@@ -4137,6 +4137,85 @@ TEST("workspaces: the presence mode and real input reach every running workspace
 
 // ── Notifications, huddles, reminders ───────────────────────────────────────
 
+TEST("notifications: history and cached thread pages are silent, live messages are not") {
+    TwoWorkspaces w;
+    Store        &st = w.b; // background workspace, so focus cannot hide a failure
+    const ConvRef c  = st.findConversation("C0GENERAL");
+    REQUIRE(!st.conversation(c).messages.empty());
+    const Ts root = st.conversation(c).messages.back().ts;
+    const Ts base = std::max(st.conversation(c).latest, root);
+    const model::UserRef author = st.findUser("U0MIRA");
+    const uint64_t before = lastNotification(nullptr);
+
+    auto deliver = [&](Ts ts, Ts thread, const char *text, bool historical) {
+        Message m;
+        m.ts = ts;
+        m.threadTs = thread;
+        m.user = author;
+        m.text = text;
+        if (historical) {
+            std::vector<Message> page;
+            page.push_back(std::move(m));
+            st.addPage(c, std::move(page));
+        } else {
+            st.addMessage(c, std::move(m));
+        }
+        pump();
+    };
+
+    // Freshly appended to the Store does not mean newly received from Slack.
+    deliver(base + 1000, 0, "old channel post", true);
+    deliver(base + 500, 0, "backfilled channel gap", true);
+    deliver(base + 2000, root, "old thread reply", true);
+    deliver(base + 1500, root, "older thread page", true);
+    CHECK(lastNotification(nullptr) == before);
+
+    deliver(base + 3000, 0, "live channel post", false);
+    const uint64_t channelNotice = lastNotification(nullptr);
+    REQUIRE(channelNotice > before);
+    deliver(base + 4000, root, "live thread reply", false);
+    CHECK(lastNotification(nullptr) > channelNotice);
+}
+
+TEST("notifications: channel lastRead filters live posts, not independent thread replies") {
+    TwoWorkspaces w;
+    Store        &st = w.b;
+    const ConvRef c  = st.findConversation("C0GENERAL");
+    REQUIRE(!st.conversation(c).messages.empty());
+    const Ts root = st.conversation(c).messages.back().ts;
+    const Ts base = std::max(st.conversation(c).latest, root);
+    const model::UserRef author = st.findUser("U0MIRA");
+    auto deliver = [&](Ts ts, Ts thread, const char *text) {
+        Message m;
+        m.ts = ts;
+        m.threadTs = thread;
+        m.user = author;
+        m.text = text;
+        st.addMessage(c, std::move(m));
+        pump();
+    };
+    const uint64_t before = lastNotification(nullptr);
+
+    // Slack may have advanced the channel cursor before a push arrives.
+    st.markRead(c, base + 5000);
+    deliver(base + 1000, 0, "already read");
+    CHECK(lastNotification(nullptr) == before);
+
+    deliver(base + 7000, 0, "live new post");
+    const uint64_t channelNotice = lastNotification(nullptr);
+    REQUIRE(channelNotice > before);
+
+    // Late real-time delivery can produce Insert, not Append.
+    deliver(base + 6000, 0, "live out-of-order post");
+    const uint64_t insertedNotice = lastNotification(nullptr);
+    REQUIRE(insertedNotice > channelNotice);
+
+    // The channel cursor is not the followed thread's independent read cursor.
+    st.markRead(c, base + 9000);
+    deliver(base + 8000, root, "live thread reply");
+    CHECK(lastNotification(nullptr) > insertedNotice);
+}
+
 TEST("notifications: the titles and gates — level, mutes, replies to unloaded threads") {
     TwoWorkspaces w;
     Store        &a       = w.a;

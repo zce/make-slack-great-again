@@ -615,6 +615,56 @@ TEST("slack features: a followed thread's reply notifies through the getTimestam
     e.store.unobserve(obs);
 }
 
+
+TEST("slack features: server-read thread replies are not re-announced after a feed poll") {
+    if (!haveServer())
+        return;
+    Env e(R"({"subscriptions.thread.getView": {"ok": true, "total_unread_replies": 0,
+      "threads": [{"root_msg": {"channel": "C1", "ts": "1800000000.000100",
+          "user": "UME", "text": "root", "last_read": "1800000001.000100"},
+        "latest_replies": [{"ts": "1800000001.000100", "user": "UMIRA",
+                            "text": "earlier reply"}]}]}})");
+    std::vector<std::string> arrived;
+    const auto obs = e.store.observe(model::Store::kAnyConv, [&](const model::Change &ch) {
+        if (ch.kind == model::ChangeKind::Arrived && e.store.arrived())
+            arrived.push_back(e.store.arrived()->text);
+    });
+    REQUIRE(e.connect());
+    REQUIRE(pumpUntil([&] { return count("subscriptions.thread.getView") > 0; }, 5000));
+
+    // A second client reads a new reply while our local feed baseline is
+    // still at the first reply. Updating the unread badge is not sufficient:
+    // the notification baseline must also honor the server's read cursor.
+    set(R"({"subscriptions.thread.getView": {"ok": true, "total_unread_replies": 0,
+      "threads": [{"root_msg": {"channel": "C1", "ts": "1800000000.000100",
+          "user": "UME", "text": "root", "last_read": "1800000002.000100"},
+        "latest_replies": [{"ts": "1800000001.000100", "user": "UMIRA",
+                            "text": "earlier reply"},
+                           {"ts": "1800000002.000100", "user": "UMIRA",
+                            "text": "read on another client"}]}]}})");
+    const int firstPoll = count("subscriptions.thread.getView");
+    REQUIRE(pumpUntil([&] { return count("subscriptions.thread.getView") > firstPoll; }, 5000));
+    pumpFor(200);
+    CHECK(arrived.empty());
+    CHECK(e.store.unreadThreads() == 0);
+
+    // A genuinely new reply after that cursor must still reach listeners.
+    set(R"({"subscriptions.thread.getView": {"ok": true, "total_unread_replies": 1,
+      "threads": [{"root_msg": {"channel": "C1", "ts": "1800000000.000100",
+          "user": "UME", "text": "root", "last_read": "1800000002.000100"},
+        "latest_replies": [{"ts": "1800000001.000100", "user": "UMIRA",
+                            "text": "earlier reply"},
+                           {"ts": "1800000002.000100", "user": "UMIRA",
+                            "text": "read on another client"},
+                           {"ts": "1800000003.000100", "user": "UMIRA",
+                            "text": "new unread reply"}]}]}})");
+    REQUIRE(pumpUntil([&] { return !arrived.empty(); }, 5000));
+    REQUIRE(arrived.size() == 1);
+    CHECK_STR(arrived[0], "new unread reply");
+    CHECK(e.store.unreadThreads() == 1);
+    e.store.unobserve(obs);
+}
+
 TEST("slack features: a followed thread's reply notifies even when the thread isn't loaded") {
     if (!haveServer())
         return;

@@ -402,6 +402,53 @@ TEST("store: saved items stay in their order as they change") {
     CHECK(s.savedList()[3].ts == 20);
 }
 
+
+TEST("store: history append is not a live message arrival") {
+    Fixture  f;
+    Recorder r;
+    f.s.observe(f.c, r.fn());
+
+    f.s.addPage(f.c, page({100}, f.mira));
+    REQUIRE(r.log.size() == 1);
+    CHECK(r.log[0].kind == ChangeKind::Append);
+    CHECK_FALSE(r.log[0].isArrival());
+
+    r.log.clear();
+    f.s.addMessage(f.c, msg(300, f.mira, "new"));
+    REQUIRE(r.log.size() >= 1);
+    CHECK(r.log[0].kind == ChangeKind::Append);
+    CHECK(r.log[0].isArrival());
+
+    r.log.clear();
+    f.s.addMessage(f.c, msg(200, f.mira, "late"));
+    REQUIRE(r.log.size() >= 1);
+    CHECK(r.log[0].kind == ChangeKind::Insert);
+    CHECK(r.log[0].isArrival());
+
+    r.log.clear();
+    f.s.addPage(f.c, page({400}, f.mira));
+    REQUIRE(r.log.size() == 1);
+    CHECK(r.log[0].kind == ChangeKind::Append);
+    CHECK_FALSE(r.log[0].isArrival());
+    r.log.clear();
+    f.s.addPage(f.c, page({350}, f.mira));
+    REQUIRE(r.log.size() == 1);
+    CHECK(r.log[0].kind == ChangeKind::Insert);
+    CHECK_FALSE(r.log[0].isArrival());
+
+    r.log.clear();
+    f.s.addPage(f.c, page({50}, f.mira));
+    REQUIRE(r.log.size() == 1);
+    CHECK(r.log[0].kind == ChangeKind::Prepend);
+    CHECK_FALSE(r.log[0].isArrival());
+
+    r.log.clear();
+    f.s.announceReply(f.c, msg(500, f.mira, "reply", 100));
+    REQUIRE(r.log.size() == 1);
+    CHECK(r.log[0].kind == ChangeKind::Arrived);
+    CHECK(r.log[0].isArrival());
+}
+
 TEST("store: live messages count unread and mentions, markRead recounts") {
     Fixture  f;
     Recorder r;

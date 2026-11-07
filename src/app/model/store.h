@@ -43,6 +43,14 @@ struct Change {
     Ts         thread = 0; // 0: the conversation's top-level list; else that thread's replies
     Ts         ts     = 0; // Insert / Update / Remove
     uint32_t   count  = 0; // Append / Prepend
+    // True for Append/Insert from addMessage (live), never from addPage
+    // (history, cache restores or thread loads).
+    bool       live   = false;
+
+    bool isArrival() const {
+        return kind == ChangeKind::Arrived ||
+               (live && (kind == ChangeKind::Append || kind == ChangeKind::Insert));
+    }
 };
 
 // Oldest first: a newest-first page (conversations.history) is reversed,

@@ -2833,12 +2833,15 @@ bool SlackBackend::Read::feedThread(
     if (!baseline) {
         // First page of the run primes; a thread that shows up
         // later uses its own read cursor as the floor.
-        baseline = priming ? newest : lastRead;
+        baseline = priming ? newest : floor;
         if (!baseline) {
             threadBaseline[key] = newest;
             return false;
         }
     }
+    // The feed's read cursor can advance on another client independently
+    // of our last poll. Replies already read there are not new deliveries.
+    baseline = std::max(baseline, floor);
     return true;
 }
 

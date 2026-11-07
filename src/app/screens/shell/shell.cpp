@@ -2926,14 +2926,14 @@ void Shell::onChange(const model::Change &ch) {
             attentionSoon();
         return;
     }
-    if ((ch.kind != K::Append && ch.kind != K::Arrived) || !_live || ch.conv == kNoConv)
+    if (!ch.isArrival() || !_live || ch.conv == kNoConv)
         return;
     // New messages on screen are read; the others notify (an attached
     // workspace's own observer does that, open or not).
     model::Store &st = _ctx.store();
     if (const std::vector<model::Message> *list =
             ch.thread ? st.replies(ch.conv, ch.thread) : &st.conversation(ch.conv).messages;
-        ch.kind == K::Append && list && reading() && ch.conv == _current && !ch.thread)
+        ch.kind == K::Append && ch.live && list && reading() && ch.conv == _current && !ch.thread)
         for (size_t i = list->size() - std::min<size_t>(ch.count, list->size()); i < list->size();
              ++i)
             if (const model::Message &m = (*list)[i]; m.user != st.me && !m.pending)
@@ -3698,7 +3698,7 @@ void Shell::onWorkspaceChange(const std::string &key, const model::Change &ch) {
             huddleChanged(*r->store, key, ch.conv);
         return;
     }
-    if ((ch.kind == K::Append || ch.kind == K::Arrived) && r->live && ch.conv != kNoConv)
+    if (ch.isArrival() && r->live && ch.conv != kNoConv)
         messagesArrived(*r->store, key, ch);
 }
 
