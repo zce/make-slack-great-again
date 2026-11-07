@@ -97,7 +97,7 @@ Implementation: [#1](https://github.com/zce/make-slack-great-again/pull/1), [#17
 
 ## Download
 
-Stable fork versions are published intentionally at [GitHub Releases](https://github.com/zce/make-slack-great-again/releases), using independent `vMAJOR.MINOR.PATCH` version tags. PR test builds are available as downloadable **Actions artifacts** on the associated PR's CI run; they are not formal releases. See [Maintaining this fork](#maintaining-this-fork) for the release process.
+Stable fork versions are published intentionally at [GitHub Releases](https://github.com/zce/make-slack-great-again/releases), using independent `vMAJOR.MINOR.PATCH` version tags. Pull-request builds are available as downloadable **Actions artifacts** on the associated PR's CI run, not as formal releases: Linux provides a test-enabled executable, while Windows provides the portable MinGW executable and its checksum for manual testing. Both PR artifacts are retained for 14 days. See [Maintaining this fork](#maintaining-this-fork) for the release process.
 
 The existing `v0.1.0` release predates Windows support and remains Linux-only. Subsequent releases from this pipeline provide:
 
@@ -265,7 +265,7 @@ This section is the source of truth for fork-specific development, upstream sync
 
 The `.github/workflows/ci.yml` workflow runs on pull requests, pushes to `master` and manual dispatches:
 
-- **Pull requests:** Ubuntu 24.04/GCC builds and runs the full test suite; Ubuntu 24.04/Clang performs a compile check. The GCC job uploads a test-enabled Linux executable for manual testing (14-day retention). The Windows x86_64/MinGW job builds the portable release executable and verifies that it has no MinGW runtime DLL dependencies; Windows CTest is not run.
+- **Pull requests:** Ubuntu 24.04/GCC builds and runs the full test suite; Ubuntu 24.04/Clang performs a compile check. The GCC job uploads a test-enabled Linux executable. The Windows x86_64/MinGW job builds the portable executable, verifies that it has no MinGW runtime DLL dependencies, and uploads it with its checksum for manual testing. Both PR artifacts have 14-day retention; Windows CTest is not run.
 - **Master pushes and manual runs:** both Linux compiler jobs run the full test suite. CTest currently starts with two workers; tests sharing global resources must declare `RESOURCE_LOCK` or `RUN_SERIAL`. The Windows job also builds and validates the portable executable.
 - **Successful master pushes:** the GCC job makes a separate production build with tests, demo and upstream self-update disabled, then uploads the dynamically linked Linux x86_64 executable, SHA256 checksum and `DEPENDENCIES.txt`. The Windows job uploads `msga-windows-x86_64.exe` with its SHA256 checksum. Both production artifacts have 30-day retention.
 - Actions are pinned to reviewed commit SHAs. Keep PR test artifacts and production release artifacts distinct.
