@@ -82,6 +82,8 @@ public:
     // plat's NetworkChanged: the network's reachability changed.
     void networkChanged(bool online);
     bool connected() const;
+    // App-level observer: a real socket lifecycle change, not an API error.
+    std::function<void(bool)> onConnectionChanged;
 
     // ── Test seams ──────────────────────────────────────────────────────────
     struct Timing {
