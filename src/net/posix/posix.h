@@ -18,6 +18,8 @@
 
 namespace net::detail {
 
+struct Proxy;
+
 inline int64_t nowMs() { // monotonic
     return base::monotonicMs();
 }
@@ -71,7 +73,7 @@ public:
     // DNS, TCP connect and (for secure URLs) the TLS handshake with
     // certificate + hostname verification. False + *error: "dns: …",
     // "connect: …", "tls: …", "timeout", "cancelled".
-    bool open(const Url &url, const Waiter &w, std::string *error);
+    bool open(const Url &url, const Proxy &proxy, const Waiter &w, std::string *error);
 
     static constexpr long Again = -1; // would block: wait for wantEvents()
     static constexpr long Fail  = -2; // the stream is dead

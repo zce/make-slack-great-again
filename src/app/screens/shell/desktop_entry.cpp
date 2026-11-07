@@ -20,9 +20,29 @@ extern const unsigned      kMsgaIconPngSize;
 
 namespace shell {
 
+namespace {
+
+std::string execArgument(std::string_view path) {
+    std::string argument = "\"";
+    for (char c : path) {
+        if (c == '"' || c == '`' || c == '$' || c == '\\')
+            argument += '\\';
+        argument += c;
+    }
+    argument += '"';
+    std::string out;
+    for (char c : argument) {
+        if (c == '\\') out += "\\\\";
+        else if (c == '%') out += "%%";
+        else out += c;
+    }
+    return out;
+}
+
+} // namespace
+
 std::string desktopEntry(const std::string &exePath, const std::string &icon) {
-    const std::string exec =
-        exePath.find(' ') != std::string::npos ? str::concat({"\"", exePath, "\""}) : exePath;
+    const std::string exec = execArgument(exePath);
     // The template is gfx/msga.desktop.
     return str::concat({
         "[Desktop Entry]\n"

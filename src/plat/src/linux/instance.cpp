@@ -110,8 +110,9 @@ bool privateDir(const std::string &dir) {
 
 bool isOurDir(const char *dir) {
     struct stat st{};
-    return dir && dir[0] == '/' && stat(dir, &st) == 0 && S_ISDIR(st.st_mode) &&
-           st.st_uid == getuid();
+    return dir && dir[0] == '/' && lstat(dir, &st) == 0 && S_ISDIR(st.st_mode) &&
+           st.st_uid == getuid() && (st.st_mode & 077) == 0 &&
+           access(dir, W_OK | X_OK) == 0;
 }
 
 std::string socketDir() {

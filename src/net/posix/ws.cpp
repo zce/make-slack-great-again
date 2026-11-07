@@ -8,6 +8,7 @@
 #include "base/crypto.h"
 #include "base/str.h"
 #include "net/posix/posix.h"
+#include "net/posix/proxy.h"
 #include "net/transport.h"
 
 #include <cerrno>
@@ -179,9 +180,12 @@ bool PosixWs::connect(
         *error = "connect: no pipe";
         return false;
     }
+    const Proxy proxy = proxyFor(url);
     _stream = std::make_unique<Stream>();
-    if (!_stream->open(url, w, error))
+    if (!_stream->open(url, proxy, w, error))
         return false;
+    const std::string requestTarget =
+        proxy.kind == Proxy::Kind::Http && !url.secure() ? url.str() : url.target;
 
     uint8_t nonce[16];
     crypto::randomBytes(nonce, sizeof nonce);
@@ -189,7 +193,7 @@ bool PosixWs::connect(
         crypto::base64(std::string_view(reinterpret_cast<const char *>(nonce), sizeof nonce));
     std::string req = str::concat(
         {"GET ",
-         url.target,
+         requestTarget,
          " HTTP/1.1\r\nHost: ",
          url.authority(),
          "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"

@@ -366,8 +366,9 @@ Outcome exchange(
     return keep && body.pos == buf.size() ? Outcome::Kept : Outcome::Done;
 }
 
-std::string requestHead(const Url &url, const Request &req) {
-    std::string head = str::concat({req.method, " ", url.target, " HTTP/1.1\r\n"});
+std::string requestHead(const Url &url, const Request &req, bool absoluteForm) {
+    const std::string target = absoluteForm ? url.str() : url.target;
+    std::string head = str::concat({req.method, " ", target, " HTTP/1.1\r\n"});
     bool        host = false, conn = false, length = false;
     for (const auto &h : req.headers) {
         host   = host || iequals(h.name, "host");
@@ -426,8 +427,12 @@ void perform(
     w.cancel               = &cancel.flag();
     w.wakeFd               = int(cancel.os()); // -1 without one: sliced waits
     w.deadline             = req.timeoutMs > 0 ? nowMs() + req.timeoutMs : 0;
-    const std::string key  = str::concat({url.scheme, "://", url.host, ":", str::number(url.port), "|", proxyFor(url).key()});
-    const std::string head = requestHead(url, req);
+    const Proxy proxy = proxyFor(url);
+    const std::string key = str::concat({
+        url.scheme, "://", url.host, ":", str::number(url.port), "|", proxy.key()
+    });
+    const bool absoluteForm = proxy.kind == Proxy::Kind::Http && !url.secure();
+    const std::string head = requestHead(url, req, absoluteForm);
     std::string       error;
     // A kept-alive connection the server has meanwhile dropped fails before
     // a byte of the answer arrives: then once more on a fresh one.
@@ -436,7 +441,7 @@ void perform(
         const bool              reused = s != nullptr;
         if (!s) {
             s = std::make_unique<Stream>();
-            if (!s->open(url, w, &error))
+            if (!s->open(url, proxy, w, &error))
                 break;
         }
         resp                     = Response();

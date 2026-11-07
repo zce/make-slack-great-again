@@ -66,9 +66,12 @@ TEST("desktop entry: the launcher earlier versions installed") {
     CHECK(e.find("StartupWMClass=msga\n") != std::string::npos);
     CHECK(e.find("MimeType=x-scheme-handler/msga;x-scheme-handler/slack;\n") != std::string::npos);
     CHECK(
-        shell::desktopEntry("/usr/bin/msga", "msga").find("Exec=/usr/bin/msga %u\n") !=
+        shell::desktopEntry("/usr/bin/msga", "msga").find("Exec=\"/usr/bin/msga\" %u\n") !=
         std::string::npos
     );
+    const std::string escaped = shell::desktopEntry("/opt/50% \\tools/\"msga\"", "msga");
+    const std::string expected = R"(Exec="/opt/50%% \\\\tools/\\"msga\\"" %u)" "\n";
+    CHECK(escaped.find(expected) != std::string::npos);
 #ifdef __linux__
     plat::App        &pa   = app().platform();
     const std::string data = pa.standardDir(plat::StandardDir::Data);

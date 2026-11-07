@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace net::detail {
 
@@ -23,6 +24,22 @@ struct Proxy {
     // after the effective proxy changes.
     std::string key() const;
 };
+
+// Parsed once per process from the GNOME session. Kept separate from the
+// command invocation so selection can be tested without a live desktop bus.
+struct GnomeSettings {
+    std::string mode;
+    bool same = false;
+    std::string httpHost, httpsHost, socksHost;
+    int httpPort = 0, httpsPort = 0, socksPort = 0;
+    std::string ignore;
+    std::string error;
+};
+
+GnomeSettings parseGnomeSettings(
+    std::string_view output, bool started, bool timedOut, int exitCode
+);
+Proxy gnomeProxyFor(const Url &target, const GnomeSettings &settings);
 
 Proxy proxyFor(const Url &target);
 

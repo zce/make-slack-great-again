@@ -350,8 +350,7 @@ Stream::~Stream() {
     g_liveStreams.fetch_sub(1, std::memory_order_release);
 }
 
-bool Stream::open(const Url &url, const Waiter &w, std::string *error) {
-    const Proxy proxy = proxyFor(url);
+bool Stream::open(const Url &url, const Proxy &proxy, const Waiter &w, std::string *error) {
     if (proxy.kind == Proxy::Kind::Invalid) {
         *error = proxy.error;
         return false;
@@ -386,7 +385,11 @@ bool Stream::open(const Url &url, const Waiter &w, std::string *error) {
             dnsForget(str::concat({peer.host, ":", str::number(peer.port)}));
         return false;
     }
-    if (proxy.kind != Proxy::Kind::Direct && !proxyTunnel(_fd, url, proxy, w, error))
+    // HTTP proxies use forward-proxy request targets for HTTP/WS. CONNECT is
+    // reserved for secure destinations; SOCKS5 tunnels every destination.
+    if ((proxy.kind == Proxy::Kind::Socks5 ||
+         (proxy.kind == Proxy::Kind::Http && url.secure())) &&
+        !proxyTunnel(_fd, url, proxy, w, error))
         return false;
     if (!url.secure())
         return true;

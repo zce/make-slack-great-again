@@ -80,7 +80,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path).path
         q = self.query()
-        if path == '/plain':
+        if path == '/request-target':
+            # A forward proxy must receive the full absolute URI, not only
+            # the origin-form path (and must not receive CONNECT for HTTP).
+            self.send_body(self.path)
+        elif path == '/plain':
             self.send_body('hello world')
         elif path == '/headers':  # the request's headers as JSON
             self.send_body(json.dumps(self.echo_headers()), ctype='application/json')

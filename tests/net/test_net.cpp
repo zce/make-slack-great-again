@@ -463,10 +463,90 @@ TEST("proxy: environment precedence, bypass and invalid settings") {
     CHECK(net::detail::proxyFor(https).kind == Kind::Direct);
     base::test::setEnv("NO_PROXY", "fake-slack.com");
     CHECK(net::detail::proxyFor(https).kind == Kind::Http);
+    // Lowercase wins over uppercase; an empty path is a valid proxy URI and
+    // receives the scheme's default port.
+    base::test::setEnv("HTTP_PROXY", "http://upper:8080");
+    base::test::setEnv("http_proxy", "http://lower/");
+    p = net::detail::proxyFor(http);
+    CHECK_STR(p.host, "lower");
+    CHECK(p.port == 80);
+
+    base::test::unsetEnv("https_proxy");
+    base::test::unsetEnv("HTTPS_PROXY");
+    base::test::setEnv("ALL_PROXY", "socks5://localhost/");
+    p = net::detail::proxyFor(https);
+    CHECK(p.kind == Kind::Socks5);
+    CHECK(p.port == 1080);
+
+    // NO_PROXY=* is the explicit direct mode and overrides both env and
+    // GNOME settings.
+    base::test::setEnv("NO_PROXY", "*");
+    CHECK(net::detail::proxyFor(https).kind == Kind::Direct);
+
+    // Environment is read for each request, not frozen on first use.
+    base::test::setEnv("NO_PROXY", "");
+    base::test::setEnv("http_proxy", "http://first:8001");
+    p = net::detail::proxyFor(http);
+    CHECK_STR(p.host, "first");
+    base::test::setEnv("http_proxy", "http://second:8002");
+    p = net::detail::proxyFor(http);
+    CHECK_STR(p.host, "second");
+
     base::test::setEnv("https_proxy", "https://localhost:7890");
     p = net::detail::proxyFor(https);
     CHECK(p.kind == Kind::Invalid);
     CHECK(startsWith(p.error, "proxy:"));
+}
+
+TEST("proxy: GNOME settings are explicit and validated") {
+    net::Url https, http, ignored;
+    REQUIRE(https.parse("https://api.example.com/"));
+    REQUIRE(http.parse("http://api.example.com/"));
+    REQUIRE(ignored.parse("https://api.internal.example/"));
+
+    const std::string output =
+        "org.gnome.system.proxy mode 'manual'\n"
+        "org.gnome.system.proxy use-same-proxy false\n"
+        "org.gnome.system.proxy ignore-hosts ['localhost', '.internal.example']\n"
+        "org.gnome.system.proxy.http host '127.0.0.1'\n"
+        "org.gnome.system.proxy.http port 7890\n"
+        "org.gnome.system.proxy.https host '127.0.0.2'\n"
+        "org.gnome.system.proxy.https port 7891\n";
+    const auto settings = net::detail::parseGnomeSettings(output, true, false, 0);
+    auto p = net::detail::gnomeProxyFor(http, settings);
+    CHECK(p.kind == net::detail::Proxy::Kind::Http);
+    CHECK_STR(p.host, "127.0.0.1");
+    CHECK(p.port == 7890);
+    p = net::detail::gnomeProxyFor(https, settings);
+    CHECK(p.kind == net::detail::Proxy::Kind::Http);
+    CHECK_STR(p.host, "127.0.0.2");
+    CHECK(p.port == 7891);
+    CHECK(net::detail::gnomeProxyFor(ignored, settings).kind ==
+          net::detail::Proxy::Kind::Direct);
+
+    const auto none = net::detail::parseGnomeSettings(
+        "org.gnome.system.proxy mode 'none'\n", true, false, 0
+    );
+    CHECK(net::detail::gnomeProxyFor(https, none).kind ==
+          net::detail::Proxy::Kind::Direct);
+    const auto automatic = net::detail::parseGnomeSettings(
+        "org.gnome.system.proxy mode 'auto'\n", true, false, 0
+    );
+    p = net::detail::gnomeProxyFor(https, automatic);
+    CHECK(p.kind == net::detail::Proxy::Kind::Invalid);
+    CHECK(contains(p.error, "PAC/WPAD"));
+    const auto failed = net::detail::parseGnomeSettings({}, false, false, -1);
+    CHECK(net::detail::gnomeProxyFor(https, failed).kind ==
+          net::detail::Proxy::Kind::Invalid);
+}
+
+TEST("proxy: unavailable endpoint is an error, not a direct fallback") {
+    ProxyEnvGuard guard;
+    const int port = net::freeLoopbackPort();
+    base::test::setEnv("ALL_PROXY", "http://127.0.0.1:" + std::to_string(port));
+    const auto response = get("http://proxy-target.invalid/plain");
+    CHECK(response.status == 0);
+    CHECK(startsWith(response.error, "connect:"));
 }
 
 TEST("proxy: HTTP CONNECT tunnel handshake and rejection") {
@@ -627,6 +707,17 @@ TEST("loopback port") {
 #define NEED_SERVER()                                                                              \
     const Server &srv = server();                                                                  \
     REQUIRE(!srv.base.empty())
+#endif
+
+#ifdef NET_TEST_POSIX
+TEST("proxy: HTTP forward requests use absolute-form and do not CONNECT") {
+    NEED_SERVER();
+    ProxyEnvGuard guard;
+    base::test::setEnv("ALL_PROXY", srv.base);
+    const auto response = get("http://proxy-target.invalid/request-target");
+    CHECK(response.status == 200);
+    CHECK_STR(response.body, "http://proxy-target.invalid/request-target");
+}
 #endif
 
 TEST("http: content-length body") {
@@ -1340,6 +1431,17 @@ TEST("ws: text and binary echo") {
     CHECK(p.texts[2] == std::string(300, 'k'));
     CHECK_STR(p.texts[3], "");
     CHECK_FALSE(p.closed);
+}
+
+TEST("ws: HTTP proxy uses absolute-form without CONNECT") {
+    NEED_SERVER();
+    ProxyEnvGuard guard;
+    base::test::setEnv("ALL_PROXY", srv.base);
+    WsProbe p;
+    REQUIRE(p.open("ws://proxy-target.invalid/ws"));
+    p.ws.sendText("through proxy");
+    REQUIRE(p.waitTexts(1));
+    CHECK_STR(p.texts[0], "through proxy");
 }
 
 TEST("ws: upgrade carries the caller's headers") {

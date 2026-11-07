@@ -4,17 +4,19 @@
 // proxy environment variable applies; no background service is introduced.
 #include "net/posix/proxy.h"
 
+#include "base/process.h"
 #include "base/str.h"
 #include "net/posix/posix.h"
 
 #include <arpa/inet.h>
 #include <algorithm>
+#include <charconv>
 #include <cctype>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <poll.h>
 #include <string_view>
+#include <utility>
 
 namespace net::detail {
 namespace {
@@ -33,55 +35,53 @@ std::string_view unquote(std::string_view value) {
     return value;
 }
 
-struct Gnome {
-    std::string mode;
-    bool same = false;
-    std::string httpHost, httpsHost, socksHost;
-    int httpPort = 0, httpsPort = 0, socksPort = 0;
-    std::string ignore;
-};
+Proxy invalid(std::string message) {
+    Proxy p;
+    p.kind = Proxy::Kind::Invalid;
+    p.error = std::move(message);
+    return p;
+}
 
-// Reading once keeps the network workers independent of GIO/DBus and avoids
-// starting a command for each request. Like environment changes, GNOME proxy
-// changes take effect after restarting MSGA.
-const Gnome &gnome() {
-    static const Gnome value = [] {
-        Gnome g;
-        FILE *p = popen("gsettings list-recursively org.gnome.system.proxy 2>/dev/null", "r");
-        if (!p)
-            return g;
-        char line[4096];
-        while (std::fgets(line, sizeof line, p)) {
-            const std::string_view s = str::trim(line);
-            const size_t a = s.find(' '), b = a == s.npos ? s.npos : s.find(' ', a + 1);
-            if (b == s.npos)
-                continue;
-            const std::string_view schema = s.substr(0, a);
-            const std::string_view key = s.substr(a + 1, b - a - 1);
-            const std::string_view raw = str::trim(s.substr(b + 1));
-            const std::string value(unquote(raw));
-            if (schema == "org.gnome.system.proxy") {
-                if (key == "mode") g.mode = value;
-                else if (key == "use-same-proxy") g.same = raw == "true";
-                else if (key == "ignore-hosts") g.ignore = value;
-            } else {
-                std::string *host = nullptr;
-                int *port = nullptr;
-                if (schema == "org.gnome.system.proxy.http") {
-                    host = &g.httpHost; port = &g.httpPort;
-                } else if (schema == "org.gnome.system.proxy.https") {
-                    host = &g.httpsHost; port = &g.httpsPort;
-                } else if (schema == "org.gnome.system.proxy.socks") {
-                    host = &g.socksHost; port = &g.socksPort;
-                }
-                if (!host)
-                    continue;
-                if (key == "host") *host = value;
-                else if (key == "port") *port = std::atoi(value.c_str());
-            }
+bool isGnomeSession() {
+    for (const char *name : {"XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP",
+                             "DESKTOP_SESSION", "GDMSESSION"}) {
+        const std::string value = str::asciiLower(base::env(name));
+        size_t start = 0;
+        while (start < value.size()) {
+            const size_t end = value.find(':', start);
+            const std::string_view item(
+                value.data() + start,
+                (end == std::string::npos ? value.size() : end) - start
+            );
+            if (item == "gnome" || item.starts_with("gnome-"))
+                return true;
+            if (end == std::string::npos)
+                break;
+            start = end + 1;
         }
-        pclose(p);
-        return g;
+    }
+    return false;
+}
+
+// Read GNOME settings once without a shell or an unbounded popen(). Environment
+// variables remain dynamic per request; changing GSettings requires a restart.
+const GnomeSettings &gnome() {
+    static const GnomeSettings value = [] {
+        GnomeSettings settings;
+        if (base::testProcess() || !isGnomeSession()) {
+            settings.mode = "none";
+            return settings;
+        }
+        const std::string executable = base::findExecutable("gsettings");
+        if (executable.empty())
+            return parseGnomeSettings({}, false, false, -1);
+        base::RunOptions options;
+        options.timeoutMs = 1500;
+        options.mergeStderr = false;
+        const base::RunResult result = base::run(
+            executable, {"list-recursively", "org.gnome.system.proxy"}, options
+        );
+        return parseGnomeSettings(result.output, result.started, result.timedOut, result.code);
     }();
     return value;
 }
@@ -174,73 +174,60 @@ bool bypasses(const Url &target, std::string_view rules) {
 }
 
 Proxy parseProxy(std::string_view raw) {
-    Proxy p;
+    raw = str::trim(raw);
     const size_t schemeEnd = raw.find("://");
-    std::string_view scheme = "http", authority = raw;
+    std::string scheme = "http";
+    std::string authority(raw);
     if (schemeEnd != raw.npos) {
-        scheme = raw.substr(0, schemeEnd);
-        authority = raw.substr(schemeEnd + 3);
+        scheme = str::asciiLower(raw.substr(0, schemeEnd));
+        authority = std::string(raw.substr(schemeEnd + 3));
     }
-    scheme = str::trim(scheme);
-    if (scheme == "http")
-        p.kind = Proxy::Kind::Http;
-    else if (scheme == "socks5" || scheme == "socks5h")
-        p.kind = Proxy::Kind::Socks5;
-    else {
-        p.kind = Proxy::Kind::Invalid;
-        p.error = "proxy: unsupported scheme";
-        return p;
-    }
-    // Deliberately do not drop credentials and accidentally connect without
-    // authentication. Local Mihomo HTTP/SOCKS5 endpoints need no credentials.
-    if (authority.find('@') != authority.npos || authority.find('/') != authority.npos ||
-        authority.find('?') != authority.npos || authority.find('#') != authority.npos) {
-        p.kind = Proxy::Kind::Invalid;
-        p.error = "proxy: credentials or URL path not supported";
-        return p;
-    }
-    Url u;
-    if (!u.parse(std::string("http://") + std::string(authority)) ||
-        u.host.empty() || (u.port == 80 && authority.find(':') == authority.npos)) {
-        p.kind = Proxy::Kind::Invalid;
-        p.error = "proxy: invalid host or port";
-        return p;
-    }
-    for (unsigned char c : u.host) {
-        if (c <= 0x20 || c == 0x7f) {
-            p.kind = Proxy::Kind::Invalid;
-            p.error = "proxy: invalid hostname";
-            return p;
-        }
-    }
-    p.host = u.host;
-    p.port = u.port;
-    return p;
-}
+    if (scheme != "http" && scheme != "socks5" && scheme != "socks5h")
+        return invalid("proxy: unsupported scheme");
+    const Proxy::Kind kind =
+        scheme == "http" ? Proxy::Kind::Http : Proxy::Kind::Socks5;
 
-Proxy gnomeProxy(const Url &target) {
-    const Gnome &g = gnome();
-    if (g.mode != "manual" || bypasses(target, g.ignore))
-        return {};
-    const bool secure = target.secure();
-    std::string host;
-    int port = 0;
-    if (secure && !g.same && !g.httpsHost.empty() && g.httpsPort > 0) {
-        host = g.httpsHost; port = g.httpsPort;
-    } else if (!g.httpHost.empty() && g.httpPort > 0) {
-        host = g.httpHost; port = g.httpPort;
+    // A trailing slash is the ordinary empty path of a proxy URI.
+    if (authority.ends_with('/'))
+        authority.pop_back();
+    if (authority.empty() || authority.find('@') != std::string::npos ||
+        authority.find('/') != std::string::npos || authority.find('?') != std::string::npos ||
+        authority.find('#') != std::string::npos)
+        return invalid("proxy: credentials or URL path not supported");
+
+    bool explicitPort = false;
+    if (authority.front() == '[') {
+        const size_t close = authority.find(']');
+        if (close == std::string::npos)
+            return invalid("proxy: invalid host or port");
+        if (close + 1 < authority.size()) {
+            if (authority[close + 1] != ':')
+                return invalid("proxy: invalid host or port");
+            explicitPort = true;
+        }
+    } else {
+        const size_t first = authority.find(':'), last = authority.rfind(':');
+        if (first != std::string::npos && first != last)
+            return invalid("proxy: IPv6 proxy addresses must be bracketed");
+        explicitPort = first != std::string::npos;
     }
-    bool socks = false;
-    if (host.empty() && !g.socksHost.empty() && g.socksPort > 0) {
-        host = g.socksHost;
-        port = g.socksPort;
-        socks = true;
-    }
-    if (host.empty())
-        return {};
-    Proxy p = parseProxy(std::string(socks ? "socks5://" : "http://") + host + ":" +
-                         std::to_string(port));
-    return p;
+    if (explicitPort && authority.back() == ':')
+        return invalid("proxy: invalid host or port");
+
+    Url url;
+    if (!url.parse("http://" + authority) || url.host.empty())
+        return invalid("proxy: invalid host or port");
+    for (unsigned char c : url.host)
+        if (c <= 0x20 || c == 0x7f)
+            return invalid("proxy: invalid hostname");
+
+    Proxy proxy;
+    proxy.kind = kind;
+    proxy.host = url.host;
+    proxy.port = explicitPort ? url.port : (kind == Proxy::Kind::Http ? 80 : 1080);
+    if (proxy.port < 1 || proxy.port > 65535)
+        return invalid("proxy: invalid host or port");
+    return proxy;
 }
 
 bool sendAll(int fd, std::string_view data, const Waiter &w, std::string *error) {
@@ -378,7 +365,136 @@ bool socksTunnel(int fd, const Url &url, const Waiter &w, std::string *error) {
 
 } // namespace
 
+GnomeSettings parseGnomeSettings(
+    std::string_view output, bool started, bool timedOut, int exitCode
+) {
+    GnomeSettings settings;
+    if (!started) {
+        settings.error = "proxy: GNOME gsettings is unavailable";
+        return settings;
+    }
+    if (timedOut) {
+        settings.error = "proxy: GNOME gsettings query timed out";
+        return settings;
+    }
+    if (exitCode != 0) {
+        settings.error = "proxy: GNOME gsettings query failed (exit " +
+                         std::to_string(exitCode) + ")";
+        return settings;
+    }
+
+    auto parsePort = [&](std::string_view raw, int *port) {
+        raw = unquote(raw);
+        int value = 0;
+        const auto [end, ec] = std::from_chars(raw.data(), raw.data() + raw.size(), value);
+        if (raw.empty() || ec != std::errc{} || end != raw.data() + raw.size() ||
+            value < 0 || value > 65535) {
+            settings.error = "proxy: invalid GNOME proxy port";
+            return false;
+        }
+        *port = value;
+        return true;
+    };
+
+    size_t start = 0;
+    while (start < output.size()) {
+        const size_t end = output.find('\n', start);
+        const std::string_view line = str::trim(output.substr(
+            start, (end == std::string_view::npos ? output.size() : end) - start
+        ));
+        if (!line.empty()) {
+            const size_t a = line.find(' ');
+            const size_t b = a == line.npos ? line.npos : line.find(' ', a + 1);
+            if (b != line.npos) {
+                const std::string_view schema = line.substr(0, a);
+                const std::string_view key = line.substr(a + 1, b - a - 1);
+                const std::string_view raw = str::trim(line.substr(b + 1));
+                const std::string value(unquote(raw));
+                if (schema == "org.gnome.system.proxy") {
+                    if (key == "mode")
+                        settings.mode = value;
+                    else if (key == "use-same-proxy") {
+                        if (raw == "true")
+                            settings.same = true;
+                        else if (raw == "false")
+                            settings.same = false;
+                        else {
+                            settings.error = "proxy: invalid GNOME use-same-proxy setting";
+                            return settings;
+                        }
+                    } else if (key == "ignore-hosts") {
+                        settings.ignore = value;
+                    }
+                } else {
+                    std::string *host = nullptr;
+                    int *port = nullptr;
+                    if (schema == "org.gnome.system.proxy.http") {
+                        host = &settings.httpHost;
+                        port = &settings.httpPort;
+                    } else if (schema == "org.gnome.system.proxy.https") {
+                        host = &settings.httpsHost;
+                        port = &settings.httpsPort;
+                    } else if (schema == "org.gnome.system.proxy.socks") {
+                        host = &settings.socksHost;
+                        port = &settings.socksPort;
+                    }
+                    if (host) {
+                        if (key == "host")
+                            *host = value;
+                        else if (key == "port" && !parsePort(raw, port))
+                            return settings;
+                    }
+                }
+            }
+        }
+        if (end == std::string_view::npos)
+            break;
+        start = end + 1;
+    }
+    if (settings.mode.empty())
+        settings.error = "proxy: GNOME proxy mode unavailable";
+    return settings;
+}
+
+Proxy gnomeProxyFor(const Url &target, const GnomeSettings &settings) {
+    if (!settings.error.empty())
+        return invalid(settings.error);
+    if (settings.mode == "none")
+        return {};
+    if (settings.mode == "auto")
+        return invalid("proxy: GNOME automatic proxy mode (PAC/WPAD) is not supported");
+    if (settings.mode != "manual")
+        return invalid("proxy: unsupported GNOME proxy mode");
+    if (bypasses(target, settings.ignore))
+        return {};
+
+    std::string host;
+    int port = 0;
+    bool socks = false;
+    if (target.secure() && !settings.same && !settings.httpsHost.empty()) {
+        host = settings.httpsHost;
+        port = settings.httpsPort;
+    } else if (!settings.httpHost.empty()) {
+        host = settings.httpHost;
+        port = settings.httpPort;
+    }
+    if (host.empty() && !settings.socksHost.empty()) {
+        host = settings.socksHost;
+        port = settings.socksPort;
+        socks = true;
+    }
+    if (host.empty())
+        return invalid("proxy: GNOME manual mode has no endpoint for this protocol");
+    if (port < 1 || port > 65535)
+        return invalid("proxy: invalid GNOME proxy port");
+    if (host.find(':') != std::string::npos && !host.starts_with("["))
+        host = "[" + host + "]";
+    return parseProxy(std::string(socks ? "socks5h://" : "http://") + host + ":" +
+                      std::to_string(port));
+}
+
 std::string Proxy::key() const {
+
     if (kind == Kind::Direct) return "direct";
     return std::to_string(int(kind)) + "://" + host + ":" + std::to_string(port);
 }
@@ -394,7 +510,7 @@ Proxy proxyFor(const Url &target) {
         value = env("all_proxy", "ALL_PROXY");
     if (value)
         return parseProxy(value);
-    return gnomeProxy(target);
+    return gnomeProxyFor(target, gnome());
 }
 
 bool proxyTunnel(
