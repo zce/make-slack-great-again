@@ -509,6 +509,10 @@ msgid "Add reaction"
 msgstr "リアクションを追加"
 
 #: src/app/screens/messages/message_list.cpp
+msgid "Reply in thread"
+msgstr "スレッドで返信"
+
+#: src/app/screens/messages/message_list.cpp
 msgid "Forward message"
 msgstr "メッセージを転送"
 
@@ -555,10 +559,6 @@ msgstr "Slack はサードパーティ製アプリからこの種類のボット
 #: src/app/screens/messages/message_list.cpp
 msgid "Couldn't press the button: %1"
 msgstr "ボタンを押せませんでした: %1"
-
-#: src/app/screens/messages/message_list.cpp
-msgid "Reply in thread"
-msgstr "スレッドで返信"
 
 #: src/app/screens/messages/message_list.cpp
 msgid "Open thread"
