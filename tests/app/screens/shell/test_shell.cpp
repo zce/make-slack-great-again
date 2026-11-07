@@ -920,11 +920,11 @@ TEST("sections: the conversation and section header menus") {
     CHECK_STR(labels(m.sectionItems("", {})), "Create a section…" + sort);
     CHECK(
         labels(m.sectionItems("", {}, std::pair{true, false}, false))
-            .ends_with("|Show unread conversations when collapsed")
+            .ends_with("|Show unread when collapsed")
     );
     CHECK(
         labels(m.sectionItems("", {}, std::pair{true, false}, true))
-            .ends_with("|Show unread conversations when collapsed(on)")
+            .ends_with("|Show unread when collapsed(on)")
     );
     CHECK_STR(
         labels(m.sectionItems("", {}, std::pair{true, false})),
