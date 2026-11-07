@@ -510,6 +510,19 @@ TEST("slack realtime: contention raises the parallel-usage notice once") {
     CHECK(e.parallel == 1);
 }
 
+TEST("slack realtime: the session DM activity sweep reconciles unread counts") {
+    if (!haveServer())
+        return;
+    Env e(true, false); // session auth: no client.counts or Socket Mode
+    REQUIRE(e.connect());
+    const ConvRef dm = e.conv("D1");
+    REQUIRE(dm != kNoConv);
+    REQUIRE(pumpUntil([&] { return count("conversations.info") > 0; }, 5000));
+    REQUIRE(pumpUntil([&] { return e.store.conversation(dm).unread == 4; }, 5000));
+    CHECK(e.store.conversation(dm).mentions == 4);
+    CHECK(e.store.conversation(dm).lastRead == model::parseTs("1700000000.000000"));
+}
+
 TEST("slack realtime: a reconnect backfills the roster and the DM badges") {
     if (!haveServer())
         return;
