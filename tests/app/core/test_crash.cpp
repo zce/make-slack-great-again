@@ -42,7 +42,7 @@ TEST("crash: crash.log lives in the data directory") {
     auto app = plat::App::create();
     REQUIRE(app);
     const std::string data = app->standardDir(plat::StandardDir::Data);
-    CHECK_STR(identity::crashLogPath(*app), file::join(data, "msga/MSGA/crash.log"));
+    CHECK_STR(identity::crashLogPath(*app), file::join(data, "msga/crash.log"));
 }
 
 TEST("crash: a crash appends a report with its signal and stack to crash.log") {
@@ -135,7 +135,7 @@ BASE_TEST_SUITE_MAIN(argc, argv) {
     const std::string dir = base::test::makeTempDir("msga-crash-test-");
     if (dir.empty())
         return 1;
-    g_log = dir + "/msga/MSGA/crash.log";
+    g_log = dir + "/msga/crash.log";
     crash::install(g_log);
     const int rc = base::test::runSuite(argc, argv);
     base::test::removeTree(dir);
