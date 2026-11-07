@@ -59,6 +59,7 @@ public:
     void loginWithAppKeys();
     // A msga:// URL from the OS (the OAuth callback). True if consumed.
     bool handleUrl(std::string_view url);
+    void cancelPendingLink(); // a later in-app navigation replaces an unresolved external link
     // plat's NetworkChanged: the shared Socket Mode socket reconnects when
     // the network comes back.
     void networkChanged(bool online);

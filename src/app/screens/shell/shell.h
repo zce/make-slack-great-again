@@ -90,6 +90,9 @@ public:
     ui::View *workspaceSwitcher() const { return _workspaceSwitch; } // compact footer
     // A click on a tile or its tray item, and a drop that reordered the rail.
     std::function<void(const std::string &key)>               onSwitchWorkspace;
+    // An explicit destination supersedes any unresolved external deep link.
+    std::function<void()> onNavigation;
+
     std::function<void(const std::vector<std::string> &keys)> onReorderWorkspaces;
     // Settings → System → Slack connection (the accounts controller's).
     std::function<void()> onImportSlackSession, onConvertToSession;
@@ -146,7 +149,7 @@ public:
 
     // Navigation (also wired into the Context).
     void           open(model::ConvRef conv);
-    void           openThread(model::ConvRef conv, model::Ts root);
+    void           openThread(model::ConvRef conv, model::Ts root, model::Ts jumpTarget = 0);
     void           closeThread();
     // Before the Store is cleared for another workspace (Accounts::activate):
     // the open chat, thread and teammate page are left (drafts stashed), so

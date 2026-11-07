@@ -310,8 +310,11 @@ void Accounts::tryOpenLink() {
     if (_nativeLink.valid()) {
         if (_nativeLink.kind == mrkdwn::NativeLinkKind::Channel) {
             const model::ConvRef conv = store.findConversation(_nativeLink.id);
-            if (conv == model::kNoConv)
-                return; // The initial roster may still be loading.
+            if (conv == model::kNoConv) {
+                if (_active->live)
+                    clearLink(); // The complete roster has no such conversation.
+                return;
+            }
             if (!store.conversation(conv).member) {
                 if (!_active->live)
                     return;
@@ -327,8 +330,11 @@ void Accounts::tryOpenLink() {
                 _shell.open(conv);
         } else if (_nativeLink.kind == mrkdwn::NativeLinkKind::User) {
             const model::UserRef user = store.findUser(_nativeLink.id);
-            if (user == model::kNoUser)
-                return; // User roster not loaded yet.
+            if (user == model::kNoUser) {
+                if (_active->live)
+                    clearLink(); // The complete user roster has no such user.
+                return;
+            }
             clearLink();
             if (_ctx.messageUser)
                 _ctx.messageUser(user); // Existing DM creation/opening flow.
@@ -337,8 +343,11 @@ void Accounts::tryOpenLink() {
     }
 
     const model::ConvRef conv = store.findConversation(_link.conv);
-    if (conv == model::kNoConv)
-        return; // The initial roster may still be loading.
+    if (conv == model::kNoConv) {
+        if (_active->live)
+            clearLink(); // The complete roster has no such conversation.
+        return;
+    }
     if (!store.conversation(conv).member) {
         if (!_active->live)
             return; // A placeholder can precede the first full roster.
@@ -361,10 +370,11 @@ bool Accounts::handleUrl(std::string_view url) {
     const mrkdwn::NativeLink native = mrkdwn::parseNativeLink(url);
     // Passing an ordinary Slack permalink on the command line should work
     // without a conversion to msga://. No global HTTPS handler is installed.
+    const bool https =
+        url.size() >= 8 && str::iequals(url.substr(0, 8), "https://");
     const mrkdwn::MessageRef ref =
         native.valid() ? mrkdwn::MessageRef{} :
-        str::startsWith(url, "https://") ? mrkdwn::parseMessageLink(url) :
-                                           mrkdwn::parseAppLink(url);
+        https ? mrkdwn::parseMessageLink(url) : mrkdwn::parseAppLink(url);
     if (!native.valid() &&
         (!ref.valid() || !model::parseTs(ref.ts) ||
          (!ref.threadTs.empty() && !model::parseTs(ref.threadTs))))
@@ -436,15 +446,16 @@ bool Accounts::handleUrl(std::string_view url) {
         activate(key);
         return _active && _activeKey == key;
     }
+
+    // Activate first: restoring the workspace's previous conversation is not
+    // a user navigation that should cancel the new external destination.
+    activate(key);
+    Running *r = find(key);
+    if (!r || r != _active)
+        return false;
     _link = ref;
     _nativeLink = native;
     _linkKey = key;
-    activate(key);
-    Running *r = find(key);
-    if (!r || r != _active) {
-        clearLink();
-        return false;
-    }
     _linkStore = &r->store;
     _linkObserver = r->store.observe(model::Store::kAnyConv, [this](const model::Change &change) {
         if (change.kind == model::ChangeKind::Roster ||
@@ -686,17 +697,26 @@ void Accounts::connect(uint64_t serial) {
             }
             fetchIcon(*r);
             const bool first = !r->live;
-            r->live          = true;
+            const bool pendingLink =
+                r == _active && _linkStore == &r->store && (_link.valid() || _nativeLink.valid());
+            const bool pendingUser =
+                pendingLink && _nativeLink.kind == mrkdwn::NativeLinkKind::User &&
+                r->store.findUser(_nativeLink.id) != model::kNoUser;
+            r->live = true;
             _shell.setWorkspaceLive(r->key, true);
             if (r == _active) {
                 _shell.workspaceChanged();
                 _shell.setLive(true);
-                // A backend that lists its chats only once connected (Claude
-                // Code's first scan runs on a worker) had nothing to restore
-                // when the workspace opened; nothing open yet means do it now.
-                if (first && _shell.current() == model::kNoConv)
+                // A pending external destination takes precedence over restoring
+                // the last chat; otherwise Shell::open would cancel that request.
+                if (first && _shell.current() == model::kNoConv && !pendingLink)
                     restoreLast(*r);
                 tryOpenLink();
+                // If a channel link proved unavailable, fall back to the last
+                // chat instead of leaving a cold workspace on its welcome page.
+                if (first && pendingLink && !pendingUser && _shell.current() == model::kNoConv &&
+                    !_linkStore)
+                    restoreLast(*r);
             }
             return;
         }
@@ -940,8 +960,14 @@ void Accounts::refreshRail() {
 }
 
 void Accounts::switchTo(const std::string &key) {
-    if (key != _activeKey && _store.find(key) && _store.find(key)->service == slack::kService)
+    if (key != _activeKey && _store.find(key) && _store.find(key)->service == slack::kService) {
+        clearLink();
         activate(key);
+    }
+}
+
+void Accounts::cancelPendingLink() {
+    clearLink();
 }
 
 void Accounts::reorder(const std::vector<std::string> &keys) {

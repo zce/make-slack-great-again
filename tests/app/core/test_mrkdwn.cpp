@@ -520,6 +520,28 @@ TEST("mrkdwn: permalink parsing edge cases") {
     CHECK_FALSE(
         mrkdwn::parseMessageLink("ftp://x.slack.com/archives/C1/p1786008939071009").valid()
     );
+    CHECK_FALSE(mrkdwn::parseMessageLink("http://x.slack.com/archives/C1/p1786008939071009").valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink("https://user@x.slack.com/archives/C1/p1786008939071009").valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink("https://x.slack.com:444/archives/C1/p1786008939071009").valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink("https://slack.com/archives/C1/p1786008939071009").valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink("https://x.slack.com/archives/C1//p1786008939071009").valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink("https://x.slack.com/archives/C1/p1786008939071009/").valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink(
+        "https://x.slack.com/archives/C1/p1786008939071009?cid=C2"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink(
+        "https://x.slack.com/archives/C1/p1786008939071009?thread_ts=1786008000.000100&thread_ts=1786008000.000200"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink(
+        "https://x.slack.com/archives/C1/p1786008939071009?thread_ts=1786008000.000100&extra=1"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink(
+        "https://x.slack.com/archives/C1/p1786008939071009?thread_ts=%ZZ"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseMessageLink(
+        "https://x.slack.com/archives/C1/p1786008939071009?thread_ts="
+    ).valid());
+
     CHECK_FALSE(mrkdwn::refFromToken("a/b/c").valid());
 }
 
@@ -827,5 +849,25 @@ TEST("mrkdwn: official Slack native links") {
     CHECK_FALSE(mrkdwn::parseNativeLink("slack://open?team=T1&team=T2").valid());
     CHECK_FALSE(mrkdwn::parseNativeLink("slack://file?team=T1&id=F1").valid());
     CHECK_FALSE(mrkdwn::parseNativeLink("msga://oauth/callback?code=abc").valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&extra=1"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&host=evil.example"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&host=slack.com&host=slack.com"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&message=%ZZ"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&message="
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink(
+        "slack://open?team=T123ABC456&id=C0A4GKEUGGP"
+    ).valid());
+    CHECK_FALSE(mrkdwn::parseNativeLink("slack://channel?team=T1&id=C1&").valid());
+
     CHECK_FALSE(mrkdwn::parseNativeLink("https://slack.com").valid());
 }

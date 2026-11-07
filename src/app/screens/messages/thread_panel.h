@@ -23,7 +23,7 @@ class ThreadPanel : public ui::View {
 public:
     explicit ThreadPanel(Context &ctx);
 
-    void    show(ConvRef conv, Ts root);
+    void    show(ConvRef conv, Ts root, Ts jumpTarget = 0);
     ConvRef conversation() const { return _list->conversation(); }
     Ts      root() const { return _list->threadRoot(); }
 

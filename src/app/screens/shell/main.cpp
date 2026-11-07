@@ -545,6 +545,8 @@ int main(int argc, char **argv) {
             acc.setMuted(key, on);
         };
         sh.onSwitchWorkspace   = [&acc](const std::string &key) { acc.switchTo(key); };
+        sh.onNavigation = [&acc] { acc.cancelPendingLink(); };
+
         sh.onReorderWorkspaces = [&acc](const std::vector<std::string> &keys) {
             acc.reorder(keys);
         };

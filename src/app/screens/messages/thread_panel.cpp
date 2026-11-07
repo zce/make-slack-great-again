@@ -74,11 +74,11 @@ ThreadPanel::ThreadPanel(Context &ctx) : _ctx(ctx) {
     _broadcastRow->setVisible(false);
 }
 
-void ThreadPanel::show(ConvRef conv, Ts root) {
+void ThreadPanel::show(ConvRef conv, Ts root, Ts jumpTarget) {
     // Another thread: the tick was for a reply there.
     if (conv != conversation() || root != this->root())
         _wanted = false;
-    _list->showThread(conv, root);
+    _list->showThread(conv, root, jumpTarget);
     refreshMute();
     refreshBroadcast();
 }

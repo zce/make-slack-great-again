@@ -2231,6 +2231,8 @@ void Shell::workspaceChanged() {
 void Shell::open(ConvRef conv) {
     if (!_signedIn || conv == kNoConv || conv >= _ctx.store().conversationCount())
         return;
+    if (onNavigation)
+        onNavigation();
     leavePages();
     showMessageArea();
     if (conv != _current && threadOpen())
@@ -2525,22 +2527,19 @@ void Shell::typeIntoComposer(const Event &e) {
         c->edit().focus();
 }
 
-void Shell::openThread(ConvRef conv, Ts root) {
+void Shell::openThread(ConvRef conv, Ts root, Ts jumpTarget) {
     if (conv != _current)
         open(conv);
-    _thread->show(conv, root); // stashes the previous thread's draft
+    else if (onNavigation)
+        onNavigation();
+    _thread->show(conv, root, jumpTarget); // stashes the previous thread's draft
 #ifdef MSGA_HAVE_MESSAGES
     // Its reply bar in the list says "Close thread".
     static_cast<screens::MessageList *>(_messages)->setOpenThreadRoot(root);
 #endif
     _thread->setVisible(true); // ThreadBody fits the saved width to the window
     _splitter->setVisible(true);
-#ifdef MSGA_HAVE_MESSAGES
-    // MessageList loads a thread missing from the Store. Refresh here only
-    // when it already has replies, avoiding two competing initial fetches.
-    if (_ctx.store().replies(conv, root))
-        _ctx.backend.loadThread(conv, root, nullptr);
-#else
+#ifndef MSGA_HAVE_MESSAGES
     _ctx.backend.loadThread(conv, root, nullptr);
 #endif
     _ctx.backend.setActiveConversation(conv, root);
@@ -2550,6 +2549,8 @@ void Shell::openThread(ConvRef conv, Ts root) {
 void Shell::closeThread() {
     if (!threadOpen())
         return;
+    if (onNavigation)
+        onNavigation();
     _thread->composer->stashNow();
     static_cast<ThreadBody *>(_thread->parent())->setFull(false);
     _thread->setVisible(false);
@@ -2654,6 +2655,8 @@ void Shell::showPage(Page p) {
     OverviewPage *page = pageView(p);
     if (!page || !_signedIn || !pageAvailable(p))
         return;
+    if (onNavigation)
+        onNavigation();
     for (Page o : {Page::Activity, Page::Threads, Page::Saved, Page::Scheduled})
         if (o != p)
             leavePage(o);
@@ -2752,6 +2755,8 @@ void Shell::buildScheduledPage(View *stack) {
 void Shell::jumpToMessage(ConvRef conv, Ts ts, Ts thread) {
     if (conv == kNoConv || !ts)
         return;
+    if (conv == _current && !thread && onNavigation)
+        onNavigation();
     if (conv != _current)
         open(conv);
     if (conv != _current)
@@ -2762,9 +2767,7 @@ void Shell::jumpToMessage(ConvRef conv, Ts ts, Ts thread) {
         static_cast<screens::MessageList *>(_messages)->jumpTo(ts);
         return;
     }
-    openThread(conv, thread);
-    if (screens::ThreadPanel *p = static_cast<screens::ThreadPanel *>(threadPanel()))
-        p->list().jumpTo(ts);
+    openThread(conv, thread, ts);
 #else
     (void)ts;
     if (thread)

@@ -339,6 +339,7 @@ private:
     ConvRef                    _conv = model::kNoConv;
     Ts                         _root = 0, _markedTs = 0, _flashTs = 0, _jumpTs = 0;
     uint32_t                   _observer  = 0;
+    uint64_t                   _historyLoadGeneration = 0, _threadLoadGeneration = 0;
     plat::TimerId              _edgeTimer = 0, _flashTimer = 0, _usersTimer = 0;
     // The Store revisions the rows were last bound against (usersChanged).
     const model::Store        *_seenStore   = nullptr;
@@ -346,7 +347,8 @@ private:
     int                        _rowBinds  = 0;
     uint32_t                   _bodyEpoch = 0;
     MessageRow                *_rows = nullptr; // every message row (live, kept, spare), linked
-    bool                       _loadingOlder = false, _loadingThread = false, _waiting = false;
+    bool                       _loadingOlder = false, _loadingThread = false;
+    bool                       _threadLoadPending = false, _waiting = false;
     // Selection.
     TextPos                    _selAnchor, _selFocus;
     bool                       _selDragging = false;

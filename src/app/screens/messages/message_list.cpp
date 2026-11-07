@@ -729,10 +729,15 @@ void MessageList::clear() {
     if (_observer)
         _ctx.store.unobserve(_observer);
     _observer = 0;
-    _conv     = model::kNoConv;
-    _root     = 0;
-    _jumpTs   = 0;
-    _unreadJump = false;
+    ++_historyLoadGeneration;
+    ++_threadLoadGeneration;
+    _conv               = model::kNoConv;
+    _root               = 0;
+    _jumpTs             = 0;
+    _loadingOlder       = false;
+    _loadingThread      = false;
+    _threadLoadPending  = false;
+    _unreadJump         = false;
     hideToolbar();
     _items.clear();
     resetRows();
@@ -748,11 +753,15 @@ void MessageList::showConversation(ConvRef conv) {
     stopDragScroll();
     if (conv != _conv)
         _inlineThreads.clear();
-    _conv         = conv;
-    _root         = 0;
-    _markedTs     = 0;
-    _jumpTs       = 0;
-    _loadingOlder = false;
+    ++_historyLoadGeneration;
+    ++_threadLoadGeneration;
+    _conv              = conv;
+    _root              = 0;
+    _markedTs          = 0;
+    _jumpTs            = 0;
+    _loadingOlder      = false;
+    _loadingThread     = false;
+    _threadLoadPending = false;
     // Where to land: where it was left, else its first unread
     // (switching away and back never jumps the view).
     _openPending  = conv != model::kNoConv;
@@ -777,40 +786,59 @@ void MessageList::showConversation(ConvRef conv) {
     scheduleEdgeCheck();
 }
 
-void MessageList::showThread(ConvRef conv, Ts root) {
+void MessageList::showThread(ConvRef conv, Ts root, Ts jumpTarget) {
     hideToolbar();
     saveAnchor();
     _selAnchor = _selFocus = {};
     _selDragging           = false;
     stopDragScroll();
-    _openPending   = false;
-    _conv          = conv;
-    _root          = root;
-    _jumpTs        = 0;
-    _unreadJump    = false;
-    _loadingThread = false;
+    ++_historyLoadGeneration;
+    ++_threadLoadGeneration;
+    _loadingOlder = false;
+    _openPending = false;
+    _conv = conv;
+    _root = root;
+    _jumpTs = jumpTarget;
+    _unreadJump = false;
+    const bool haveReplies =
+        conv != model::kNoConv && _ctx.store().replies(conv, root) != nullptr;
+    _loadingThread = conv != model::kNoConv && !haveReplies;
+    _threadLoadPending = conv != model::kNoConv;
+
     // A thread reads from its root down; a short one sits at the top.
     _list->setBottomAligned(false);
     rebuild(false);
     resetRows();
     subscribe();
     updateTyping();
-    if (conv != model::kNoConv && !_ctx.store().replies(conv, root)) {
-        // The ring shows, not the root, until the thread's page is in.
-        _loadingThread = true;
-        rebuild(false);
-        resetRows();
+    applyJump(); // A cached exact target can be shown without waiting for refresh.
+
+    if (_threadLoadPending) {
+        const uint64_t generation = _threadLoadGeneration;
         std::weak_ptr<char> alive = _alive;
-        _ctx.backend.loadThread(conv, root, [this, alive, conv, root](bool, const std::string &) {
-            if (alive.expired() || !_loadingThread || conv != _conv || root != _root)
-                return;
-            _loadingThread = false;
-            rebuild(false);
-            resetRows();
-            // Replies may have arrived while the loading state deliberately
-            // hid every row. Resolve the permalink target only now.
-            applyJump();
-        });
+        _ctx.backend.loadThread(
+            conv,
+            root,
+            [this, alive, conv, root, generation](bool, const std::string &) {
+                if (alive.expired() || generation != _threadLoadGeneration ||
+                    conv != _conv || root != _root)
+                    return;
+                const bool wasLoading = _loadingThread;
+                _threadLoadPending = false;
+                _loadingThread = false;
+                if (wasLoading) {
+                    rebuild(false);
+                    resetRows();
+                }
+                // A completed refresh is authoritative: if it did not bring
+                // the requested reply, do not let a later unrelated update
+                // trigger this old jump.
+                if (!applyJump())
+                    _jumpTs = 0;
+                updateState();
+                scheduleEdgeCheck();
+            }
+        );
     }
     updateState();
 }
@@ -1312,27 +1340,40 @@ void MessageList::checkEdges() {
             scrollToMessage(it->ts, false, false);
         _unreadJump = false;
     }
+    // A pending target is older than the visible range only while the
+    // oldest loaded message is still newer than it. Once a page reaches or
+    // passes the target, it either found it or the target is unavailable.
+    if (_jumpTs && !c.messages.empty() &&
+        (_jumpTs >= c.messages.front().ts || !c.hasMoreBefore))
+        _jumpTs = 0;
+
     if (c.hasMoreBefore && !_loadingOlder &&
         (c.messages.empty() || _jumpTs || _unreadJump || (first >= 0 && first <= 3))) {
-        _loadingOlder              = true;
-        const Ts            before = c.messages.empty() ? 0 : c.messages.front().ts;
-        const ConvRef       conv   = _conv;
-        std::weak_ptr<char> alive  = _alive;
-        _ctx.backend.loadHistory(conv, before, [this, alive, conv, before](bool ok, const std::string &) {
-            if (alive.expired())
-                return;
-            _loadingOlder = false;
-            if (conv == _conv) {
-                // The page is in: a jump target it didn't bring won't come.
-                if (!applyJump())
+        _loadingOlder = true;
+        const Ts before = c.messages.empty() ? 0 : c.messages.front().ts;
+        const ConvRef conv = _conv;
+        const uint64_t generation = ++_historyLoadGeneration;
+        std::weak_ptr<char> alive = _alive;
+        _ctx.backend.loadHistory(
+            conv,
+            before,
+            [this, alive, conv, before, generation](bool ok, const std::string &) {
+                if (alive.expired() || generation != _historyLoadGeneration || conv != _conv)
+                    return;
+                _loadingOlder = false;
+                const model::Conversation &loaded = _ctx.store().conversation(conv);
+                const bool noProgress =
+                    before != 0 && !loaded.messages.empty() && loaded.messages.front().ts >= before;
+                if (!applyJump() && _jumpTs &&
+                    (!ok || loaded.messages.empty() || !loaded.hasMoreBefore || noProgress ||
+                     loaded.messages.front().ts <= _jumpTs))
                     _jumpTs = 0;
-                if (!ok || (!_ctx.store().conversation(conv).messages.empty() &&
-                    _ctx.store().conversation(conv).messages.front().ts >= before && before != 0))
-                    _unreadJump = false; // failure or no pagination progress
+                if (!ok || noProgress)
+                    _unreadJump = false; // failure or a cursor that did not move
                 updateState(); // an empty first page changes no messages
                 scheduleEdgeCheck();
             }
-        });
+        );
     }
 }
 
@@ -2233,17 +2274,20 @@ void MessageList::jumpTo(Ts ts) {
     _jumpTs = ts;
     if (applyJump() || _conv == model::kNoConv)
         return;
-    // Not loaded: history jumps get one older page; a thread jump must
-    // survive an incomplete cached page until the asynchronous refresh
-    // inserts the target reply. showThread/clear reset stale jump targets.
-    if (threadMode())
+    // Thread loads are owned by showThread. A jump registered while its
+    // refresh is pending is applied by that request's completion callback.
+    if (threadMode()) {
+        if (!_threadLoadPending)
+            _jumpTs = 0;
         return;
+    }
     const model::Conversation &c = _ctx.store().conversation(_conv);
-    // Only an older page can still bring it in -- a target at or after what's
-    // already loaded (not found there, or newer: a live arrival still to
-    // come) is never going to show up by loading further back.
+    // Only an older page can still bring it in. Keep the target across each
+    // contiguous page; checkEdges drops it on completion, failure or no progress.
     if (!c.hasMoreBefore || (!c.messages.empty() && ts >= c.messages.front().ts))
         _jumpTs = 0;
+    else
+        scheduleEdgeCheck();
 }
 
 bool MessageList::applyJump() {

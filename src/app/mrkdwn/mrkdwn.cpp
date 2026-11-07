@@ -779,79 +779,177 @@ Rich resolveTokens(std::string_view src) {
 
 // ── Permalinks ──────────────────────────────────────────────────────────────
 
+namespace {
+
+bool validSlackId(std::string_view id, std::string_view prefixes) {
+    if (id.size() < 2 || id.size() > 64 || prefixes.find(id[0]) == std::string_view::npos)
+        return false;
+    for (char c : id)
+        if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')))
+            return false;
+    return true;
+}
+
+bool validPercentEncoding(std::string_view value) {
+    const auto hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    };
+    for (size_t i = 0; i < value.size(); ++i)
+        if (value[i] == '%') {
+            if (i + 2 >= value.size() || !hex(value[i + 1]) || !hex(value[i + 2]))
+                return false;
+            i += 2;
+        }
+    return true;
+}
+
+bool decodeQueryValue(std::string_view encoded, std::string *decoded) {
+    if (!validPercentEncoding(encoded))
+        return false;
+    *decoded = str::percentDecode(encoded);
+    return true;
+}
+
+// Slack timestamps have 1–10 seconds digits and 1–6 fractional digits.
+// Normalize them to six fractional digits so equivalent values compare alike.
+bool canonicalSlackTimestamp(std::string_view value, std::string *canonical) {
+    const size_t dot = value.find('.');
+    if (dot == std::string_view::npos || dot == 0 || dot > 10 ||
+        dot + 1 == value.size() || value.size() - dot - 1 > 6 ||
+        value.find('.', dot + 1) != std::string_view::npos)
+        return false;
+    for (char c : value)
+        if (c != '.' && !isAsciiDigit(c))
+            return false;
+    const std::string_view seconds = value.substr(0, dot);
+    if (std::all_of(seconds.begin(), seconds.end(), [](char c) { return c == '0'; }))
+        return false;
+
+    const size_t fractionLength = value.size() - dot - 1;
+    canonical->assign(seconds);
+    canonical->push_back('.');
+    canonical->append(value.substr(dot + 1));
+    canonical->append(6 - fractionLength, '0');
+    return true;
+}
+
+bool validWorkspaceHost(std::string_view host) {
+    constexpr std::string_view suffix = ".slack.com";
+    if (!endsWith(host, suffix))
+        return false;
+    const std::string_view workspace = host.substr(0, host.size() - suffix.size());
+    if (workspace.empty() || workspace.size() > 63 || workspace.find('.') != std::string_view::npos ||
+        workspace.front() == '-' || workspace.back() == '-')
+        return false;
+    for (char c : workspace)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
+            return false;
+    return true;
+}
+
+} // namespace
+
 MessageRef parseMessageLink(std::string_view url) {
-    size_t schemeEnd = url.find("://");
-    if (schemeEnd == std::string_view::npos)
+    const size_t schemeEnd = url.find("://");
+    if (schemeEnd == std::string_view::npos ||
+        !str::iequals(url.substr(0, schemeEnd), "https"))
         return {};
-    const std::string_view scheme = url.substr(0, schemeEnd);
-    if (!str::iequals(scheme, "https") && !str::iequals(scheme, "http"))
-        return {};
-    std::string_view rest    = url.substr(schemeEnd + 3);
-    const size_t     authEnd = rest.find_first_of("/?#");
-    std::string_view auth    = rest.substr(0, authEnd);
+
+    std::string_view rest = url.substr(schemeEnd + 3);
+    const size_t authEnd = rest.find_first_of("/?#");
+    std::string_view auth = rest.substr(0, authEnd);
     rest = authEnd == std::string_view::npos ? std::string_view() : rest.substr(authEnd);
-    if (const size_t at = auth.rfind('@'); at != std::string_view::npos)
-        auth.remove_prefix(at + 1);
-    if (const size_t colon = auth.find(':'); colon != std::string_view::npos)
+    // Credentials and non-default ports have no place in a Slack permalink.
+    if (auth.empty() || auth.find('@') != std::string_view::npos)
+        return {};
+    if (const size_t colon = auth.find(':'); colon != std::string_view::npos) {
+        if (auth.substr(colon + 1) != "443" || auth.find(':', colon + 1) != std::string_view::npos)
+            return {};
         auth = auth.substr(0, colon);
-    const std::string host = str::asciiLower(auth);
-    if (host != "slack.com" && !endsWith(host, ".slack.com"))
-        return {};
-
-    const size_t     q    = rest.find_first_of("?#");
-    std::string_view path = rest.substr(0, q);
-    std::string_view query =
-        q != std::string_view::npos && rest[q] == '?' ? rest.substr(q + 1) : std::string_view();
-    if (const size_t hash = query.find('#'); hash != std::string_view::npos)
-        query = query.substr(0, hash);
-
-    std::vector<std::string_view> seg;
-    for (size_t s = 0; s <= path.size();) {
-        const size_t slash = path.find('/', s);
-        const auto   part  = path.substr(s, slash == std::string_view::npos ? slash : slash - s);
-        if (!part.empty())
-            seg.push_back(part);
-        if (slash == std::string_view::npos)
-            break;
-        s = slash + 1;
     }
-    if (seg.size() != 3 || seg[0] != "archives")
+    const std::string host = str::asciiLower(auth);
+    if (!validWorkspaceHost(host))
         return {};
-    // Conversation ids are uppercase alphanumeric ("C6HQE8G0Z"), so a
-    // lookalike path (…/archives/search/pdf) can't make a dead chip.
-    const std::string_view conv = seg[1];
-    if (conv.size() < 2 || !(conv[0] >= 'A' && conv[0] <= 'Z'))
+
+    // A fragment does not identify a different Slack message.
+    if (const size_t hash = rest.find('#'); hash != std::string_view::npos)
+        rest = rest.substr(0, hash);
+    const size_t question = rest.find('?');
+    const std::string_view path = rest.substr(0, question);
+    const std::string_view query =
+        question == std::string_view::npos ? std::string_view() : rest.substr(question + 1);
+    if (question != std::string_view::npos && query.empty())
         return {};
-    for (char ch : conv)
-        if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')))
+
+    // Exactly /archives/{conversation}/p{seconds}{microseconds}; empty or
+    // additional path segments are not silently discarded.
+    if (path.empty() || path.front() != '/' || path.back() == '/')
+        return {};
+    const size_t firstSlash = path.find('/', 1);
+    const size_t secondSlash =
+        firstSlash == std::string_view::npos ? firstSlash : path.find('/', firstSlash + 1);
+    if (firstSlash == std::string_view::npos || secondSlash == std::string_view::npos ||
+        path.find('/', secondSlash + 1) != std::string_view::npos ||
+        path.substr(1, firstSlash - 1) != "archives")
+        return {};
+
+    const std::string_view conv = path.substr(firstSlash + 1, secondSlash - firstSlash - 1);
+    if (!validSlackId(conv, "CGD"))
+        return {};
+
+    const std::string_view token = path.substr(secondSlash + 1);
+    if (token.empty() || token.front() != 'p')
+        return {};
+    const std::string_view digits = token.substr(1);
+    if (digits.size() < 7 || digits.size() > 16)
+        return {};
+    for (char c : digits)
+        if (!isAsciiDigit(c))
             return {};
-    // "p1786008939071009" → "1786008939.071009": the fraction is the last 6 digits.
-    const std::string_view tok = seg[2];
-    if (tok.size() < 8 || tok[0] != 'p')
+    const size_t secondsLength = digits.size() - 6;
+    if (std::all_of(digits.begin(), digits.begin() + secondsLength, [](char c) { return c == '0'; }))
         return {};
-    for (char ch : tok.substr(1))
-        if (!isAsciiDigit(ch))
-            return {};
-    const std::string_view digits = tok.substr(1);
-    MessageRef             ref;
+
+    MessageRef ref;
     ref.host = host;
     ref.conv = std::string(conv);
-    ref.ts =
-        str::concat({digits.substr(0, digits.size() - 6), ".", digits.substr(digits.size() - 6)});
-    // A reply's permalink carries its root in thread_ts; when the message *is*
-    // the root it repeats its own ts — only a genuine reply gets a target.
-    for (size_t s = 0; s < query.size();) {
-        const size_t     amp  = query.find('&', s);
-        std::string_view pair = query.substr(s, amp == std::string_view::npos ? amp : amp - s);
-        if (startsWith(pair, "thread_ts=")) {
-            const std::string thread = str::percentDecode(pair.substr(10));
-            if (!thread.empty() && thread != ref.ts)
-                ref.threadTs = thread;
-            break;
+    ref.ts = str::concat({digits.substr(0, secondsLength), ".", digits.substr(secondsLength)});
+
+    bool haveThread = false, haveCid = false;
+    for (size_t pos = 0; pos < query.size();) {
+        const size_t amp = query.find('&', pos);
+        const std::string_view item =
+            query.substr(pos, amp == std::string_view::npos ? amp : amp - pos);
+        const size_t eq = item.find('=');
+        if (item.empty() || eq == std::string_view::npos || eq == 0 || eq + 1 == item.size())
+            return {};
+        const std::string_view key = item.substr(0, eq);
+        std::string value;
+        if (!decodeQueryValue(item.substr(eq + 1), &value))
+            return {};
+
+        if (key == "thread_ts") {
+            if (haveThread)
+                return {};
+            haveThread = true;
+            std::string canonical;
+            if (!canonicalSlackTimestamp(value, &canonical))
+                return {};
+            if (canonical != ref.ts)
+                ref.threadTs = std::move(canonical);
+        } else if (key == "cid") {
+            if (haveCid || value != ref.conv)
+                return {};
+            haveCid = true;
+        } else {
+            return {}; // Unsupported query parameters must not change routing silently.
         }
+
         if (amp == std::string_view::npos)
             break;
-        s = amp + 1;
+        pos = amp + 1;
+        if (pos == query.size())
+            return {};
     }
     return ref;
 }
@@ -867,42 +965,49 @@ std::string threadLink(std::string_view conv, std::string_view rootTs) {
 MessageRef parseThreadLink(std::string_view url) {
     if (!startsWith(url, kThreadLinkPrefix))
         return {};
-    const std::string_view rest  = url.substr(kThreadLinkPrefix.size());
-    const size_t           slash = rest.find('/');
+    const std::string_view rest = url.substr(kThreadLinkPrefix.size());
+    const size_t slash = rest.find('/');
     if (slash == std::string_view::npos || rest.find('/', slash + 1) != std::string_view::npos)
         return {};
     MessageRef ref;
-    ref.conv     = std::string(rest.substr(0, slash));
-    ref.ts       = std::string(rest.substr(slash + 1));
+    ref.conv = std::string(rest.substr(0, slash));
+    ref.ts = std::string(rest.substr(slash + 1));
     ref.threadTs = ref.ts;
     return ref;
 }
 
 MessageRef parseAppLink(std::string_view url) {
     constexpr std::string_view prefix = "msga://";
-    if (!startsWith(url, prefix))
+    if (url.size() < prefix.size() || !str::iequals(url.substr(0, prefix.size()), prefix))
         return {};
-    if (startsWith(url, "msga://thread/"))
-        return parseThreadLink(url);
-    // Reuse Slack's existing strict permalink parser (including its host,
-    // conversation ID and timestamp validation), not a second URL grammar.
-    return parseMessageLink(str::concat({"https://", url.substr(prefix.size())}));
+    const std::string_view rest = url.substr(prefix.size());
+    if (startsWith(rest, "thread/"))
+        return parseThreadLink(str::concat({"msga://", rest}));
+    // Reuse the same HTTPS permalink grammar rather than maintaining a second
+    // parser for links delivered by the OS.
+    return parseMessageLink(str::concat({"https://", rest}));
 }
 
 NativeLink parseNativeLink(std::string_view url) {
-    // Slack documents slack://open, slack://channel and slack://user.
-    // Accept the same grammar under msga:// without hijacking slack://.
-    if (str::startsWith(url, "slack://"))
-        url.remove_prefix(sizeof("slack://") - 1);
-    else if (str::startsWith(url, "msga://"))
-        url.remove_prefix(sizeof("msga://") - 1);
-    else
+    // Slack documents slack://open, slack://channel and slack://user. MSGA's
+    // scheme accepts the same grammar for links we generate ourselves.
+    const size_t schemeEnd = url.find("://");
+    if (schemeEnd == std::string_view::npos)
+        return {};
+    const std::string_view scheme = url.substr(0, schemeEnd);
+    if (!str::iequals(scheme, "slack") && !str::iequals(scheme, "msga"))
+        return {};
+    url.remove_prefix(schemeEnd + 3);
+    if (url.find('#') != std::string_view::npos)
         return {};
 
     const size_t question = url.find('?');
     const std::string_view path = url.substr(0, question);
     const std::string_view query =
         question == std::string_view::npos ? std::string_view() : url.substr(question + 1);
+    if (question != std::string_view::npos && query.empty())
+        return {};
+
     NativeLink out;
     if (path == "open")
         out.kind = NativeLinkKind::Open;
@@ -913,76 +1018,75 @@ NativeLink parseNativeLink(std::string_view url) {
     else
         return {};
 
-    // URL-encoded IDs are accepted, but duplicates and malformed IDs are not.
-    bool haveTeam = false, haveId = false, haveMessage = false, haveThread = false;
+    bool haveTeam = false, haveId = false, haveMessage = false, haveThread = false, haveHost = false;
+    std::string host;
     for (size_t pos = 0; pos < query.size();) {
         const size_t amp = query.find('&', pos);
-        const std::string_view item = query.substr(
-            pos, amp == std::string_view::npos ? amp : amp - pos
-        );
+        const std::string_view item =
+            query.substr(pos, amp == std::string_view::npos ? amp : amp - pos);
         const size_t eq = item.find('=');
-        if (eq != std::string_view::npos) {
-            const std::string_view key = item.substr(0, eq);
-            if (key == "team" || key == "id" ||
-                (path == "channel" && (key == "message" || key == "thread_ts"))) {
-                const std::string val = str::percentDecode(item.substr(eq + 1));
-                if (key == "team") {
-                    if (haveTeam) return {};
-                    out.team = val;
-                    haveTeam = true;
-                } else if (key == "id") {
-                    if (haveId) return {};
-                    out.id = val;
-                    haveId = true;
-                } else if (key == "message") {
-                    if (haveMessage) return {};
-                    out.messageTs = val;
-                    haveMessage = true;
-                } else {
-                    if (haveThread) return {};
-                    out.threadTs = val;
-                    haveThread = true;
-                }
-            }
+        if (item.empty() || eq == std::string_view::npos || eq == 0 || eq + 1 == item.size())
+            return {};
+        const std::string_view key = item.substr(0, eq);
+        std::string value;
+        if (!decodeQueryValue(item.substr(eq + 1), &value))
+            return {};
+
+        if (key == "team") {
+            if (haveTeam) return {};
+            haveTeam = true;
+            out.team = std::move(value);
+        } else if (key == "id") {
+            if (haveId) return {};
+            haveId = true;
+            out.id = std::move(value);
+        } else if (path == "channel" && key == "message") {
+            if (haveMessage) return {};
+            haveMessage = true;
+            out.messageTs = std::move(value);
+        } else if (path == "channel" && key == "thread_ts") {
+            if (haveThread) return {};
+            haveThread = true;
+            out.threadTs = std::move(value);
+        } else if (path == "channel" && key == "host") {
+            if (haveHost) return {};
+            haveHost = true;
+            host = std::move(value);
+        } else {
+            return {};
         }
+
         if (amp == std::string_view::npos)
             break;
         pos = amp + 1;
+        if (pos == query.size())
+            return {};
     }
-    const auto isId = [](std::string_view id, std::string_view prefixes) {
-        if (id.size() < 2 || prefixes.find(id[0]) == std::string_view::npos)
-            return false;
-        for (char c : id)
-            if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')))
-                return false;
-        return true;
-    };
-    if (haveTeam && !isId(out.team, "TE"))
+
+    if (haveTeam && !validSlackId(out.team, "TE"))
         return {};
     if (out.kind == NativeLinkKind::Open)
-        return haveId ? NativeLink{} : out;
-    if (out.team.empty())
+        return haveId ? NativeLink{} : out; // An omitted team means the active Slack workspace.
+    if (!haveTeam || !haveId)
         return {};
+
     if (out.kind == NativeLinkKind::Channel) {
-        // The browser launcher passes Slack's dotted message and parent
-        // timestamps separately. Keep both: thread_ts alone opens the panel,
-        // while message + thread_ts selects the actual reply.
-        const auto validTs = [](std::string_view ts) {
-            const size_t dot = ts.find('.');
-            if (dot == std::string_view::npos || dot == 0 || dot > 10 ||
-                dot + 1 == ts.size() || ts.size() - dot - 1 > 6)
-                return false;
-            for (size_t i = 0; i < ts.size(); ++i)
-                if (i != dot && !isAsciiDigit(ts[i]))
-                    return false;
-            return true;
-        };
-        if ((haveMessage && !validTs(out.messageTs)) ||
-            (haveThread && !validTs(out.threadTs)))
+        if (!validSlackId(out.id, "CGD") || (haveHost && !str::iequals(host, "slack.com")))
             return {};
-        return isId(out.id, "CGD") ? out : NativeLink{};
+        std::string canonical;
+        if (haveMessage) {
+            if (!canonicalSlackTimestamp(out.messageTs, &canonical))
+                return {};
+            out.messageTs = std::move(canonical);
+        }
+        if (haveThread) {
+            if (!canonicalSlackTimestamp(out.threadTs, &canonical))
+                return {};
+            out.threadTs = std::move(canonical);
+        }
+        return out;
     }
-    return isId(out.id, "UW") ? out : NativeLink{};
+    return validSlackId(out.id, "UW") ? out : NativeLink{};
 }
 
 std::string refToToken(const MessageRef &ref) {
