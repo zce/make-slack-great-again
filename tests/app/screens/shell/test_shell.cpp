@@ -261,6 +261,39 @@ TEST("sidebar: the open chat isn't read while the window is in the background") 
     CHECK(h.store.conversation(mira).unread == 0);
 }
 
+TEST("shell: a live out-of-order message in the focused chat advances the read cursor") {
+    Harness h;
+    const ConvRef c = h.conv("C0DESIGN");
+    REQUIRE(c != kNoConv);
+    REQUIRE(!h.store.conversation(c).messages.empty());
+    const Ts base = h.store.conversation(c).latest;
+    const UserRef author = h.store.findUser("U0LENA");
+    REQUIRE(author != kNoUser);
+
+    auto deliver = [&](Ts ts, const char *text) {
+        Message m;
+        m.ts = ts;
+        m.user = author;
+        m.text = text;
+        h.store.addMessage(c, std::move(m));
+    };
+
+    // In-order live arrivals are immediately read while this chat is visible.
+    deliver(base + 1000, "first");
+    deliver(base + 3000, "last");
+    REQUIRE(h.store.conversation(c).lastRead == base + 3000);
+
+    // Simulate the user moving the read boundary back while the chat remains
+    // open. A delayed message between the two known timestamps is an Insert.
+    h.store.markUnread(c, base + 1000);
+    REQUIRE(h.store.conversation(c).unread == 2);
+    deliver(base + 2000, "arrived late");
+
+    CHECK(h.store.conversation(c).lastRead == base + 2000);
+    CHECK(h.store.conversation(c).unread == 1);
+    CHECK(h.store.conversation(c).messages.back().ts == base + 3000);
+}
+
 TEST("window: hidden to the tray or minimised, the backend polls as hidden; shown, as shown") {
     Harness h;
     REQUIRE(h.backend.windowVisible);
