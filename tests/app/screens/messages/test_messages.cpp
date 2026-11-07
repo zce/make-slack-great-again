@@ -227,6 +227,14 @@ model::Message msg(model::UserRef u, int64_t secs, const char *text) {
     return m;
 }
 
+model::Message msgAt(model::UserRef u, model::Ts ts, const char *text) {
+    model::Message m;
+    m.user = u;
+    m.ts   = ts;
+    m.text = text;
+    return m;
+}
+
 ui::View *findByTooltip(ui::View *v, std::string_view needle) {
     if (v->tooltip().find(needle) != std::string::npos)
         return v;
@@ -2664,21 +2672,21 @@ TEST("loading: a channel permalink pages back contiguously until the exact messa
     CHECK(e.backend.historyBefore[0] == 0); // the first page still starts at the head
 
     std::vector<model::Message> first;
-    first.push_back(msg(e.mira, target + 2'000'000, "newer"));
+    first.push_back(msgAt(e.mira, target + 2'000'000, "newer"));
     e.store.addPage(c, std::move(first));
     e.backend.history[0](true, {});
     REQUIRE(until([&] { return e.backend.history.size() == 2; }));
     CHECK(e.backend.historyBefore[1] == e.store.conversation(c).messages.front().ts);
 
     std::vector<model::Message> second;
-    second.push_back(msg(e.mira, target + 1'000'000, "middle"));
+    second.push_back(msgAt(e.mira, target + 1'000'000, "middle"));
     e.store.addPage(c, std::move(second));
     e.backend.history[1](true, {});
     REQUIRE(until([&] { return e.backend.history.size() == 3; }));
     CHECK(e.backend.historyBefore[2] == e.store.conversation(c).messages.front().ts);
 
     std::vector<model::Message> third;
-    third.push_back(msg(e.mira, target, "target"));
+    third.push_back(msgAt(e.mira, target, "target"));
     e.store.addPage(c, std::move(third));
     e.backend.history[2](true, {});
     pump(8);
@@ -2695,18 +2703,18 @@ TEST("loading: a missing channel permalink target is dropped once history passes
     e.list->jumpTo(target);
     REQUIRE(until([&] { return e.backend.history.size() == 1; }));
     std::vector<model::Message> first;
-    first.push_back(msg(e.mira, target + 2'000'000, "newer"));
+    first.push_back(msgAt(e.mira, target + 2'000'000, "newer"));
     e.store.addPage(c, std::move(first));
     e.backend.history[0](true, {});
     REQUIRE(until([&] { return e.backend.history.size() == 2; }));
 
     // The next contiguous page passes the target without containing it.
     std::vector<model::Message> second;
-    second.push_back(msg(e.mira, target - 1, "older"));
+    second.push_back(msgAt(e.mira, target - 1, "older"));
     e.store.addPage(c, std::move(second));
     e.backend.history[1](true, {});
     pump(8);
-    e.store.addMessage(c, msg(e.mira, target, "arrived after the completed search"));
+    e.store.addMessage(c, msgAt(e.mira, target, "arrived after the completed search"));
     pump(8);
     CHECK_FALSE(e.list->flashing(target));
 }
@@ -2720,7 +2728,7 @@ TEST("loading: a failed channel permalink request cannot flash a later message")
     e.list->jumpTo(target);
     REQUIRE(until([&] { return e.backend.history.size() == 1; }));
     std::vector<model::Message> first;
-    first.push_back(msg(e.mira, target + 2'000'000, "newer"));
+    first.push_back(msgAt(e.mira, target + 2'000'000, "newer"));
     e.store.addPage(c, std::move(first));
     e.backend.history[0](true, {});
     REQUIRE(until([&] { return e.backend.history.size() == 2; }));
@@ -2728,7 +2736,7 @@ TEST("loading: a failed channel permalink request cannot flash a later message")
     e.backend.history[1](false, "network_error");
     pump(8);
 
-    e.store.addMessage(c, msg(e.mira, target, "late arrival after failure"));
+    e.store.addMessage(c, msgAt(e.mira, target, "late arrival after failure"));
     pump(8);
     CHECK_FALSE(e.list->flashing(target));
 }
@@ -2738,13 +2746,13 @@ TEST("loading: a thread jump is discarded after a failed refresh") {
     const ConvRef c = e.conv("C6");
     const Ts root = model::parseTs("1792674458.384049");
     const Ts target = model::parseTs("1793818271.076489");
-    e.store.addMessage(c, msg(e.mira, root, "root"));
+    e.store.addMessage(c, msgAt(e.mira, root, "root"));
     e.list->showThread(c, root, target);
     REQUIRE(e.backend.threads.size() == 1);
     e.backend.threads[0](false, "network_error");
     pump(8);
 
-    model::Message late = msg(e.mira, target, "late reply");
+    model::Message late = msgAt(e.mira, target, "late reply");
     late.threadTs = root;
     e.store.addMessage(c, std::move(late));
     pump(8);
@@ -2757,7 +2765,7 @@ TEST("loading: an older same-thread callback cannot finish a newer request") {
     const Ts root = model::parseTs("1792674458.384049");
     const Ts oldTarget = model::parseTs("1793818271.076488");
     const Ts target = model::parseTs("1793818271.076489");
-    e.store.addMessage(c, msg(e.mira, root, "root"));
+    e.store.addMessage(c, msgAt(e.mira, root, "root"));
 
     e.list->showThread(c, root, oldTarget);
     e.list->showThread(c, root, target);
@@ -2766,7 +2774,7 @@ TEST("loading: an older same-thread callback cannot finish a newer request") {
     pump(4);
     CHECK(e.list->state() == MessageList::State::Loading);
 
-    model::Message reply = msg(e.mira, target, "requested reply");
+    model::Message reply = msgAt(e.mira, target, "requested reply");
     reply.threadTs = root;
     e.store.addMessage(c, std::move(reply));
     e.backend.threads[1](true, {});
