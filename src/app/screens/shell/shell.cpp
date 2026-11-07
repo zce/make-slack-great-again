@@ -1519,47 +1519,56 @@ public:
     }
 };
 
-// Match the conversation star: a bare titlebar action with ink-only hover.
-class PageRefreshButton final : public Clickable {
+// Same 28 px target / 15 px vector size as the conversation Star.
+// The very same icon turns during a refresh: no font glyphs, size changes or
+// swapping spinner shapes. Hover only changes the ink, never the background.
+class PageRefreshButton final : public GlyphButton {
 public:
-    PageRefreshButton() {
-        setLook({C::None, C::None, C::None, C::None, 0});
-        setRole(Role::Button);
-        setTooltip(tr("Refresh"));
-        style().size(28, 28).noShrink().items(Align::Center);
-        _glyph = add<Label>("↻", Font::HeaderTitle, C::SidebarTextMuted);
-        _glyph->setHitTransparent(true);
+    PageRefreshButton()
+        : GlyphButton(Icon::RotateCw, 28, 15, C::SidebarTextMuted, tr("Refresh")) {
+        setHoverRepaint(true);
     }
     ~PageRefreshButton() override {
         if (_timer)
             ui::app()->cancelTimer(_timer);
     }
     void setLoading(bool loading) {
-        if (loading == bool(_timer))
+        if (loading == _loading)
             return;
+        _loading = loading;
         setEnabled(!loading);
         if (loading) {
-            _step = 0;
-            _timer = ui::app()->addTimer(120, true, [this] {
-                static const char *frames[] = {"◴", "◷", "◶", "◵"};
-                _glyph->setText(frames[_step++ % 4]);
+            _angle = 0;
+            _timer = ui::app()->addTimer(33, true, [this] {
+                _angle = std::fmod(_angle + 12.f, 360.f); // one turn in ~1 s
+                update();
             });
         } else {
-            ui::app()->cancelTimer(_timer);
+            if (_timer)
+                ui::app()->cancelTimer(_timer);
             _timer = 0;
-            _glyph->setText("↻");
         }
+        update();
     }
-    bool onEvent(Event &e) override {
-        const bool handled = Clickable::onEvent(e);
-        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
-            _glyph->setColor(hovered() ? C::SidebarText : C::SidebarTextMuted);
-        return handled;
+    void paint(gfx::Painter &p) override {
+        Clickable::paint(p);
+        constexpr float kIconPx = 15;
+        const RectF r{
+            snapPx((width() - kIconPx) / 2),
+            snapPx((height() - kIconPx) / 2),
+            kIconPx,
+            kIconPx,
+        };
+        const gfx::Color ink = color(hovered() ? C::SidebarText : C::SidebarTextMuted);
+        if (_loading)
+            gfx::drawIconRotated(p, Icon::RotateCw, r, ink, _angle);
+        else
+            gfx::drawIcon(p, Icon::RotateCw, r, ink);
     }
 private:
-    Label *_glyph = nullptr;
+    bool _loading = false;
     plat::TimerId _timer = 0;
-    unsigned _step = 0;
+    float _angle = 0;
 };
 
 // Search stays gently highlighted; hovering adds only one more wash from the
