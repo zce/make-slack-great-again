@@ -49,6 +49,7 @@ jobs:
       - name: Run tests and memory soak under ASan / LSan
         timeout-minutes: 55
         run: |
+          set -euo pipefail
           mkdir -p artifacts
           xvfb-run -a -s "-screen 0 1280x800x24" \
             scripts/run-asan.sh 10 2>&1 | tee artifacts/asan-soak.log
