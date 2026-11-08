@@ -4,6 +4,7 @@
 #include "app/mrkdwn/markdown.h"
 #include "app/mrkdwn/mrkdwn.h"
 #include "app/model/jobs.h"
+#include "app/model/timers.h"
 #include "app/screens/common/downloads.h"
 #include "app/screens/common/file_dialogs.h"
 #include "app/screens/common/message_text.h"
@@ -157,7 +158,10 @@ public:
         x->onClick = [this] { clear(); };
         setCursor(plat::Cursor::IBeam);
     }
-    ~ConvSelector() override { closeList(); }
+    ~ConvSelector() override {
+        *_alive = false;
+        closeList();
+    }
 
     std::function<void(const Target *)> onPick;
     const Target                       *target() const { return _picked ? &_target : nullptr; }
@@ -191,7 +195,7 @@ public:
             return true;
         }
         if (e.type == EventType::FocusOut)
-            _ctx.app.platform().post([this] {
+            model::postWhileAlive(_ctx.app.platform(), _alive, [this] {
                 if (!_edit->focused())
                     closeList();
             });
@@ -289,8 +293,9 @@ private:
         window()->showPopup(std::move(l));
     }
 
-    screens::Context &_ctx;
-    TextEdit         *_edit;
+    screens::Context    &_ctx;
+    std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
+    TextEdit             *_edit;
     Clickable        *_chip, *_x;
     Label            *_chipLabel;
     PickerList       *_list = nullptr;

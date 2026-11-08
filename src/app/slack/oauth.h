@@ -8,6 +8,7 @@
 #include "net/net.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace plat {
@@ -44,7 +45,8 @@ private:
     AppConfig      _config;
     std::string    _verifier, _state;
     Done           _done;
-    net::RequestId _pending = 0;
+    net::RequestId       _pending = 0;
+    std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
 };
 
 } // namespace slack

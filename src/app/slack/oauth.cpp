@@ -1,6 +1,7 @@
 #include "app/slack/oauth.h"
 
 #include "app/slack/web_api.h"
+#include "app/model/timers.h"
 #include "base/crypto.h"
 #include "base/i18n.h"
 #include "base/str.h"
@@ -35,6 +36,7 @@ OAuthFlow::OAuthFlow(plat::App &app, net::Client &client, AppConfig config)
     : _app(app), _client(client), _config(std::move(config)) {}
 
 OAuthFlow::~OAuthFlow() {
+    *_alive = false;
     _done = nullptr;
     if (_pending)
         _client.cancel(_pending);
@@ -50,7 +52,7 @@ void OAuthFlow::start(Done done) {
     _done = std::move(done);
     if (_config.clientId.empty()) {
         // Keys can be pasted at runtime, so lead with that.
-        _app.post([this] {
+        model::postWhileAlive(_app, _alive, [this] {
             fail(
                 i18n::tr(
                     "No Slack app keys are set up yet.\n\nOpen Settings \xE2\x86\x92 General, "
@@ -68,7 +70,7 @@ void OAuthFlow::start(Done done) {
     _verifier = randomToken(32);
     _state    = randomToken(12);
     if (_verifier.empty() || _state.empty()) {
-        _app.post([this] { fail("no_random"); });
+        model::postWhileAlive(_app, _alive, [this] { fail("no_random"); });
         return;
     }
     const auto  digest    = crypto::sha256(_verifier);

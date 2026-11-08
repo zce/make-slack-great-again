@@ -6,7 +6,9 @@
 // cache, the rate-limit and send-failure banners, mentioned channels and
 // user groups, the app-keys OAuth sign-in. Nothing here talks to the real Slack.
 #include "app/cache/workspace_cache.h"
+#include "app/slack/browser_login.h"
 #include "app/slack/oauth.h"
+#include "app/slack/session.h"
 #include "app/slack/slack_backend.h"
 #include "app/slack/slack_json.h"
 #include "support/fake_slack_server.h"
@@ -897,6 +899,75 @@ TEST("slack features: an OAuth callback delivered twice exchanges the code once"
     CHECK_STR(error, "");
     CHECK_STR(token, "xoxp-new");
     CHECK(count("oauth.v2.access") == 1);
+}
+
+
+TEST("slack OAuth: a deferred setup error is dropped after flow destruction") {
+    net::Client client{app()};
+    int         called = 0;
+    {
+        slack::OAuthFlow flow(app(), client, {});
+        flow.start([&](slack::Credentials, std::string) { ++called; });
+    }
+    pumpFor(30);
+    CHECK(called == 0);
+}
+
+TEST("slack browser login: a deferred startup error is dropped after destruction") {
+    base::test::setEnv("MSGA_BROWSER_LOGIN", "0");
+    net::Client client{app()};
+    int         called = 0;
+    {
+        slack::BrowserLogin login(app(), client);
+        login.start({}, [&](std::string, std::vector<slack::TeamSession>, std::string) {
+            ++called;
+        });
+    }
+    pumpFor(30);
+    base::test::unsetEnv("MSGA_BROWSER_LOGIN");
+    CHECK(called == 0);
+}
+
+TEST("slack session: valid workspaces do not inherit an earlier validation error") {
+    if (!haveServer())
+        return;
+    ctl("POST", "/_ctl/reset");
+    ctl(
+        "POST",
+        "/_ctl/script",
+        R"({"method":"auth.test","responses":[
+          {"ok":false,"error":"invalid_auth"},
+          {"ok":true,"team_id":"T2","team":"Two","url":"https://two.slack.com/"}]})"
+    );
+
+    net::Client client{app()};
+    slack::TeamSession invalid, validCandidate;
+    invalid.token   = "xoxc-invalid";
+    invalid.teamId  = "T1";
+    invalid.teamName = "One";
+    invalid.iconUrl = "https://example.test/one.png";
+    validCandidate.token   = "xoxc-valid";
+    validCandidate.teamId  = "T2";
+    validCandidate.teamName = "Two";
+    validCandidate.iconUrl = "https://example.test/two.png";
+
+    std::vector<slack::Credentials> valid;
+    std::string error;
+    bool        called = false;
+    slack::TokenDeriver deriver(client);
+    deriver.run(
+        "xoxd-test",
+        {std::move(invalid), std::move(validCandidate)},
+        [&](std::vector<slack::Credentials> creds, std::string err) {
+            valid  = std::move(creds);
+            error  = std::move(err);
+            called = true;
+        }
+    );
+    REQUIRE(pumpUntil([&] { return called; }));
+    REQUIRE(valid.size() == 1);
+    CHECK_STR(valid.front().teamId, "T2");
+    CHECK(error.empty());
 }
 
 TEST("slack features: custom sidebar sections — the list, moves, create, a refused edit") {

@@ -1,5 +1,6 @@
 #include "app/slack/browser_login.h"
 
+#include "app/model/timers.h"
 #include "base/crypto.h"
 #include "base/file.h"
 #include "base/i18n.h"
@@ -242,6 +243,7 @@ std::string BrowserLogin::parseDebuggerUrl(std::string_view jsonVersion) {
 BrowserLogin::BrowserLogin(plat::App &app, net::Client &client) : _app(app), _client(client) {}
 
 BrowserLogin::~BrowserLogin() {
+    *_alive = false;
     _done = true; // no callbacks out of a half-destroyed object
     shutdown();
     // Last resort: the scheduled wipes never run when the app is quitting
@@ -264,13 +266,13 @@ void BrowserLogin::start(std::function<void(std::string)> progress, Done done) {
     _browserName    = b.name;
     if (b.exe.empty()) {
         // Never from inside start(): callers rely on done running later.
-        _app.post([this] { finish({}, {}, "no_browser"); });
+        model::postWhileAlive(_app, _alive, [this] { finish({}, {}, "no_browser"); });
         return;
     }
     _profile = makeProfileDir(_app);
     _port    = net::freeLoopbackPort();
     if (_profile.empty() || _port == 0) {
-        _app.post([this] { finish({}, {}, "launch_failed"); });
+        model::postWhileAlive(_app, _alive, [this] { finish({}, {}, "launch_failed"); });
         return;
     }
     blockDeepLinks(_profile);
@@ -297,7 +299,7 @@ void BrowserLogin::start(std::function<void(std::string)> progress, Done done) {
     };
     _proc = std::make_shared<base::Process>();
     if (!_proc->start(b.exe, args)) {
-        _app.post([this] { finish({}, {}, "launch_failed"); });
+        model::postWhileAlive(_app, _alive, [this] { finish({}, {}, "launch_failed"); });
         return;
     }
     _startMs = double(base::monotonicMs());

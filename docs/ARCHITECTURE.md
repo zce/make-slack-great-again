@@ -86,6 +86,9 @@ wires workspace actions and starts saved workspaces.
 
 - Store mutations and observers are UI-thread operations. Observers unregister
   before the Store or observer owner goes away.
+- `App::post` is not canceled when its owner dies. A posted callback that
+  dereferences an owner must carry a lifetime token; use `model::postWhileAlive`
+  for this next-turn handoff. Timers and requests instead use owner cancellation.
 - `net::Client` owns request workers. Completion/progress callbacks are posted
   to UI thread; cancellation removes pending delivery; destruction stops workers.
 - `net::WebSocket` owns its reader thread. Events use a weak implementation

@@ -88,6 +88,7 @@ private:
     uint64_t                        _probeTimer = 0, _pollTimer = 0, _exitTimer = 0;
     net::RequestId                  _probeReq = 0;
     double                          _startMs = 0, _cookieAtMs = 0;
+    std::shared_ptr<bool>           _alive = std::make_shared<bool>(true);
     bool                            _done = false, _evaluating = false, _wipeScheduled = false;
     std::string                     _cookie;
     std::vector<std::string>        _hosts;      // *.slack.com URLs/domains seen (fallback)

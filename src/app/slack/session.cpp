@@ -236,8 +236,10 @@ void TokenDeriver::next() {
         _pending = 0;
         linkOrgTokens(_valid);
         Done d = std::move(_done);
-        if (d)
-            d(std::move(_valid), _valid.empty() ? _lastError : std::string());
+        if (d) {
+            const std::string error = _valid.empty() ? _lastError : std::string();
+            d(std::move(_valid), error);
+        }
         return;
     }
     const TeamSession &cand = _queue[_index];
