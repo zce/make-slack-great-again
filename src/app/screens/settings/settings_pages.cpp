@@ -817,7 +817,6 @@ void SettingsDialog::buildGeneral() {
             changed();
         };
     }
-
 }
 
 void SettingsDialog::refreshRam() {

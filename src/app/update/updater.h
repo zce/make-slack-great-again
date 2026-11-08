@@ -16,6 +16,7 @@
 // footer's list. Every callback runs on the UI thread.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -93,7 +94,7 @@ public:
     using Listener = std::function<void(const Event &)>;
     int  listen(Listener fn); // an id for unlisten
     void unlisten(int id);
-    std::size_t listenerCount() const { return _listeners.size(); } // tests
+    std::size_t listenerCountForTesting() const { return _listeners.size(); } // tests
 
     // A manifest was read (the "Last checked" time, epoch secs): persist it.
     std::function<void(int64_t when)> onChecked;

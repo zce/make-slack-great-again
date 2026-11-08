@@ -1182,23 +1182,23 @@ TEST("settings: updater listener follows the About page lifecycle") {
     update::Updater updater(app().platform(), client, 0);
     Harness h;
     h.sh->setUpdater(&updater);
-    CHECK(updater.listenerCount() == 1);
+    CHECK(updater.listenerCountForTesting() == 1);
 
     SettingsDialog &d = h.open();
-    CHECK(updater.listenerCount() == 1); // Appearance has no updater UI listener
+    CHECK(updater.listenerCountForTesting() == 1); // Appearance has no updater UI listener
     d.showPage(SettingsDialog::Page::About);
-    CHECK(updater.listenerCount() == 2);
+    CHECK(updater.listenerCountForTesting() == 2);
     d.showPage(SettingsDialog::Page::About);
-    CHECK(updater.listenerCount() == 2); // no duplicate subscription
+    CHECK(updater.listenerCountForTesting() == 2); // no duplicate subscription
 
     d.showPage(SettingsDialog::Page::General);
-    CHECK(updater.listenerCount() == 1);
+    CHECK(updater.listenerCountForTesting() == 1);
     d.showPage(SettingsDialog::Page::About);
-    CHECK(updater.listenerCount() == 2);
+    CHECK(updater.listenerCountForTesting() == 2);
 
     h.key(plat::Key::Escape);
     CHECK(h.sh->settingsDialog() == nullptr);
-    CHECK(updater.listenerCount() == 1); // dialog destruction unregisters its listener
+    CHECK(updater.listenerCountForTesting() == 1); // dialog destruction unregisters its listener
 }
 
 TEST("settings: the last update check reads as a relative time") {

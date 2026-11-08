@@ -77,9 +77,6 @@ public:
     void                   showPage(Page p);
     Page                   page() const { return _page; }
     bool                   diagnosticsTimerActive() const { return _ramTimer != 0; } // tests
-#ifdef MSGA_SELF_UPDATE
-    bool                   updaterListenerActive() const { return _updListener != 0; } // tests
-#endif
     ui::SectionList       &sections() { return *_sections; }
     ui::ScrollView        &scroll() { return *_scroll; }
     // The first visible view on the current page whose accessible name is
