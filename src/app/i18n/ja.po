@@ -1010,6 +1010,10 @@ msgid "Dark"
 msgstr "ダーク"
 
 #: src/app/screens/settings/settings_dialog.cpp
+msgid "System"
+msgstr ""
+
+#: src/app/screens/settings/settings_dialog.cpp
 msgid "Color theme"
 msgstr "カラーテーマ"
 
@@ -1611,70 +1615,6 @@ msgid "Clear state"
 msgstr "状態をクリア"
 
 #: src/app/screens/settings/settings_pages.cpp
-msgid "Version"
-msgstr "バージョン"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Version & Updates"
-msgstr "バージョンとアップデート"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Version %1, built %2"
-msgstr "バージョン %1（ビルド: %2）"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Check for updates automatically"
-msgstr "更新を自動的に確認する"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid ""
-"When off, msga never contacts the update server on its own — use the\n"
-"button below to look for a new version."
-msgstr ""
-"オフにすると、msga は自動で更新サーバーに接続しません。\n"
-"新しいバージョンを探すときは下のボタンを使ってください。"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Check for updates"
-msgstr "アップデートを確認"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Last checked: %1"
-msgstr "最終確認: %1"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Never checked"
-msgstr "未確認"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Update checks not available."
-msgstr "アップデートの確認は利用できません。"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Checking for updates…"
-msgstr "アップデートを確認中…"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Update downloaded — restart the app to apply."
-msgstr "アップデートをダウンロードしました — 適用するにはアプリを再起動してください。"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "msga is up to date."
-msgstr "msgaは最新の状態です。"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Version %1 available — downloading…"
-msgstr "バージョン%1が利用可能です — ダウンロード中…"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Downloading update… %1%"
-msgstr "アップデートをダウンロード中… %1%"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Check failed: %1"
-msgstr "確認に失敗しました: %1"
-
-#: src/app/screens/settings/settings_pages.cpp
 msgid "Window"
 msgstr "ウィンドウ"
 
@@ -1824,12 +1764,72 @@ msgid "Key saved."
 msgstr "キーを保存しました。"
 
 #: src/app/screens/settings/settings_pages.cpp
-msgid "Diagnostics"
-msgstr "診断"
-
-#: src/app/screens/settings/settings_pages.cpp
 msgid "App memory: %1"
 msgstr "アプリのメモリ: %1"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Version & Updates"
+msgstr "バージョンとアップデート"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Version %1, built %2"
+msgstr "バージョン %1（ビルド: %2）"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Check for updates automatically"
+msgstr "更新を自動的に確認する"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid ""
+"When off, msga never contacts the update server on its own — use the\n"
+"button below to look for a new version."
+msgstr ""
+"オフにすると、msga は自動で更新サーバーに接続しません。\n"
+"新しいバージョンを探すときは下のボタンを使ってください。"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Check for updates"
+msgstr "アップデートを確認"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Last checked: %1"
+msgstr "最終確認: %1"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Never checked"
+msgstr "未確認"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Update checks not available."
+msgstr "アップデートの確認は利用できません。"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Checking for updates…"
+msgstr "アップデートを確認中…"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Update downloaded — restart the app to apply."
+msgstr "アップデートをダウンロードしました — 適用するにはアプリを再起動してください。"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "msga is up to date."
+msgstr "msgaは最新の状態です。"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Version %1 available — downloading…"
+msgstr "バージョン%1が利用可能です — ダウンロード中…"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Downloading update… %1%"
+msgstr "アップデートをダウンロード中… %1%"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Check failed: %1"
+msgstr "確認に失敗しました: %1"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Diagnostics"
+msgstr "診断"
 
 #: src/app/screens/settings/settings_pages.cpp
 msgid "License"
@@ -3472,6 +3472,9 @@ msgstr "ダウンロードに失敗しました: %1"
 #: src/app/update/updater.cpp
 msgid "Downloaded update is corrupt (checksum mismatch)."
 msgstr "ダウンロードした更新ファイルが破損しています（チェックサム不一致）。"
+
+#~ msgid "Version"
+#~ msgstr "バージョン"
 
 #~ msgid "%1 to move · %2 to switch workspace · %3 to open"
 #~ msgstr "%1 で移動 · %2 でワークスペースを切り替え · %3 で開く"
