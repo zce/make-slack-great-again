@@ -1011,7 +1011,7 @@ msgstr "ダーク"
 
 #: src/app/screens/settings/settings_dialog.cpp
 msgid "System"
-msgstr ""
+msgstr "システム"
 
 #: src/app/screens/settings/settings_dialog.cpp
 msgid "Color theme"
