@@ -28,20 +28,21 @@ Implementation: [#3](https://github.com/zce/make-slack-great-again/pull/3), [#8]
 - Added dedicated Sidebar handling for custom Sections and Slack Connect **Externals**, with workspace-specific section ordering and collapsed-unread preferences.
 - Improved message hover actions and context menus, including clearer **Reply in thread** behavior and returning focus to the existing thread composer when replying inside a thread.
 - Added keyboard navigation between unread conversations and a shortcut to jump to the first unread message. A selected conversation remains visible in a collapsed group after it becomes read, until navigation moves elsewhere.
+- Fixed followed Threads feed actions by keeping feed-only roots and replies in the canonical Store, without polluting channel history or channel unread/latest state; composer visibility now follows the active-conversation state.
 - Reconciled DM unread state after remote reads so badges and unread navigation stay consistent across clients.
 
-Implementation: [#4](https://github.com/zce/make-slack-great-again/pull/4), [#11](https://github.com/zce/make-slack-great-again/pull/11), [#12](https://github.com/zce/make-slack-great-again/pull/12), [#13](https://github.com/zce/make-slack-great-again/pull/13), [#36](https://github.com/zce/make-slack-great-again/pull/36).
+Implementation: [#4](https://github.com/zce/make-slack-great-again/pull/4), [#11](https://github.com/zce/make-slack-great-again/pull/11), [#12](https://github.com/zce/make-slack-great-again/pull/12), [#13](https://github.com/zce/make-slack-great-again/pull/13), [#30](https://github.com/zce/make-slack-great-again/pull/30), [#36](https://github.com/zce/make-slack-great-again/pull/36).
 
 ### Unified message search
 
 - The title-bar search, `Ctrl+K` and `Ctrl+F` (use `Cmd` on macOS) share one message-first popup. `Ctrl+K` searches globally; `Ctrl+F` starts scoped to the current conversation.
-- Added paginated Slack message search with **Load more**, scope handling and support for Slack search operators passed through to the API.
-- Improved result context with conversation, sender and timestamp details, highlighted matches and readable previews.
+- Added cursor-based Slack message search with independent pagination per workspace, automatic loading as results scroll, retry of the exact failed cursor and support for Slack search operators passed through to the API.
+- Kept the quick-search popup compact: conversation and people suggestions appear before message results, with readable context, highlighted matches and one-line previews.
 - Search failures are represented as errors rather than being mistaken for an empty result set; asynchronous requests are guarded so stale responses do not replace the active query.
 
 This remains a compact search popup, not a full Slack search center or file-content search interface.
 
-Implementation: [#6](https://github.com/zce/make-slack-great-again/pull/6), [#14](https://github.com/zce/make-slack-great-again/pull/14).
+Implementation: [#6](https://github.com/zce/make-slack-great-again/pull/6), [#14](https://github.com/zce/make-slack-great-again/pull/14), [#31](https://github.com/zce/make-slack-great-again/pull/31).
 
 ### Message delivery and live-state reliability
 
@@ -68,9 +69,10 @@ Implementation: [#2](https://github.com/zce/make-slack-great-again/pull/2), [#9]
 - Added auto-hiding overlay scrollbars.
 - Added a selectable UI font family.
 - Corrected Linux XDG data/cache directory handling.
-- Added Linux proxy discovery from environment variables and GNOME settings, including `no_proxy` handling. See [Network proxy on Linux](#network-proxy-on-linux) for precedence, supported schemes and limitations.
+- Hardened Linux proxy transport and GNOME settings behavior: HTTP/WS forward-proxy requests, CONNECT for HTTPS/WSS, SOCKS5 tunneling, explicit Manual/None handling, and visible errors for unsupported PAC/WPAD modes. See [Network proxy on Linux](#network-proxy-on-linux) for precedence, supported schemes and limitations.
+- Hardened desktop-entry executable-path escaping and XDG runtime-directory validation.
 
-Implementation: [#5](https://github.com/zce/make-slack-great-again/pull/5), [#7](https://github.com/zce/make-slack-great-again/pull/7), [#18](https://github.com/zce/make-slack-great-again/pull/18), [#20](https://github.com/zce/make-slack-great-again/pull/20), [#22](https://github.com/zce/make-slack-great-again/pull/22).
+Implementation: [#5](https://github.com/zce/make-slack-great-again/pull/5), [#7](https://github.com/zce/make-slack-great-again/pull/7), [#18](https://github.com/zce/make-slack-great-again/pull/18), [#20](https://github.com/zce/make-slack-great-again/pull/20), [#22](https://github.com/zce/make-slack-great-again/pull/22), [#35](https://github.com/zce/make-slack-great-again/pull/35).
 
 ### Independent CI and releases
 
@@ -81,7 +83,7 @@ Implementation: [#5](https://github.com/zce/make-slack-great-again/pull/5), [#7]
 
 Fork releases provide **Linux x86_64** and **Windows x86_64** binaries. macOS packages shown by upstream are not fork releases.
 
-Implementation: [#1](https://github.com/zce/make-slack-great-again/pull/1), [#17](https://github.com/zce/make-slack-great-again/pull/17), [#23](https://github.com/zce/make-slack-great-again/pull/23), [#32](https://github.com/zce/make-slack-great-again/pull/32).
+Implementation: [#1](https://github.com/zce/make-slack-great-again/pull/1), [#17](https://github.com/zce/make-slack-great-again/pull/17), [#23](https://github.com/zce/make-slack-great-again/pull/23), [#32](https://github.com/zce/make-slack-great-again/pull/32), [#39](https://github.com/zce/make-slack-great-again/pull/39).
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
 ![C++](https://img.shields.io/badge/language-C%2B%2B20-00599C?logo=cplusplus&logoColor=white)
