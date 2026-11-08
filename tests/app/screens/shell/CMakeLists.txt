@@ -9,13 +9,13 @@ foreach(s shell shortcuts pages shell_ui)
     target_sources(msga_app_tests PRIVATE test_${s}.cpp)
 endforeach()
 msga_add_test(shell_tests COMMAND msga_app_tests test_shell TZ
-    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-shell LABELS shell)
+    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-shell LABELS shell COST 14.9)
 msga_add_test(shortcut_tests COMMAND msga_app_tests test_shortcuts TZ
-    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-shortcuts LABELS shell)
+    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-shortcuts LABELS shell COST 5.3)
 msga_add_test(pages_tests COMMAND msga_app_tests test_pages TZ
-    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-pages LABELS shell)
+    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-pages LABELS shell COST 4.2)
 msga_add_test(shell_ui_tests COMMAND msga_app_tests test_shell_ui TZ
-    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-shell-ui LABELS shell)
+    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-shell-ui LABELS shell COST 5.9)
 
 # Its own throwaway HOME: it writes a launcher entry and a socket there.
 target_sources(msga_app_tests PRIVATE test_identity.cpp)

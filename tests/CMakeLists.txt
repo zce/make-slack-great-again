@@ -16,7 +16,7 @@ target_include_directories(msga_test PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(msga_test PUBLIC msga_base msga_flags)
 
 # msga_add_test(<name> COMMAND <exe> [suite] [group] [TZ] [HOME <dir>]
-#               [ENV <var=value>...] [LABELS <label>...])
+#               [ENV <var=value>...] [LABELS <label>...] [COST <seconds>])
 # One ctest test, on plat's headless backend. TZ pins a zone, so "local
 # time" is the same anywhere; HOME gives the test a throwaway home <dir>
 # with the XDG folders under it, so it never touches the user's settings or
@@ -24,7 +24,7 @@ target_link_libraries(msga_test PUBLIC msga_base msga_flags)
 # exit); a <dir> must have "test-home" in its name for runAll to keep it
 # (support/test.cpp).
 function(msga_add_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "TZ" "HOME" "COMMAND;ENV;LABELS")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "TZ" "HOME;COST" "COMMAND;ENV;LABELS")
     set(env "PLAT_BACKEND=headless")
     if(arg_TZ)
         list(APPEND env "TZ=Europe/Stockholm")
@@ -40,6 +40,9 @@ function(msga_add_test name)
     list(APPEND env ${arg_ENV})
     add_test(NAME ${name} COMMAND ${arg_COMMAND})
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "${env}")
+    if(NOT arg_COST STREQUAL "")
+        set_tests_properties(${name} PROPERTIES COST "${arg_COST}")
+    endif()
     if(arg_LABELS)
         set_tests_properties(${name} PROPERTIES LABELS "${arg_LABELS}")
     endif()

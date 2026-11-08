@@ -39,6 +39,8 @@ jobs:
       CCACHE_MAXSIZE: 600M
       # Run demo tests in the same build tree on GCC PR validation only.
       MSGA_DEMO: ${{ github.event_name == 'pull_request' && matrix.compiler == 'gcc' }}
+      # GCC uses ordinary TUs for ccache reuse; Clang keeps exercising PCH.
+      MSGA_PCH: ${{ matrix.compiler == 'gcc' && 'OFF' || 'AUTO' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,13 +71,30 @@ jobs:
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DMSGA_BUILD_TESTS=ON \
             -DMSGA_DEMO=${MSGA_DEMO} \
+            -DMSGA_PCH=${MSGA_PCH} \
             -DMSGA_SELF_UPDATE=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Reset compiler cache statistics
         run: ccache --zero-stats
-      - name: Build
-        run: cmake --build build-ci --parallel 4
+      - name: Build required CI targets
+        run: |
+          set -euo pipefail
+          # Build the app and every executable CTest runs. Developer galleries
+          # and size probes are not part of CI validation.
+          targets=(
+            msga
+            msga_base_tests
+            msga_net_tests
+            gfx_tests
+            text_tests
+            ui_tests
+            msga_app_tests
+          )
+          if [[ "${MSGA_DEMO}" == "true" ]]; then
+            targets+=(demo_tests)
+          fi
+          cmake --build build-ci --parallel 4 --target "${targets[@]}"
       - name: Test release provenance guard
         run: bash tests/workflows/test-release-provenance.sh
       # Four workers match the runner's CPU capacity. Test HOME/XDG state is
