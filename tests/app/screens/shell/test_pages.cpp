@@ -543,9 +543,15 @@ TEST("visited: opening a conversation is saved; the stamps keep it listed after 
     pump();
     CHECK_FALSE(clear->enabled());
     CHECK(h.sh->sidebar().visited().count("D0SAM") == 0);
-    const shell::Settings after = shell::Settings::load(path);
-    for (const auto &[id, at] : after.visitedAt)
-        CHECK(id != "D0SAM");
+    // Settings are persisted off-thread; wait for the cleared state to reach disk.
+    CHECK(until([&] {
+        const shell::Settings after = shell::Settings::load(path);
+        return std::none_of(
+            after.visitedAt.begin(),
+            after.visitedAt.end(),
+            [](const auto &entry) { return entry.first == "D0SAM"; }
+        );
+    }));
     file::remove(path);
     file::remove(dir);
 }

@@ -1571,6 +1571,30 @@ msgid "Clear cache"
 msgstr "キャッシュをクリア"
 
 #: src/app/screens/settings/settings_pages.cpp
+msgid "Message history"
+msgstr ""
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Compact (16 → 12 MiB)"
+msgstr ""
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Balanced (32 → 24 MiB)"
+msgstr ""
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Generous (64 → 48 MiB)"
+msgstr ""
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Across all workspaces. The first value is the trim threshold; the second is the target."
+msgstr ""
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Visible, unread, pinned, saved, pending and uncertain messages stay protected, so usage may exceed this soft budget. It is not a total RAM cap; older history can be loaded again."
+msgstr ""
+
+#: src/app/screens/settings/settings_pages.cpp
 msgid "State"
 msgstr "状態"
 
