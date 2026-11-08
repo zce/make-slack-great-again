@@ -80,6 +80,7 @@ constexpr float kTitleBarH = 46; // compact integrated title and toolbar (48 px 
 constexpr float kRailW = 64;
 constexpr float kListW = 248, kListMinW = 180, kListMaxW = 400;
 constexpr size_t kMessageHistoryBudgetBytes = size_t(32) << 20;
+constexpr size_t kMessageHistoryTargetBytes = size_t(24) << 20;
 constexpr float kResizeEdge          = 6;
 // Settings changes are written this long after the first of a burst.
 constexpr int   kSettingsSaveDelayMs = 500;
@@ -3758,7 +3759,10 @@ void Shell::trimHistoryBudget() {
     for (const model::Store *store : stores)
         total += store->historyBytes();
 
-    while (total > kMessageHistoryBudgetBytes) {
+    // Hysteresis avoids repeated small evictions when traffic hovers around
+    // the ceiling: once over 32 MiB, reclaim back to 24 MiB.
+    while (total > kMessageHistoryTargetBytes &&
+           total > kMessageHistoryBudgetBytes) {
         model::Store *oldest = nullptr;
         uint64_t      age    = std::numeric_limits<uint64_t>::max();
         for (model::Store *store : stores) {
