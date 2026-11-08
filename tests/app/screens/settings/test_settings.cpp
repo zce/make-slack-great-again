@@ -504,7 +504,7 @@ TEST("settings: the pages and their sections, in order") {
 #endif
           "Presence",
           "Slack connection",
-          "Import Slack session\\xE2\\x80\\xA6",
+          "Import Slack session\xE2\x80\xA6",
           "GIF picker",
           "API key"}},
         {SettingsDialog::Page::About,
@@ -550,7 +550,7 @@ TEST("settings: the pages and their sections, in order") {
     pump();
     CHECK(d.find("Version & Updates") != nullptr);
     CHECK(d.find("Diagnostics") != nullptr);
-    CHECK(d.find("App memory: \\xE2\\x80\\x94") == nullptr); // a live process metric
+    CHECK(d.find("App memory: \xE2\x80\x94") == nullptr); // a live process metric
 }
 
 TEST("settings: diagnostics monitoring follows the About page") {
@@ -1135,7 +1135,10 @@ TEST("settings: General and Storage controls persist at once") {
 #endif
     CHECK(r.presence == 2 && !r.slackSession);
     CHECK_STR(r.giphyKey, "giphy-key");
-    CHECK(d.find("RAM used: \xE2\x80\x94") == nullptr); // a live number
+    CHECK(d.find("Diagnostics") == nullptr); // diagnostics now live in About
+    d.showPage(SettingsDialog::Page::About);
+    pump();
+    CHECK(d.find("App memory: \xE2\x80\x94") == nullptr); // a live process metric
 
     d.showPage(SettingsDialog::Page::Storage);
     pump();
