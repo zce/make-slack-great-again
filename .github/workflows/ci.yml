@@ -4,7 +4,6 @@ on:
   push:
     branches: [master]
   pull_request:
-    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -105,17 +104,170 @@ jobs:
       # The normal CI build deliberately excludes demo-only code. Compile the
       # scripted soak harness separately on GCC so it cannot silently rot.
       - name: Build and test demo soak harness
-        if: matrix.compiler == 'gcc'
+        if: github.event_name == 'pull_request' && matrix.compiler == 'gcc'
         run: |
-          cmake -S . -B build-ci -G Ninja \
+          cmake -S . -B build-demo -G Ninja \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DMSGA_BUILD_TESTS=ON \
             -DMSGA_DEMO=ON \
             -DMSGA_SELF_UPDATE=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-ci --target msga demo_tests --parallel 4
-          ctest --test-dir build-ci --output-on-failure -R demo_tests
+          cmake --build build-demo --target msga demo_tests --parallel 4
+          ctest --test-dir build-demo --output-on-failure -R '^demo_tests
+
+      # Make the actual production binary during successful master CI, so
+      # publishing can reuse this verified SHA's artifact without compiling again.
+      - name: Configure production build
+        if: github.event_name == 'push' && matrix.artifact
+        run: |
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DMSGA_BUILD_TESTS=OFF \
+            -DMSGA_DEMO=OFF \
+            -DMSGA_SELF_UPDATE=OFF \
+            -DMSGA_SIZE_MAP=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build production binary
+        if: github.event_name == 'push' && matrix.artifact
+        run: cmake --build build-release --target msga --parallel 4
+      - name: Package and checksum
+        if: github.event_name == 'push' && matrix.artifact
+        run: |
+          set -euo pipefail
+          mkdir -p release-dist
+          strip build-release/msga
+          cp build-release/msga release-dist/msga-linux-x86_64
+          ldd release-dist/msga-linux-x86_64 | tee release-dist/DEPENDENCIES.txt
+          if grep -q 'not found' release-dist/DEPENDENCIES.txt; then
+            echo "Missing shared-library dependencies in release binary" >&2
+            exit 1
+          fi
+          (cd release-dist && sha256sum msga-linux-x86_64 > SHA256SUMS)
+      - name: Upload production artifact
+        if: github.event_name == 'push' && matrix.artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msga-linux-x86_64-release
+          path: release-dist/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+
+  windows:
+    name: Windows x86_64 / MinGW
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 1G
+      CCACHE_COMPILERCHECK: content
+    steps:
+      # MSYS2 tools expect LF in checked-out source files.
+      - name: Configure Git line endings
+        run: git config --global core.autocrlf input
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up MSYS2
+        id: msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: MINGW64
+          # windows-2025 includes MSYS2 at C:\\msys64; reuse it instead of
+          # downloading and extracting a fresh base installation each run.
+          release: false
+          update: true
+          suppress-deprecation-warnings: msystem-mingw64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-ccache
+      # The font libraries are pinned by URL_HASH in font_libs.cmake.
+      # Keep their extracted FetchContent sources outside build-release, which
+      # the release script deliberately recreates on a clean runner.
+      - name: Cache Windows FetchContent sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: windows-fetchcontent-${{ hashFiles('src/text/font_libs.cmake') }}
+      # ccache's compiler identity check protects this rolling MSYS2 toolchain
+      # cache when GCC or its dependencies change.
+      - name: Cache Windows compiler outputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/ccache
+          key: windows-ccache-${{ hashFiles('scripts/msys2.ps1', 'src/text/font_libs.cmake') }}-${{ github.sha }}
+          restore-keys: |
+            windows-ccache-${{ hashFiles('scripts/msys2.ps1', 'src/text/font_libs.cmake') }}-
+      - name: Build Windows release executable
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\release.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package and checksum
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'build-release\msga.exe'
+          if (-not (Test-Path $binary -PathType Leaf)) {
+            throw "Windows release executable not found: $binary"
+          }
+
+          # A release must not depend on DLLs shipped by the MSYS2 toolchain.
+          $objdump = Join-Path $env:MSYS2_ROOT 'mingw64\bin\objdump.exe'
+          $imports = & $objdump -p $binary
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not inspect Windows executable imports.'
+          }
+          $runtimeDlls = @($imports | Select-String -Pattern '^\s*DLL Name:\s*(libgcc|libstdc\+\+|libwinpthread|libatomic|libgomp)' -CaseSensitive:$false)
+          if ($runtimeDlls.Count -gt 0) {
+            $names = ($runtimeDlls | ForEach-Object { $_.Line.Trim() }) -join ', '
+            throw "Windows release depends on MinGW runtime DLLs: $names"
+          }
+
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'release-dist'
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
+          $asset = 'msga-windows-x86_64.exe'
+          $packagedBinary = Join-Path $dist $asset
+          Copy-Item $binary $packagedBinary
+          $hash = (Get-FileHash -Path $packagedBinary -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText(
+            (Join-Path $dist 'SHA256SUMS'),
+            "$hash  $asset`n",
+            [Text.Encoding]::ASCII
+          )
+      # PR builds are for manual testing; keep them separate from production releases.
+      - name: Upload pull request test build
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msga-windows-x86_64-pr${{ github.event.pull_request.number }}
+          path: release-dist/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload production artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msga-windows-x86_64-release
+          path: release-dist/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
 
       # Make the actual production binary during successful master CI, so
       # publishing can reuse this verified SHA's artifact without compiling again.
