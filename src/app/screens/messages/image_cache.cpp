@@ -21,6 +21,8 @@ constexpr int64_t kMissingMemoMs = 5000;
 // Failed entries kept (each answers failed() and stops a retry storm); the
 // oldest beyond go, so a long session's dead links don't pile up.
 constexpr size_t  kMaxFailed     = 256;
+// The pixel budget doesn't account for hash-map nodes, keys or Entry objects.
+constexpr size_t  kMaxEntries    = 2048;
 // A picture delivered to waiting views counts as in use this long, until
 // they paint and take it (a frame, give or take a busy loop).
 constexpr int64_t kFreshMs       = 1000;
@@ -166,6 +168,8 @@ ImageCache::ImageCache(plat::App &app, size_t budget)
 }
 
 ImageCache::~ImageCache() {
+    _app.cancelTimer(_reclaimTimer);
+    _reclaimTimer = 0;
     _impl->owner = nullptr; // results still in the post queue are dropped
     _impl->worker.stop();   // and queued decodes
 }
@@ -374,7 +378,7 @@ void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool o
     _waited.erase(e);
     for (ui::View *v : waiters)
         v->update();
-    evict();
+    reclaim();
 }
 
 void ImageCache::evict() {
@@ -382,13 +386,14 @@ void ImageCache::evict() {
     // budget (one bigger than all of it neither goes nor pushes the rest
     // out); of the others, the least recently used goes first. A walk over
     // the ready entries, only while over budget.
-    if (_bytes > _budget) {
+    if (_bytes > _budget || _entries.size() > kMaxEntries) {
         const int64_t now  = base::monotonicMs();
         size_t        held = 0;
         for (const Entry *e = _lruHead; e; e = e->next)
             if (e->inUse(now))
                 held += e->bytes;
-        for (Entry *e = _lruTail; e && _bytes - held > _budget;) {
+        for (Entry *e = _lruTail;
+             e && (_bytes - held > _budget || _entries.size() > kMaxEntries);) {
             Entry *const prev = e->prev;
             if (!e->inUse(now)) {
                 lruUnlink(*e);
@@ -408,9 +413,33 @@ void ImageCache::evict() {
     _failed.erase(_failed.begin(), _failed.begin() + ptrdiff_t(drop));
 }
 
+void ImageCache::reclaim() {
+    // evict() also bounds failed entries, even when decoded bytes are under
+    // budget; reclamation is the common maintenance point for both.
+    evict();
+    if ((_bytes <= _budget && _entries.size() <= kMaxEntries) || _reclaimTimer)
+        return;
+
+    // A freshly delivered bitmap is briefly protected until its waiting view
+    // paints and takes a reference. If that view disappears before painting,
+    // no later cache operation may arrive to trigger eviction; retry once
+    // after that hand-off window, but only when no view currently owns it.
+    const int64_t now = base::monotonicMs();
+    for (Entry *e = _lruHead; e; e = e->next) {
+        const long refs = e->animated ? e->frames.use_count() : e->still.use_count();
+        if (refs == 1 && e->fresh && now - e->fresh < kFreshMs) {
+            _reclaimTimer = _app.addTimer(int(kFreshMs), false, [this] {
+                _reclaimTimer = 0;
+                reclaim();
+            });
+            break;
+        }
+    }
+}
+
 void ImageCache::setBudget(size_t b) {
     _budget = b;
-    evict();
+    reclaim();
 }
 
 size_t ImageCache::cachedBytes() const {
@@ -481,6 +510,7 @@ CachedImage::~CachedImage() {
     ui::app()->cancelTimer(_settle);
     if (_waiter) // only then can a pending request name it
         _cache.forget(this);
+    drop(); // release pixels before asking the cache to reclaim them
 }
 
 void CachedImage::setPath(std::string path) {
@@ -534,6 +564,7 @@ void CachedImage::drop() {
     _held.reset();
     _heldW = _heldH = 0;
     _askW = _askH = 0;
+    _cache.reclaim();
 }
 
 ImageCache::Ref CachedImage::ref() const {

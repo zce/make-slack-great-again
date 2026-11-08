@@ -259,6 +259,7 @@ private:
     void updateState();
     void subscribe();
     void onChange(const model::Change &ch);
+    void updateVisibleRange();
     void usersChanged(); // a coalesced Users burst: re-bind what it touched
     // Item i (a message) is grouped as its message, its neighbours' and the
     // grouping rules now say (an Update need not rebuild the items).

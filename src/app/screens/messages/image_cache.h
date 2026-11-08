@@ -121,6 +121,9 @@ public:
     size_t cachedBytes() const;             // without them: what clearing frees
     size_t budget() const { return _budget; }
     void   setBudget(size_t b);
+    // Called after a view lets go of decoded pixels: release over-budget
+    // entries immediately instead of waiting for the next download.
+    void   reclaim();
     size_t entryCount() const;
     // Requests queued or decoding (tests pump until this is 0).
     size_t pending() const;
@@ -170,6 +173,7 @@ private:
     };
     std::unordered_map<std::string, SizeMemo> _sizes; // bounded (kMaxSizeMemos)
     size_t                                    _bytes = 0, _budget, _sizeProbes = 0;
+    plat::TimerId                             _reclaimTimer = 0;
     uint64_t                                  _nextId       = 1;
     bool                                      _animate      = true;
     bool                                      _animateEmoji = true;

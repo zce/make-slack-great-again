@@ -187,6 +187,16 @@ public:
     // (and mention) count; a reply updates its root's replyCount,
     // latestReply and replyUsers. Clears that user's typing indicator.
     void addMessage(ConvRef c, Message m);
+    // History is accounted across every attached workspace by Shell. The
+    // Store exposes estimates and one LRU eviction step; it never invents a
+    // per-conversation quota.
+    static constexpr size_t kHistoryWarmMessages = 50;
+    static constexpr size_t kHistoryViewportBuffer = 100;
+    void setVisibleConversation(ConvRef c);
+    void setVisibleRange(ConvRef c, Ts firstVisible, Ts thread = 0);
+    size_t historyBytes() const; // estimated message/history storage, not RSS
+    uint64_t oldestReclaimableHistory() const; // UINT64_MAX when nothing can be evicted
+    size_t trimOldestHistory(); // estimated bytes released
     // Edits a message in place (top-level or reply), then fires Update.
     bool updateMessage(ConvRef c, Ts ts, const std::function<void(Message &)> &fn);
     bool removeMessage(ConvRef c, Ts ts); // a removed reply also decrements its root
@@ -380,6 +390,11 @@ public:
     void                     unobserve(ObserverId id); // safe inside a callback, even its own
 
 private:
+    size_t                reclaimablePrefix(ConvRef c) const;
+    bool                  hasReclaimableThreads(ConvRef c) const;
+    bool                  canTrimHistory(ConvRef c) const;
+    size_t                trimHistory(ConvRef c);
+    size_t                conversationHistoryBytes(const Conversation &c) const;
     Thread               *findThread(Conversation &c, Ts root);
     const Thread         *findThread(const Conversation &c, Ts root) const;
     std::vector<Message> *listFor(Conversation &c, Ts thread, bool create);
@@ -414,6 +429,11 @@ private:
     std::unordered_map<std::string, std::string> _channelNames;
     std::unordered_map<std::string, UserRef>     _linkedAuthors; // "conv/ts"
     const Message                               *_arrived        = nullptr;
+    ConvRef                                      _visibleConv       = kNoConv;
+    Ts                                           _visibleFirstTs    = 0;
+    Ts                                           _visibleThread     = 0;
+    bool                                         _historyRetention  = false;
+    std::vector<uint64_t>                        _historyAccess;
     int                                          _unreadThreads  = 0;
     int                                          _unreadActivity = 0;
     bool                                         _realNames      = true;

@@ -108,6 +108,102 @@ TEST("store: a composer draft is kept per conversation and thread") {
     CHECK_FALSE(f.s.draft(f.c, 0));
 }
 
+TEST("store: history trimming preserves the visible anchor and pagination") {
+    Fixture f;
+    f.s.setVisibleConversation(f.c);
+    f.s.setVisibleRange(f.c, 250);
+    f.s.updateConversation(f.c, [](Conversation &c) { c.lastRead = 1000; });
+    std::vector<Message> history;
+    for (Ts ts = 1; ts <= 300; ++ts)
+        history.push_back(msg(ts, f.mira));
+    f.s.addPage(f.c, std::move(history));
+
+    CHECK(f.s.historyBytes() > 0);
+    CHECK(f.s.trimOldestHistory() > 0);
+    const Conversation &visible = f.s.conversation(f.c);
+    CHECK(visible.messages.front().ts == 150);
+    CHECK(visible.messages.back().ts == 300);
+    CHECK(f.s.findMessage(f.c, 250) != nullptr);
+    CHECK(visible.hasMoreBefore);
+}
+
+TEST("store: global LRU trims the oldest conversation first") {
+    Fixture f;
+    Conversation second;
+    second.id = "C2";
+    second.name = "random";
+    const ConvRef c2 = f.s.addConversation(std::move(second));
+    f.s.updateConversation(f.c, [](Conversation &c) { c.lastRead = 1000; });
+    f.s.updateConversation(c2, [](Conversation &c) { c.lastRead = 1000; });
+
+    auto history = [&](Ts first) {
+        std::vector<Message> messages;
+        for (Ts ts = first; ts < first + 60; ++ts)
+            messages.push_back(msg(ts, f.mira));
+        return messages;
+    };
+    f.s.setVisibleConversation(f.c);
+    f.s.addPage(f.c, history(1));
+    f.s.setVisibleConversation(c2);
+    f.s.addPage(c2, history(101));
+    f.s.setVisibleConversation(kNoConv);
+
+    CHECK(f.s.oldestReclaimableHistory() != UINT64_MAX);
+    CHECK(f.s.trimOldestHistory() > 0);
+    CHECK(f.s.conversation(f.c).messages.size() == Store::kHistoryWarmMessages);
+    CHECK(f.s.conversation(c2).messages.size() == 60);
+}
+
+TEST("store: unread and unconfirmed history is never evicted") {
+    Fixture f;
+    f.s.setVisibleConversation(f.c);
+    f.s.updateConversation(f.c, [](Conversation &c) { c.lastRead = 1000; });
+    std::vector<Message> history;
+    for (Ts ts = 1; ts <= 300; ++ts) {
+        Message m = msg(ts, f.mira);
+        if (ts == 25)
+            m.delivery = DeliveryState::Uncertain;
+        history.push_back(std::move(m));
+    }
+    f.s.addPage(f.c, std::move(history));
+    f.s.setVisibleConversation(kNoConv);
+    CHECK(f.s.trimOldestHistory() > 0);
+    CHECK(f.s.findMessage(f.c, 25) != nullptr);
+
+    Fixture unread;
+    unread.s.setVisibleConversation(unread.c);
+    unread.s.addPage(unread.c, page({1, 2, 3}, unread.mira));
+    unread.s.setVisibleConversation(kNoConv);
+    CHECK(unread.s.trimOldestHistory() == 0);
+    CHECK(unread.s.conversation(unread.c).messages.size() == 3);
+}
+
+TEST("store: confirmed cold threads are released but pending replies survive") {
+    Fixture f;
+    f.s.setVisibleConversation(f.c);
+    f.s.addPage(f.c, page({100}, f.mira));
+    std::vector<Message> replies;
+    replies.push_back(msg(101, f.mira, "reply", 100));
+    f.s.addPage(f.c, std::move(replies));
+    CHECK(f.s.replies(f.c, 100) != nullptr);
+    f.s.setVisibleConversation(kNoConv);
+    CHECK(f.s.trimOldestHistory() > 0);
+    CHECK(f.s.replies(f.c, 100) == nullptr);
+
+    Fixture pending;
+    pending.s.setVisibleConversation(pending.c);
+    pending.s.addPage(pending.c, page({100}, pending.mira));
+    Message unsent = msg(102, pending.me, "pending", 100);
+    unsent.delivery = DeliveryState::Uncertain;
+    std::vector<Message> pendingReplies;
+    pendingReplies.push_back(std::move(unsent));
+    pending.s.addPage(pending.c, std::move(pendingReplies));
+    pending.s.setVisibleConversation(kNoConv);
+    CHECK(pending.s.trimOldestHistory() == 0);
+    REQUIRE(pending.s.replies(pending.c, 100) != nullptr);
+    CHECK(pending.s.replies(pending.c, 100)->size() == 1);
+}
+
 TEST("store: ts strings round-trip as micros") {
     CHECK(parseTs("1758445200.123456") == 1758445200123456);
     CHECK(parseTs("1758445200.1") == 1758445200100000);

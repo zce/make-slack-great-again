@@ -60,6 +60,11 @@ public:
     );
     ~Shell();
 
+    struct HistoryStats {
+        size_t workspaces = 0, conversations = 0, messages = 0, replies = 0, bytes = 0;
+    };
+    HistoryStats historyStats() const; // across all attached workspace Stores
+
     // Signed in to a workspace (the default), or not: then the rail shows no
     // workspace and the "Log in to workspace" page replaces the
     // sidebar and the conversation.
@@ -319,6 +324,8 @@ private:
     void        attentionSoon();   // a background workspace's counts changed
     void        onChange(const model::Change &ch);
     void        onWorkspaceChange(const std::string &key, const model::Change &ch);
+    void        trimHistoryBudget(); // one process-wide budget across attached Stores
+    void        maybeTrimHistoryBudget();
     // New messages in `st` (`key`'s, "" = the open Store unattached): the
     // ones someone else posted that the settings want announced.
     // New messages, huddles, reminders (shell_notify.cpp).
@@ -508,6 +515,9 @@ private:
     std::unordered_map<uint64_t, Notified> _notified;
     std::unordered_set<std::string>        _notifiedHuddles; // "key\x1Fconv": announced, still live
     plat::TimerId                          _notifySaveTimer = 0; // saveNotifiedSoon's
+    uint8_t                                 _historyBudgetPulse = 0;
+    plat::TimerId                          _historyBudgetTimer = 0;
+    bool                                    _trimmingHistory = false;
     uint64_t                               _nextNotifyId    = 1; // nextNotifyId's, persisted
     std::vector<plat::TimerId>             _resolveTimers;       // notifyWhenUsersResolve's
     std::vector<std::unique_ptr<Running>>  _running;

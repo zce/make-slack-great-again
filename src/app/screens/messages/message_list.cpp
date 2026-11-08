@@ -543,6 +543,7 @@ MessageList::MessageList(Context &ctx)
         hideToolbar();
         _fileView = nullptr;
         _fileBar->setVisible(false);
+        updateVisibleRange();
         scheduleEdgeCheck();
     };
     _typing = add<ui::Label>("", Font::Small, C::TextMuted);
@@ -731,6 +732,8 @@ void MessageList::clear() {
     _observer = 0;
     ++_historyLoadGeneration;
     ++_threadLoadGeneration;
+    if (_conv != model::kNoConv)
+        _ctx.store().setVisibleRange(_conv, 0, 0);
     _conv               = model::kNoConv;
     _root               = 0;
     _jumpTs             = 0;
@@ -757,6 +760,7 @@ void MessageList::showConversation(ConvRef conv) {
     ++_threadLoadGeneration;
     _conv              = conv;
     _root              = 0;
+    _ctx.store().setVisibleRange(conv, 0, 0);
     _markedTs          = 0;
     _jumpTs            = 0;
     _loadingOlder      = false;
@@ -781,6 +785,7 @@ void MessageList::showConversation(ConvRef conv) {
     rebuild(false);
     resetRows();
     applyOpenTarget();
+    updateVisibleRange();
     subscribe();
     updateTyping();
     scheduleEdgeCheck();
@@ -798,6 +803,7 @@ void MessageList::showThread(ConvRef conv, Ts root, Ts jumpTarget) {
     _openPending = false;
     _conv = conv;
     _root = root;
+    _ctx.store().setVisibleRange(conv, 0, root);
     _jumpTs = jumpTarget;
     _unreadJump = false;
     const bool haveReplies =
@@ -812,6 +818,7 @@ void MessageList::showThread(ConvRef conv, Ts root, Ts jumpTarget) {
     subscribe();
     updateTyping();
     applyJump(); // A cached exact target can be shown without waiting for refresh.
+    updateVisibleRange();
 
     if (_threadLoadPending) {
         const uint64_t generation = _threadLoadGeneration;
@@ -1005,6 +1012,23 @@ int MessageList::itemIndex(Ts ts) const {
     return -1;
 }
 
+void MessageList::updateVisibleRange() {
+    if (_conv == model::kNoConv)
+        return;
+    if (_root) {
+        _ctx.store().setVisibleRange(_conv, 0, _root);
+        return;
+    }
+    const int first = _list->firstVisible();
+    Ts visible = 0;
+    for (size_t i = size_t(std::max(first, 0)); i < _items.size(); ++i)
+        if (_items[i].kind == Kind::Message || _items[i].kind == Kind::System) {
+            visible = _items[i].ts;
+            break;
+        }
+    _ctx.store().setVisibleRange(_conv, visible, 0);
+}
+
 void MessageList::onChange(const model::Change &ch) {
     using CK = model::ChangeKind;
     switch (ch.kind) {
@@ -1036,9 +1060,35 @@ void MessageList::onChange(const model::Change &ch) {
     if (!mine)
         return;
     if (ch.kind == CK::Reset) {
+        // A history-budget eviction may rebuild the model while this list is
+        // visible. Preserve the same message/offset (or bottom pin) across
+        // the reset so pruning never jumps the reader.
+        SavedAnchor anchor;
+        bool        restore = false;
+        if (!_openPending && _root == 0 && _conv != model::kNoConv && !_items.empty()) {
+            anchor.conv = _ctx.store().conversation(_conv).id;
+            if (_list->pinned() || _list->atEnd()) {
+                anchor.atBottom = true;
+                restore = true;
+            } else {
+                const ui::VirtualList::Anchor current = _list->anchor();
+                if (current.index >= 0 && size_t(current.index) < _items.size()) {
+                    anchor.ts = _items[size_t(current.index)].ts;
+                    anchor.kind = _items[size_t(current.index)].kind;
+                    anchor.offset = current.offset;
+                    restore = true;
+                }
+            }
+        }
         hideToolbar();
         rebuild(false);
         resetRows();
+        if (restore) {
+            _openAnchor = std::move(anchor);
+            _openPending = true;
+        }
+        applyOpenTarget();
+        updateVisibleRange();
     } else if (ch.kind == CK::Update) {
         // Most updates (a reaction, an edit, a poll's same page) leave the
         // items as they are: only the row is bound again.
@@ -1298,6 +1348,7 @@ void MessageList::scheduleEdgeCheck() {
 void MessageList::checkEdges() {
     if (_conv == model::kNoConv)
         return;
+    updateVisibleRange();
     if (_root != 0) {
         // An open thread reads itself — on load and on each new reply
         // (markThreadRead: its cursor, the Threads entry).
@@ -1386,6 +1437,7 @@ void MessageList::layout() {
     _typing->setFrame({16, std::max(0.f, h - _typingH), std::max(0.f, w - 32), _typingH});
     placeToolbar();
     applyOpenTarget(); // the first layout knows the height a third of which it needs
+    updateVisibleRange();
 }
 
 void MessageList::placeToolbar() {

@@ -85,6 +85,8 @@ int64_t sweepDirs(
 } // namespace
 
 struct RemoteImages::Impl {
+    static constexpr size_t kMaxFailed = 1024;
+
     plat::App               &app;
     net::Client             *client;
     std::string              dir;
@@ -131,6 +133,21 @@ struct RemoteImages::Impl {
         if (onDisk.size() >= kMaxOnDisk)
             onDisk.clear(); // a bound, not a policy: a miss only costs a stat
         onDisk[url] = path;
+    }
+
+    void rememberFailure(const std::string &url) {
+        const int64_t now = base::monotonicMs();
+        std::erase_if(failed, [now](const auto &entry) { return entry.second <= now; });
+        if (failed.size() >= kMaxFailed) {
+            const auto oldest = std::min_element(
+                failed.begin(), failed.end(), [](const auto &a, const auto &b) {
+                    return a.second < b.second;
+                }
+            );
+            if (oldest != failed.end())
+                failed.erase(oldest);
+        }
+        failed[url] = now + kCooldownMs;
     }
 
     Pending *find(const std::string &url) {
@@ -230,9 +247,7 @@ struct RemoteImages::Impl {
         const std::shared_ptr<Impl> &self, const std::string &url, const std::string &path, size_t n
     ) {
         if (path.empty()) {
-            const int64_t now = base::monotonicMs();
-            std::erase_if(self->failed, [now](const auto &f) { return f.second <= now; });
-            self->failed[url] = now + kCooldownMs;
+            self->rememberFailure(url);
         } else {
             self->remember(url, path);
         }
@@ -327,6 +342,18 @@ void RemoteImages::fetch(const std::string &url, Done done) {
     }
     if (Impl::Pending *p = d.find(url)) {
         p->waiters.push_back(std::move(done));
+        return;
+    }
+    // A rapidly scrolled image-heavy channel must not enqueue an unbounded
+    // backlog while only two downloads can run. Fail with the normal
+    // transient cooldown; the image can be requested again when revisited.
+    if (d.pending.size() >= kMaxPending) {
+        d.rememberFailure(url);
+        std::weak_ptr<Impl> weak = _impl;
+        d.app.post([weak, done = std::move(done)] {
+            if (auto self = weak.lock(); self && self->alive && done)
+                done({});
+        });
         return;
     }
     d.pending.push_back({url, {}, 0, false});

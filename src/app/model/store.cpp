@@ -9,6 +9,7 @@
 #include <tuple>
 #include <charconv>
 #include <cstdio>
+#include <limits>
 
 namespace model {
 
@@ -153,6 +154,87 @@ bool Message::operator==(const Message &o) const {
     return *extra == *o.extra;
 }
 
+namespace {
+
+size_t stringStorage(const std::string &s) {
+    return s.capacity();
+}
+
+size_t fileStorage(const File &f) {
+    return stringStorage(f.id) + stringStorage(f.name) + stringStorage(f.mime) +
+           stringStorage(f.prettyType) + stringStorage(f.path) + stringStorage(f.original) +
+           stringStorage(f.permalink) + stringStorage(f.subtype) +
+           stringStorage(f.transcript) + stringStorage(f.transcriptVtt) +
+           stringStorage(f.thumb) + stringStorage(f.title);
+}
+
+size_t blockStorage(const Block &b) {
+    size_t n = stringStorage(b.text) + stringStorage(b.image) + stringStorage(b.alt) +
+               b.rows.capacity() * sizeof(std::vector<std::string>);
+    for (const auto &row : b.rows) {
+        n += row.capacity() * sizeof(std::string);
+        for (const std::string &cell : row)
+            n += stringStorage(cell);
+    }
+    return n;
+}
+
+size_t attachmentStorage(const Attachment &a) {
+    size_t n = stringStorage(a.color) + stringStorage(a.pretext) + stringStorage(a.author) +
+               stringStorage(a.title) + stringStorage(a.link) + stringStorage(a.text) +
+               stringStorage(a.service) + stringStorage(a.favicon) + stringStorage(a.footer) +
+               stringStorage(a.image) + stringStorage(a.authorIcon) + stringStorage(a.channel) +
+               a.fields.capacity() * sizeof(AttachmentField) +
+               a.blocks.capacity() * sizeof(Block) + a.files.capacity() * sizeof(File);
+    for (const AttachmentField &f : a.fields)
+        n += stringStorage(f.title) + stringStorage(f.value);
+    for (const Block &b : a.blocks)
+        n += blockStorage(b);
+    for (const File &f : a.files)
+        n += fileStorage(f);
+    return n;
+}
+
+size_t messagePayloadStorage(const Message &m) {
+    size_t n = stringStorage(m.text) + stringStorage(m.sendId) + stringStorage(m.sendError) +
+               m.replyUsers.capacity() * sizeof(UserRef) +
+               m.reactions.capacity() * sizeof(Reaction);
+    for (const Reaction &r : m.reactions)
+        n += stringStorage(r.name) + r.users.capacity() * sizeof(UserRef);
+    if (!m.extra)
+        return n;
+    const MessageExtras &e = *m.extra;
+    n += sizeof(MessageExtras) + stringStorage(e.subtype) + stringStorage(e.botName) +
+         stringStorage(e.botAvatar) + stringStorage(e.botId) + stringStorage(e.sendBlocks) +
+         e.files.capacity() * sizeof(File) + e.attachments.capacity() * sizeof(Attachment) +
+         e.buttons.capacity() * sizeof(Button) + e.blocks.capacity() * sizeof(Block) +
+         e.huddle.attendees.capacity() * sizeof(UserRef);
+    for (const File &f : e.files)
+        n += fileStorage(f);
+    for (const Attachment &a : e.attachments)
+        n += attachmentStorage(a);
+    for (const Button &b : e.buttons)
+        n += stringStorage(b.id) + stringStorage(b.label) + stringStorage(b.url) +
+             stringStorage(b.blockId) + stringStorage(b.value);
+    for (const Block &b : e.blocks)
+        n += blockStorage(b);
+    return n;
+}
+
+size_t messageVectorStorage(const std::vector<Message> &messages) {
+    size_t n = messages.capacity() * sizeof(Message);
+    for (const Message &m : messages)
+        n += messagePayloadStorage(m);
+    return n;
+}
+
+uint64_t nextHistoryAccess() {
+    static uint64_t sequence = 1;
+    return sequence++;
+}
+
+} // namespace
+
 // ── Store ───────────────────────────────────────────────────────────────────
 
 Store::Store()  = default;
@@ -163,6 +245,10 @@ void Store::clear() {
     _userIndex.clear();
     _convs.clear();
     _convIndex.clear();
+    _visibleConv = kNoConv;
+    _visibleFirstTs = _visibleThread = 0;
+    _historyRetention = false;
+    _historyAccess.clear();
     _typing.clear();
     _customEmoji.clear();
     customEmojiChanged();
@@ -412,6 +498,7 @@ ConvRef Store::mergeConversation(Conversation c, bool *added) {
     _convIndex.emplace(c.id, ref);
     _convs.push_back(std::move(c));
     _typing.emplace_back();
+    _historyAccess.push_back(nextHistoryAccess());
     *added = true;
     return ref;
 }
@@ -667,6 +754,190 @@ void Store::addPage(ConvRef ref, std::vector<Message> page) {
         emit({ChangeKind::Insert, ref, thread, ts});
     if (nAfter)
         emit({ChangeKind::Append, ref, thread, 0, nAfter});
+    // Retention is coordinated across all workspace Stores by Shell.
+}
+
+void Store::setVisibleConversation(ConvRef c) {
+    _historyRetention = true;
+    if (c != _visibleConv) {
+        _visibleFirstTs = 0;
+        _visibleThread = 0;
+    }
+    _visibleConv = c;
+    if (c < _convs.size()) {
+        if (_historyAccess.size() <= c)
+            _historyAccess.resize(size_t(c) + 1, 0);
+        _historyAccess[c] = nextHistoryAccess();
+    }
+}
+
+void Store::setVisibleRange(ConvRef c, Ts firstVisible, Ts thread) {
+    if (c != _visibleConv)
+        return;
+    _visibleFirstTs = firstVisible;
+    _visibleThread = thread;
+}
+
+size_t Store::conversationHistoryBytes(const Conversation &c) const {
+    size_t n = messageVectorStorage(c.messages) + c.threads.capacity() * sizeof(Thread);
+    for (const Thread &t : c.threads) {
+        n += messageVectorStorage(t.replies);
+        if (t.parent)
+            n += sizeof(Message) + messagePayloadStorage(*t.parent);
+    }
+    return n;
+}
+
+size_t Store::historyBytes() const {
+    size_t n = 0;
+    for (const Conversation &c : _convs)
+        n += conversationHistoryBytes(c);
+    return n;
+}
+
+size_t Store::reclaimablePrefix(ConvRef ref) const {
+    if (ref >= _convs.size())
+        return 0;
+    const Conversation &c = _convs[ref];
+    size_t cut = 0;
+    if (ref == _visibleConv) {
+        // Never change the list while a thread is the visible surface. For
+        // the channel timeline, retain a generous buffer before its anchor.
+        if (_visibleThread || !_visibleFirstTs)
+            return 0;
+        const auto it = std::lower_bound(
+            c.messages.begin(), c.messages.end(), _visibleFirstTs,
+            [](const Message &m, Ts ts) { return m.ts < ts; }
+        );
+        const size_t visible = size_t(it - c.messages.begin());
+        cut = visible > kHistoryViewportBuffer ? visible - kHistoryViewportBuffer : 0;
+    } else {
+        // A cold conversation first keeps a small warm tail. If the global
+        // budget is still exceeded, a later LRU pass may release that tail too.
+        cut = c.messages.size() > kHistoryWarmMessages
+                  ? c.messages.size() - kHistoryWarmMessages
+                  : c.messages.size();
+    }
+
+    size_t safe = 0;
+    for (; safe < cut; ++safe) {
+        const Message &m = c.messages[safe];
+        if (m.pending || m.delivery != DeliveryState::Confirmed || m.ts > c.lastRead ||
+            m.pinned || m.saved)
+            break;
+        if (m.replyCount) {
+            if (const Thread *t = findThread(c, m.ts)) {
+                if ((t->parent && (t->parent->pending ||
+                                   t->parent->delivery != DeliveryState::Confirmed)) ||
+                    std::any_of(t->replies.begin(), t->replies.end(), [](const Message &reply) {
+                        return reply.pending || reply.delivery != DeliveryState::Confirmed;
+                    }))
+                    break;
+            }
+        }
+    }
+    return safe;
+}
+
+bool Store::hasReclaimableThreads(ConvRef ref) const {
+    if (ref == _visibleConv || ref >= _convs.size())
+        return false;
+    const Conversation &c = _convs[ref];
+    return std::any_of(c.threads.begin(), c.threads.end(), [](const Thread &t) {
+        const bool safeParent =
+            !t.parent || (!t.parent->pending &&
+                          t.parent->delivery == DeliveryState::Confirmed);
+        return safeParent &&
+               std::all_of(t.replies.begin(), t.replies.end(), [](const Message &m) {
+                   return !m.pending && m.delivery == DeliveryState::Confirmed;
+               });
+    });
+}
+
+bool Store::canTrimHistory(ConvRef ref) const {
+    return _historyRetention &&
+           (reclaimablePrefix(ref) != 0 || hasReclaimableThreads(ref));
+}
+
+uint64_t Store::oldestReclaimableHistory() const {
+    if (!_historyRetention)
+        return std::numeric_limits<uint64_t>::max();
+    uint64_t oldest = std::numeric_limits<uint64_t>::max();
+    for (ConvRef c = 0; c < _convs.size(); ++c)
+        if (canTrimHistory(c)) {
+            const uint64_t access =
+                c < _historyAccess.size() ? _historyAccess[c] : uint64_t(0);
+            oldest = std::min(oldest, access);
+        }
+    return oldest;
+}
+
+size_t Store::trimHistory(ConvRef ref) {
+    if (!_historyRetention || ref >= _convs.size())
+        return 0;
+    const size_t safe = reclaimablePrefix(ref);
+    const bool   trimThreads = hasReclaimableThreads(ref);
+    if (!safe && !trimThreads)
+        return 0;
+
+    Conversation &c = _convs[ref];
+    const size_t before = conversationHistoryBytes(c);
+    bool changed = false;
+
+    if (trimThreads) {
+        const size_t old = c.threads.size();
+        std::erase_if(c.threads, [](const Thread &t) {
+            const bool safeParent =
+                !t.parent || (!t.parent->pending &&
+                              t.parent->delivery == DeliveryState::Confirmed);
+            return safeParent &&
+                   std::all_of(t.replies.begin(), t.replies.end(), [](const Message &m) {
+                       return !m.pending && m.delivery == DeliveryState::Confirmed;
+                   });
+        });
+        changed = c.threads.size() != old;
+        if (changed) {
+            std::vector<Thread> compact;
+            compact.reserve(c.threads.size());
+            for (Thread &thread : c.threads)
+                compact.push_back(std::move(thread));
+            c.threads.swap(compact);
+        }
+    }
+
+    if (safe) {
+        std::vector<Message> keep;
+        keep.reserve(c.messages.size() - safe);
+        for (size_t i = safe; i < c.messages.size(); ++i)
+            keep.push_back(std::move(c.messages[i]));
+        c.messages.swap(keep);
+        c.hasMoreBefore = true;
+        changed = true;
+    }
+
+    if (changed) {
+        emit({ChangeKind::Reset, ref});
+        if (safe)
+            emit({ChangeKind::Meta, ref});
+    }
+    const size_t after = conversationHistoryBytes(c);
+    return before > after ? before - after : 0;
+}
+
+size_t Store::trimOldestHistory() {
+    ConvRef candidate = kNoConv;
+    uint64_t oldest = std::numeric_limits<uint64_t>::max();
+    for (ConvRef c = 0; c < _convs.size(); ++c) {
+        if (!canTrimHistory(c))
+            continue;
+        const uint64_t access =
+            c < _historyAccess.size() ? _historyAccess[c] : uint64_t(0);
+        if (access < oldest) {
+            oldest = access;
+            candidate = c;
+        }
+    }
+    return candidate == kNoConv ? 0 : trimHistory(candidate);
 }
 
 void Store::addMessage(ConvRef ref, Message m) {

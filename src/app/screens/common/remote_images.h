@@ -60,6 +60,7 @@ public:
     using Fetch    = std::function<void(net::Request, std::function<void(net::Response)>)>;
 
     static constexpr int kMaxParallel = 2;
+    static constexpr size_t kMaxPending = 256; // running and waiting, deduplicated by URL
     static constexpr int kCooldownMs  = 60000;
 
     // `client` may be null (then every fetch fails); `dir` "" disables the

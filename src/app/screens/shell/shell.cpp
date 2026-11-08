@@ -57,6 +57,7 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <limits>
 
 using namespace ui;
 using gfx::Icon;
@@ -78,6 +79,7 @@ constexpr float kTitleBarH = 46; // compact integrated title and toolbar (48 px 
 #endif
 constexpr float kRailW = 64;
 constexpr float kListW = 248, kListMinW = 180, kListMaxW = 400;
+constexpr size_t kMessageHistoryBudgetBytes = size_t(32) << 20;
 constexpr float kResizeEdge          = 6;
 // Settings changes are written this long after the first of a burst.
 constexpr int   kSettingsSaveDelayMs = 500;
@@ -1423,6 +1425,7 @@ void Shell::applyComposerAccess() {
 
 Shell::~Shell() {
     _ctx.app.cancelTimer(_errorTimer);
+    _ctx.app.cancelTimer(_historyBudgetTimer);
     for (plat::TimerId id : _resolveTimers)
         _ctx.app.cancelTimer(id);
     _ctx.app.cancelTimer(_attentionTimer);
@@ -2258,6 +2261,7 @@ void Shell::open(ConvRef conv) {
         c.kind == model::ConvKind::Dm && c.dmUser != model::kNoUser)
         _ctx.backend.requestPresence(c.dmUser);
     lookUpCanvas(conv);
+    _ctx.store().setVisibleConversation(conv);
     _ctx.backend.setActiveConversation(conv, 0);
 #ifdef MSGA_HAVE_MESSAGES
     // The list loads history and marks read once the newest message shows.
@@ -2269,6 +2273,7 @@ void Shell::open(ConvRef conv) {
     if (c.latest && c.latest > c.lastRead)
         _ctx.backend.markRead(conv, c.latest);
 #endif
+    trimHistoryBudget();
     _composer->edit().focus();
 }
 
@@ -2308,6 +2313,8 @@ void Shell::leaveWorkspace() {
     _huddleBanner->setVisible(false);
     _messages->setVisible(false);
     _welcome->setVisible(true);
+    _ctx.store().setVisibleConversation(kNoConv);
+    trimHistoryBudget();
 }
 
 void Shell::purgeHistory(const std::string &key) {
@@ -2705,6 +2712,8 @@ void Shell::leaveConversationChrome(bool keepComposer) {
     _typing->setTarget(kNoConv, 0);
     _typing->setVisible(false);
     _ctx.backend.setActiveConversation(kNoConv, 0);
+    _ctx.store().setVisibleConversation(kNoConv);
+    trimHistoryBudget();
 }
 
 void Shell::leavePage(Page p) {
@@ -3616,11 +3625,13 @@ void Shell::attachWorkspace(const std::string &key, model::Store &store, model::
     r->backend  = &backend;
     // On the Store itself, not the screens' slot: it stays with this
     // workspace whichever one is open.
+    store.setVisibleConversation(model::kNoConv);
     r->observer = store.observe(model::Store::kAnyConv, [this, key](const model::Change &ch) {
         onWorkspaceChange(key, ch);
     });
     _running.push_back(std::move(r));
     attentionSoon();
+    trimHistoryBudget();
 }
 
 void Shell::detachWorkspace(const std::string &key) {
@@ -3700,10 +3711,96 @@ void Shell::onWorkspaceChange(const std::string &key, const model::Change &ch) {
             attentionSoon(); // the open one's view observer counts at once
         if (ch.kind == K::Meta && r->live)
             huddleChanged(*r->store, key, ch.conv);
+        if (ch.kind == K::Meta && ch.conv != kNoConv)
+            maybeTrimHistoryBudget();
+        else if (ch.kind == K::Roster)
+            maybeTrimHistoryBudget(); // a roster may restore cached message pages
         return;
     }
+    if (ch.kind != K::Typing && ch.kind != K::Users)
+        maybeTrimHistoryBudget(); // pages, edits, removals and live arrivals all affect retention
     if (ch.isArrival() && r->live && ch.conv != kNoConv)
         messagesArrived(*r->store, key, ch);
+}
+
+void Shell::maybeTrimHistoryBudget() {
+    if (_trimmingHistory || _historyBudgetTimer || ++_historyBudgetPulse < 16)
+        return;
+    _historyBudgetPulse = 0;
+    // Store observers run inside Store::emit(). Defer eviction until the
+    // current dispatch and all list observers have finished processing it.
+    _historyBudgetTimer = _ctx.app.addTimer(50, false, [this] {
+        _historyBudgetTimer = 0;
+        trimHistoryBudget();
+    });
+}
+
+void Shell::trimHistoryBudget() {
+    if (_trimmingHistory)
+        return;
+    if (_historyBudgetTimer) {
+        _ctx.app.cancelTimer(_historyBudgetTimer);
+        _historyBudgetTimer = 0;
+    }
+    _historyBudgetPulse = 0;
+    _trimmingHistory = true;
+
+    std::vector<model::Store *> stores;
+    auto add = [&](model::Store *store) {
+        if (store && std::find(stores.begin(), stores.end(), store) == stores.end())
+            stores.push_back(store);
+    };
+    for (const auto &r : _running)
+        add(r->store);
+    add(&_ctx.store());
+
+    size_t total = 0;
+    for (const model::Store *store : stores)
+        total += store->historyBytes();
+
+    while (total > kMessageHistoryBudgetBytes) {
+        model::Store *oldest = nullptr;
+        uint64_t      age    = std::numeric_limits<uint64_t>::max();
+        for (model::Store *store : stores) {
+            const uint64_t candidate = store->oldestReclaimableHistory();
+            if (candidate < age) {
+                age = candidate;
+                oldest = store;
+            }
+        }
+        if (!oldest)
+            break; // unread, pending and visible history is deliberately protected
+        const size_t freed = oldest->trimOldestHistory();
+        if (!freed)
+            break;
+        total = freed >= total ? 0 : total - freed;
+    }
+    _trimmingHistory = false;
+}
+
+Shell::HistoryStats Shell::historyStats() const {
+    HistoryStats stats;
+    std::vector<const model::Store *> stores;
+    auto add = [&](const model::Store *store) {
+        if (store && std::find(stores.begin(), stores.end(), store) == stores.end())
+            stores.push_back(store);
+    };
+    for (const auto &r : _running)
+        add(r->store);
+    add(&_ctx.store());
+
+    stats.workspaces = stores.size();
+    for (const model::Store *store : stores) {
+        stats.bytes += store->historyBytes();
+        stats.conversations += store->conversationCount();
+        for (model::ConvRef c = 0; c < store->conversationCount(); ++c) {
+            const model::Conversation &conv = store->conversation(c);
+            stats.messages += conv.messages.size();
+            for (const model::Thread &thread : conv.threads)
+                stats.replies += thread.replies.size();
+        }
+    }
+    return stats;
 }
 
 // A workspace's unread counts changed: recount once the burst (a poll's

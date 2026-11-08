@@ -470,15 +470,14 @@ int main(int argc, char **argv) {
     // that grows past its budget, or a Store that keeps growing, shows here
     // before it does in a profiler.
     auto appStats = [&]() -> std::string {
-        const model::Store &st       = ctx.store;
-        size_t              messages = 0;
-        for (model::ConvRef c = 0; c < st.conversationCount(); ++c)
-            messages += st.conversation(c).messages.size();
-        char buf[256];
+        const model::Store &st = ctx.store;
+        const shell::Shell::HistoryStats history = sh.historyStats();
+        char buf[320];
         std::snprintf(
             buf,
             sizeof buf,
-            "images %zu KB in %zu, avatars %zu KB in %zu, convs %zu, messages %zu, users %zu",
+            "images %zu KB in %zu, avatars %zu KB in %zu, workspaces %zu, convs %zu, "
+            "messages %zu + %zu replies, history %zu KB, users %zu",
 #ifdef MSGA_HAVE_MESSAGES
             images.bytes() / 1024,
             images.entryCount(),
@@ -488,8 +487,11 @@ int main(int argc, char **argv) {
 #endif
             sh.avatars().bytes() / 1024,
             sh.avatars().size(),
-            st.conversationCount(),
-            messages,
+            history.workspaces,
+            history.conversations,
+            history.messages,
+            history.replies,
+            history.bytes / 1024,
             st.userCount()
         );
         return buf;
