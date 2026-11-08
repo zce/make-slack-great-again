@@ -3761,8 +3761,8 @@ void Shell::trimHistoryBudget() {
 
     // Hysteresis avoids repeated small evictions when traffic hovers around
     // the ceiling: once over 32 MiB, reclaim back to 24 MiB.
-    while (total > kMessageHistoryTargetBytes &&
-           total > kMessageHistoryBudgetBytes) {
+    const bool overBudget = total > kMessageHistoryBudgetBytes;
+    while (overBudget && total > kMessageHistoryTargetBytes) {
         model::Store *oldest = nullptr;
         uint64_t      age    = std::numeric_limits<uint64_t>::max();
         for (model::Store *store : stores) {
