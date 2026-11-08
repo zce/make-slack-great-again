@@ -7,7 +7,7 @@
 #include "screens/common/context.h"
 #include "screens/settings/settings_dialog.h"
 #include "screens/shell/header.h"
-#include "screens/shell/message_search.h"
+#include "screens/shell/quick_switcher.h"
 #include "screens/shell/shell.h"
 
 #include <cinttypes>
@@ -472,19 +472,23 @@ void Tour::run(const TourStep &step, Done done) {
         return;
 
     case K::Search:
-        _sh.openSearch();
+        _sh.showQuickSwitcher();
         after(300, [this, query = step.arg, done] {
-            // Onto the results, where the eye goes next.
-            moveTo(centerOf(_sh.messageSearch()), [this, query, done] {
-                typeText(query, 18, [this, done] {
-                    after(250, [this, done] { pressKey(plat::Key::Enter, done); });
+            if (auto *search = _sh.quickSwitcher()) {
+                moveTo(centerOf(search), [this, search, query, done] {
+                    typeText(query, 18, [this, done] {
+                        after(250, [this, done] { pressKey(plat::Key::Enter, done); });
+                    });
                 });
-            });
+            } else {
+                done();
+            }
         });
         return;
 
     case K::CloseSearch:
-        _sh.messageSearch()->close();
+        if (auto *search = _sh.quickSwitcher())
+            search->close();
         done();
         return;
 
