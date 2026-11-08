@@ -586,7 +586,7 @@ TEST("settings: \"Save and restart\" restarts; the sample notification reports b
     pump();
     settings::SettingsDialog *d = h.sh->settingsDialog();
     REQUIRE(d);
-    d->showPage(settings::SettingsDialog::Page::System);
+    d->showPage(settings::SettingsDialog::Page::About);
     pump();
 #ifdef MSGA_SELF_UPDATE
     // Without an updater: the state without a checker.
@@ -607,7 +607,7 @@ TEST("settings: \"Save and restart\" restarts; the sample notification reports b
     h.sh->openSettings();
     pump();
     d = h.sh->settingsDialog();
-    d->showPage(settings::SettingsDialog::Page::System);
+    d->showPage(settings::SettingsDialog::Page::General);
     pump();
     ui::View *save = d->find("Save and restart");
     REQUIRE(save);
