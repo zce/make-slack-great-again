@@ -1033,6 +1033,7 @@ void QuickSwitcher::choose(int index) {
     } else {
         const MessageMatch match = _hits[size_t(index) - messageStart];
         const QuickSwitchTab &messageTab = _tabs[match.workspace];
+        const std::string messageKey = messageTab.key;
         const bool messageHere = messageTab.store == &_ctx.store();
         const auto openMessage = _ctx.openMessage;
         const auto openIn = onChooseMessageIn;
@@ -1040,7 +1041,7 @@ void QuickSwitcher::choose(int index) {
         if (messageHere && openMessage)
             openMessage(match.hit.conv, match.hit.ts, match.hit.thread);
         else if (!messageHere && openIn)
-            openIn(messageTab.key, match.hit.conv, match.hit.ts, match.hit.thread);
+            openIn(messageKey, match.hit.conv, match.hit.ts, match.hit.thread);
     }
 }
 

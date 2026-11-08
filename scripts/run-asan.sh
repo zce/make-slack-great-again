@@ -25,7 +25,8 @@ if [[ ! "${ROUNDS}" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 
-"${SCRIPT_DIR}/build.sh" --asan --demo --test
+# Sanitizer tests are resource-heavy; run CTest serially for stable timing.
+MSGA_CTEST_JOBS="${MSGA_CTEST_JOBS:-1}" "${SCRIPT_DIR}/build.sh" --asan --demo --test
 
 APP="${PROJECT_ROOT}/build-asan/msga"
 if [[ "$(uname -s)" == "Darwin" ]]; then

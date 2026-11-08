@@ -1290,7 +1290,11 @@ TEST("slack features: an Activity item is marked read and unread with its key") 
     REQUIRE(!f.page.items.empty());
     e.be->setActivityRead(f.page.items[0], true);
     e.be->setActivityRead(f.page.items[0], false);
-    REQUIRE(pumpUntil([&] { return count("activity.markUnread") == 1; }, 3000));
+    REQUIRE(pumpUntil([&] {
+        const Log pending;
+        return pending.count("activity.markRead") == 1 &&
+               pending.count("activity.markUnread") == 1;
+    }, 3000));
     const Log      log;
     json::Document entries;
     REQUIRE(entries.parse(std::string(log.get("activity.markRead")["form"]["entries"].str())));

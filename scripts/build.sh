@@ -63,7 +63,12 @@ fi
 cmake --build "$BUILD_DIR" --parallel "$NPROC"
 
 if [[ "$TEST" == "1" ]]; then
-    ctest --test-dir "$BUILD_DIR" --output-on-failure -j "$NPROC"
+    CTEST_JOBS="${MSGA_CTEST_JOBS:-$NPROC}"
+    if [[ ! "$CTEST_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+        echo "MSGA_CTEST_JOBS must be a positive integer" >&2
+        exit 2
+    fi
+    ctest --test-dir "$BUILD_DIR" --output-on-failure -j "$CTEST_JOBS"
 fi
 
 echo "Built: ${BUILD_DIR}/msga"
