@@ -204,6 +204,36 @@ TEST("store: confirmed cold threads are released but pending replies survive") {
     CHECK(pending.s.replies(pending.c, 100)->size() == 1);
 }
 
+TEST("store: pinned and saved thread messages survive cold-thread trimming") {
+    Fixture f;
+    f.s.setVisibleConversation(f.c);
+
+    auto addThread = [&](Ts rootTs, Ts replyTs, bool pinned, bool saved) {
+        Message root = msg(rootTs, f.mira);
+        root.replyCount = 1;
+        std::vector<Message> roots;
+        roots.push_back(std::move(root));
+        f.s.addPage(f.c, std::move(roots));
+
+        Message reply = msg(replyTs, f.mira, "reply", rootTs);
+        reply.pinned = pinned;
+        reply.saved = saved;
+        std::vector<Message> replies;
+        replies.push_back(std::move(reply));
+        f.s.addPage(f.c, std::move(replies));
+    };
+
+    addThread(100, 101, false, false);
+    addThread(200, 201, true, false);
+    addThread(300, 301, false, true);
+    f.s.setVisibleConversation(kNoConv);
+
+    CHECK(f.s.trimOldestHistory() > 0);
+    CHECK(f.s.replies(f.c, 100) == nullptr);
+    REQUIRE(f.s.replies(f.c, 200) != nullptr);
+    REQUIRE(f.s.replies(f.c, 300) != nullptr);
+}
+
 TEST("store: ts strings round-trip as micros") {
     CHECK(parseTs("1758445200.123456") == 1758445200123456);
     CHECK(parseTs("1758445200.1") == 1758445200100000);

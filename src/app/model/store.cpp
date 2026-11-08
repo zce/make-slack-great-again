@@ -795,6 +795,19 @@ size_t Store::historyBytes() const {
     return n;
 }
 
+namespace {
+
+bool historyProtected(const Message &m) {
+    return m.pending || m.delivery != DeliveryState::Confirmed || m.pinned || m.saved;
+}
+
+bool threadReclaimable(const Thread &t) {
+    return (!t.parent || !historyProtected(*t.parent)) &&
+           std::none_of(t.replies.begin(), t.replies.end(), historyProtected);
+}
+
+} // namespace
+
 size_t Store::reclaimablePrefix(ConvRef ref) const {
     if (ref >= _convs.size())
         return 0;
@@ -822,19 +835,11 @@ size_t Store::reclaimablePrefix(ConvRef ref) const {
     size_t safe = 0;
     for (; safe < cut; ++safe) {
         const Message &m = c.messages[safe];
-        if (m.pending || m.delivery != DeliveryState::Confirmed || m.ts > c.lastRead ||
-            m.pinned || m.saved)
+        if (historyProtected(m) || m.ts > c.lastRead)
             break;
-        if (m.replyCount) {
-            if (const Thread *t = findThread(c, m.ts)) {
-                if ((t->parent && (t->parent->pending ||
-                                   t->parent->delivery != DeliveryState::Confirmed)) ||
-                    std::any_of(t->replies.begin(), t->replies.end(), [](const Message &reply) {
-                        return reply.pending || reply.delivery != DeliveryState::Confirmed;
-                    }))
-                    break;
-            }
-        }
+        if (m.replyCount)
+            if (const Thread *t = findThread(c, m.ts); t && !threadReclaimable(*t))
+                break;
     }
     return safe;
 }
@@ -843,15 +848,7 @@ bool Store::hasReclaimableThreads(ConvRef ref) const {
     if (ref == _visibleConv || ref >= _convs.size())
         return false;
     const Conversation &c = _convs[ref];
-    return std::any_of(c.threads.begin(), c.threads.end(), [](const Thread &t) {
-        const bool safeParent =
-            !t.parent || (!t.parent->pending &&
-                          t.parent->delivery == DeliveryState::Confirmed);
-        return safeParent &&
-               std::all_of(t.replies.begin(), t.replies.end(), [](const Message &m) {
-                   return !m.pending && m.delivery == DeliveryState::Confirmed;
-               });
-    });
+    return std::any_of(c.threads.begin(), c.threads.end(), threadReclaimable);
 }
 
 bool Store::canTrimHistory(ConvRef ref) const {
@@ -886,15 +883,7 @@ size_t Store::trimHistory(ConvRef ref) {
 
     if (trimThreads) {
         const size_t old = c.threads.size();
-        std::erase_if(c.threads, [](const Thread &t) {
-            const bool safeParent =
-                !t.parent || (!t.parent->pending &&
-                              t.parent->delivery == DeliveryState::Confirmed);
-            return safeParent &&
-                   std::all_of(t.replies.begin(), t.replies.end(), [](const Message &m) {
-                       return !m.pending && m.delivery == DeliveryState::Confirmed;
-                   });
-        });
+        std::erase_if(c.threads, threadReclaimable);
         changed = c.threads.size() != old;
         if (changed) {
             std::vector<Thread> compact;
