@@ -154,6 +154,19 @@ TEST("store: global LRU trims the oldest conversation first") {
     CHECK(f.s.conversation(c2).messages.size() == 60);
 }
 
+TEST("store: cold conversations keep their warm tail until pressure requires release") {
+    Fixture f;
+    f.s.setVisibleConversation(f.c);
+    f.s.updateConversation(f.c, [](Conversation &c) { c.lastRead = 1000; });
+    f.s.addPage(f.c, page({1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, f.mira));
+    f.s.setVisibleConversation(kNoConv);
+
+    CHECK(f.s.trimOldestHistory() == 0);
+    CHECK(f.s.conversation(f.c).messages.size() == 10);
+    CHECK(f.s.trimOldestHistory(true) > 0);
+    CHECK(f.s.conversation(f.c).messages.empty());
+}
+
 TEST("store: unread and unconfirmed history is never evicted") {
     Fixture f;
     f.s.setVisibleConversation(f.c);

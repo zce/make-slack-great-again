@@ -3767,22 +3767,26 @@ void Shell::trimHistoryBudget() {
     // Hysteresis avoids repeated small evictions when traffic hovers around
     // the ceiling: once over 32 MiB, reclaim back to 24 MiB.
     const bool overBudget = total > kMessageHistoryBudgetBytes;
-    while (overBudget && total > kMessageHistoryTargetBytes) {
-        model::Store *oldest = nullptr;
-        uint64_t      age    = std::numeric_limits<uint64_t>::max();
-        for (model::Store *store : stores) {
-            const uint64_t candidate = store->oldestReclaimableHistory();
-            if (candidate < age) {
-                age = candidate;
-                oldest = store;
+    // First preserve the warm tail in each cold conversation. If the
+    // global budget still exceeds its target, a second LRU pass may release it.
+    for (const bool includeWarm : {false, true}) {
+        while (overBudget && total > kMessageHistoryTargetBytes) {
+            model::Store *oldest = nullptr;
+            uint64_t      age    = std::numeric_limits<uint64_t>::max();
+            for (model::Store *store : stores) {
+                const uint64_t candidate = store->oldestReclaimableHistory(includeWarm);
+                if (candidate < age) {
+                    age = candidate;
+                    oldest = store;
+                }
             }
+            if (!oldest)
+                break; // unread, pending and visible history is deliberately protected
+            const size_t freed = oldest->trimOldestHistory(includeWarm);
+            if (!freed)
+                break;
+            total = freed >= total ? 0 : total - freed;
         }
-        if (!oldest)
-            break; // unread, pending and visible history is deliberately protected
-        const size_t freed = oldest->trimOldestHistory();
-        if (!freed)
-            break;
-        total = freed >= total ? 0 : total - freed;
     }
     _trimmingHistory = false;
 }

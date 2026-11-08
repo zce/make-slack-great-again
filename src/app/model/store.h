@@ -195,8 +195,9 @@ public:
     void setVisibleConversation(ConvRef c);
     void setVisibleRange(ConvRef c, Ts firstVisible, Ts thread = 0);
     size_t historyBytes() const; // estimated message/history storage, not RSS
-    uint64_t oldestReclaimableHistory() const; // UINT64_MAX when nothing can be evicted
-    size_t trimOldestHistory(); // estimated bytes released
+    // includeWarm is the pressure-only second pass that may release the 50-message cold tail.
+    uint64_t oldestReclaimableHistory(bool includeWarm = false) const;
+    size_t trimOldestHistory(bool includeWarm = false); // estimated bytes released
     // Edits a message in place (top-level or reply), then fires Update.
     bool updateMessage(ConvRef c, Ts ts, const std::function<void(Message &)> &fn);
     bool removeMessage(ConvRef c, Ts ts); // a removed reply also decrements its root
@@ -390,10 +391,10 @@ public:
     void                     unobserve(ObserverId id); // safe inside a callback, even its own
 
 private:
-    size_t                reclaimablePrefix(ConvRef c) const;
+    size_t                reclaimablePrefix(ConvRef c, bool includeWarm) const;
     bool                  hasReclaimableThreads(ConvRef c) const;
-    bool                  canTrimHistory(ConvRef c) const;
-    size_t                trimHistory(ConvRef c);
+    bool                  canTrimHistory(ConvRef c, bool includeWarm) const;
+    size_t                trimHistory(ConvRef c, bool includeWarm);
     size_t                conversationHistoryBytes(const Conversation &c) const;
     Thread               *findThread(Conversation &c, Ts root);
     const Thread         *findThread(const Conversation &c, Ts root) const;

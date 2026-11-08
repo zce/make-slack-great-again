@@ -808,7 +808,7 @@ bool threadReclaimable(const Thread &t) {
 
 } // namespace
 
-size_t Store::reclaimablePrefix(ConvRef ref) const {
+size_t Store::reclaimablePrefix(ConvRef ref, bool includeWarm) const {
     if (ref >= _convs.size())
         return 0;
     const Conversation &c = _convs[ref];
@@ -827,9 +827,10 @@ size_t Store::reclaimablePrefix(ConvRef ref) const {
     } else {
         // A cold conversation first keeps a small warm tail. If the global
         // budget is still exceeded, a later LRU pass may release that tail too.
-        cut = c.messages.size() > kHistoryWarmMessages
-                  ? c.messages.size() - kHistoryWarmMessages
-                  : c.messages.size();
+        cut = includeWarm ? c.messages.size()
+                          : c.messages.size() > kHistoryWarmMessages
+                                ? c.messages.size() - kHistoryWarmMessages
+                                : 0;
     }
 
     size_t safe = 0;
@@ -851,17 +852,17 @@ bool Store::hasReclaimableThreads(ConvRef ref) const {
     return std::any_of(c.threads.begin(), c.threads.end(), threadReclaimable);
 }
 
-bool Store::canTrimHistory(ConvRef ref) const {
+bool Store::canTrimHistory(ConvRef ref, bool includeWarm) const {
     return _historyRetention &&
-           (reclaimablePrefix(ref) != 0 || hasReclaimableThreads(ref));
+           (reclaimablePrefix(ref, includeWarm) != 0 || hasReclaimableThreads(ref));
 }
 
-uint64_t Store::oldestReclaimableHistory() const {
+uint64_t Store::oldestReclaimableHistory(bool includeWarm) const {
     if (!_historyRetention)
         return std::numeric_limits<uint64_t>::max();
     uint64_t oldest = std::numeric_limits<uint64_t>::max();
     for (ConvRef c = 0; c < _convs.size(); ++c)
-        if (canTrimHistory(c)) {
+        if (canTrimHistory(c, includeWarm)) {
             const uint64_t access =
                 c < _historyAccess.size() ? _historyAccess[c] : uint64_t(0);
             oldest = std::min(oldest, access);
@@ -869,10 +870,10 @@ uint64_t Store::oldestReclaimableHistory() const {
     return oldest;
 }
 
-size_t Store::trimHistory(ConvRef ref) {
+size_t Store::trimHistory(ConvRef ref, bool includeWarm) {
     if (!_historyRetention || ref >= _convs.size())
         return 0;
-    const size_t safe = reclaimablePrefix(ref);
+    const size_t safe = reclaimablePrefix(ref, includeWarm);
     const bool   trimThreads = hasReclaimableThreads(ref);
     if (!safe && !trimThreads)
         return 0;
@@ -913,11 +914,11 @@ size_t Store::trimHistory(ConvRef ref) {
     return before > after ? before - after : 0;
 }
 
-size_t Store::trimOldestHistory() {
+size_t Store::trimOldestHistory(bool includeWarm) {
     ConvRef candidate = kNoConv;
     uint64_t oldest = std::numeric_limits<uint64_t>::max();
     for (ConvRef c = 0; c < _convs.size(); ++c) {
-        if (!canTrimHistory(c))
+        if (!canTrimHistory(c, includeWarm))
             continue;
         const uint64_t access =
             c < _historyAccess.size() ? _historyAccess[c] : uint64_t(0);
@@ -926,7 +927,7 @@ size_t Store::trimOldestHistory() {
             candidate = c;
         }
     }
-    return candidate == kNoConv ? 0 : trimHistory(candidate);
+    return candidate == kNoConv ? 0 : trimHistory(candidate, includeWarm);
 }
 
 void Store::addMessage(ConvRef ref, Message m) {
