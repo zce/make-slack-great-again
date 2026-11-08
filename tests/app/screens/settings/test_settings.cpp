@@ -1181,6 +1181,7 @@ TEST("settings: updater listener follows the About page lifecycle") {
     net::Client client(app().platform());
     update::Updater updater(app().platform(), client, 0);
     Harness h;
+    h.settings.autoUpdates = false; // keep Shell's delayed background check inert
     h.sh->setUpdater(&updater);
     CHECK(updater.listenerCountForTesting() == 1);
 
