@@ -102,6 +102,21 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # The normal CI build deliberately excludes demo-only code. Compile the
+      # scripted soak harness separately on GCC so it cannot silently rot.
+      - name: Build and test demo soak harness
+        if: matrix.compiler == 'gcc'
+        run: |
+          cmake -S . -B build-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DMSGA_BUILD_TESTS=ON \
+            -DMSGA_DEMO=ON \
+            -DMSGA_SELF_UPDATE=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-ci --target msga demo_tests --parallel 4
+          ctest --test-dir build-ci --output-on-failure -R demo_tests
+
       # Make the actual production binary during successful master CI, so
       # publishing can reuse this verified SHA's artifact without compiling again.
       - name: Configure production build
