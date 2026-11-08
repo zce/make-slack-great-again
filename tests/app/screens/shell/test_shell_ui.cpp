@@ -402,12 +402,12 @@ TEST("sidebar footer: the presence tooltip says what the presence link is doing"
     CHECK_STR(
         tip(PresenceLink::Off),
         "Visible \xE2\x80\x94 but you appear away while no official Slack app is connected. "
-        "MSGA can keep you active: Settings \xE2\x86\x92 System \xE2\x86\x92 Presence."
+        "MSGA can keep you active: Settings \xE2\x86\x92 General \xE2\x86\x92 Presence."
     );
     CHECK_STR(
         tip(PresenceLink::Idle),
         "Away \xE2\x80\x94 you haven't used MSGA for a while. Any click or keystroke makes you "
-        "active again (Settings \xE2\x86\x92 System \xE2\x86\x92 Presence)."
+        "active again (Settings \xE2\x86\x92 General \xE2\x86\x92 Presence)."
     );
     const std::string connecting = "Visible \xE2\x80\x94 connecting so you appear active "
                                    "without the official Slack app\xE2\x80\xA6";
