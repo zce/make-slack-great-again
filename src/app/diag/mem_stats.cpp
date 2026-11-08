@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(MSGA_ASAN)
 #include <sanitizer/lsan_interface.h>
 // In every ASan runtime, but GCC ships no sanitizer/allocator_interface.h.
 extern "C" size_t __sanitizer_get_current_allocated_bytes();
@@ -100,7 +100,7 @@ uint64_t privateBytes() {
 
 MemStats sampleMem() {
     MemStats m;
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(MSGA_ASAN)
     // ASan replaces malloc: mallinfo2 would describe its own arenas.
     m.heapKb = long(__sanitizer_get_current_allocated_bytes() / 1024);
 #elif defined(__linux__) && defined(__GLIBC__)
@@ -145,7 +145,7 @@ std::string formatMem(const MemStats &m) {
 }
 
 bool checkLeaksNow() {
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(MSGA_ASAN)
     return __lsan_do_recoverable_leak_check() != 0;
 #else
     return false;

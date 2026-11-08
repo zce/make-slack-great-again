@@ -26,52 +26,18 @@
 namespace {
 
 using fakeslack::app;
+using fakeslack::count;
 using fakeslack::ctl;
+using fakeslack::Log;
 using fakeslack::pumpFor;
 using fakeslack::pumpUntil;
+using fakeslack::script;
+using fakeslack::set;
 using model::ConvRef;
 using model::kNoConv;
 using model::Ts;
 using Link = model::Backend::PresenceLink;
 using Mode = model::Backend::PresenceMode;
-
-void set(const std::string &json) {
-    ctl("POST", "/_ctl/set", json);
-}
-void script(const char *method, const std::string &responses) {
-    ctl("POST",
-        "/_ctl/script",
-        std::string("{\"method\":\"") + method + "\",\"responses\":" + responses + "}");
-}
-
-struct Log {
-    json::Document doc;
-    Log() { doc.parse(ctl("GET", "/_ctl/log").body, nullptr); }
-    int count(std::string_view method) const {
-        int n = 0;
-        for (json::Value r : doc.root())
-            n += r["method"].str() == method;
-        return n;
-    }
-    json::Value get(std::string_view method, int n = 0) const {
-        for (json::Value r : doc.root())
-            if (r["method"].str() == method && n-- == 0)
-                return r;
-        return {};
-    }
-    // A ws:sm / ws:rtm frame whose text contains `needle`.
-    bool frame(std::string_view method, std::string_view needle) const {
-        for (json::Value r : doc.root())
-            if (r["method"].str() == method &&
-                r["form"]["text"].str().find(needle) != std::string_view::npos)
-                return true;
-        return false;
-    }
-};
-
-int count(std::string_view method) {
-    return Log().count(method);
-}
 
 // A server frame on the newest open Socket Mode socket.
 bool push(const std::string &frame, std::string_view conn = {}) {
@@ -361,7 +327,7 @@ TEST("slack realtime: new channels and group DMs join the list; foreign events d
         // The count is opt-in on conversations.info; the header shows it.
         bool      withCount = false;
         const Log log;
-        for (json::Value r : log.doc.root())
+        for (json::Value r : log.entries())
             withCount |= r["method"].str() == "conversations.info" &&
                          r["form"]["channel"].str() == "G9" &&
                          r["form"]["include_num_members"].str() == "true";
@@ -682,7 +648,7 @@ TEST("slack realtime: an away author posting is probed once, not per message") {
     const auto probes = [] {
         int       n = 0;
         const Log l;
-        for (json::Value r : l.doc.root())
+        for (json::Value r : l.entries())
             n += r["method"].str() == "users.getPresence" && r["form"]["user"].str() == "UMIRA";
         return n;
     };
@@ -1058,7 +1024,7 @@ TEST("slack realtime: a conversation found dead is never looked up again, across
     // (the DM sweep may ask about D1; nothing asks about CX)
     int       asked = 0;
     const Log log; // outlives the loop (a temporary in the range would not)
-    for (json::Value r : log.doc.root())
+    for (json::Value r : log.entries())
         asked += r["method"].str() == "conversations.info" && r["form"]["channel"].str() == "CX";
     CHECK(asked == 0);
     e.be.reset();

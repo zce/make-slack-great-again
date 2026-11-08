@@ -21,6 +21,7 @@
 #endif
 
 #include <cstring>
+#include <functional>
 #include <memory>
 
 using namespace model;
@@ -58,6 +59,15 @@ struct SearchBackend : fake::FakeBackend {
     };
     bool deferSearch = false;
     std::vector<Pending> pending;
+    bool deferDm = false;
+    std::function<void(ConvRef)> pendingDm;
+
+    void openDm(UserRef user, std::function<void(ConvRef)> done) override {
+        if (deferDm)
+            pendingDm = std::move(done);
+        else
+            fake::FakeBackend::openDm(user, std::move(done));
+    }
 
     void searchPage(std::string query, std::string cursor,
                     model::Backend::SearchPageDone done) override {
@@ -260,7 +270,10 @@ TEST("shortcuts: Ctrl+K opens the switcher once, Enter opens the pick, Ctrl+W cl
 }
 
 TEST("shell: releases window and context callbacks on destruction") {
-    Harness h;
+    Harness   h;
+    bool      foreignShortcutCalled = false;
+    const int foreignShortcut =
+        h.win->addShortcut(K::F12, 0, [&] { foreignShortcutCalled = true; });
     h.sh.reset();
 
     CHECK_FALSE(h.ctx.openConversation);
@@ -280,6 +293,8 @@ TEST("shell: releases window and context callbacks on destruction") {
     CHECK_FALSE(h.backend.onError);
     CHECK_FALSE(h.win->keyFilter);
     CHECK_FALSE(h.win->inputFilter);
+    CHECK_FALSE(h.win->onEvent);
+    CHECK(bool(h.win->onCloseRequested)); // owned by the caller, not Shell
 
     // Exercise the former Shell-owned shortcut, input filter and native hit test
     // while the Window itself is still alive.
@@ -288,6 +303,22 @@ TEST("shell: releases window and context callbacks on destruction") {
     hooks().injectButton(h.win->native(), plat::Button::Left, true);
     hooks().injectButton(h.win->native(), plat::Button::Left, false);
     pump();
+    h.chord(0, K::F12);
+    CHECK(foreignShortcutCalled);
+    h.win->removeShortcut(foreignShortcut);
+}
+
+TEST("shell: teardown during shortcut dispatch leaves the window reusable") {
+    Harness   h;
+    const int teardown = h.win->addShortcut(K::F12, 0, [&] { h.sh.reset(); });
+    h.chord(0, K::F12);
+    CHECK_FALSE(h.sh);
+    CHECK_FALSE(h.win->onEvent);
+    h.win->removeShortcut(teardown);
+
+    h.sh = std::make_unique<shell::Shell>(h.ctx, *h.win, h.settings, std::string());
+    h.chord(kCtrl, K::Comma);
+    CHECK(h.sh->settingsDialog() != nullptr);
 }
 
 TEST("shortcuts: Ctrl+, opens Settings, Ctrl+W closes it, then the window") {
@@ -362,6 +393,52 @@ TEST("search: a result's labels") {
     CHECK(utf8::countCodePoints(shell::searchPreview(st, std::string(300, 'x'))) == 180);
 }
 
+TEST("search: a person's DM can finish after the picker closes, but not after Shell dies") {
+    for (bool destroyShell : {false, true}) {
+        Harness h;
+        h.backend.deferDm = true;
+        User person;
+        person.id   = "U_NEW_PERSON";
+        person.name = "new-person";
+        h.store.addUser(std::move(person));
+        h.sh->showQuickSwitcher();
+        auto *search = h.sh->quickSwitcher();
+        REQUIRE(search);
+        search->field().setText("new-person");
+        REQUIRE(search->results().empty()); // The pick is a person, not an existing DM.
+        search->choose(0);
+        pump();
+        REQUIRE(h.backend.pendingDm);
+        CHECK(h.sh->quickSwitcher() == nullptr);
+        if (destroyShell)
+            h.sh.reset();
+        auto done = std::move(h.backend.pendingDm);
+        done(h.conv("D0MIRA"));
+        pump();
+        if (!destroyShell)
+            CHECK(h.sh->current() == h.conv("D0MIRA"));
+    }
+}
+
+TEST("shell: a delayed DM result cannot navigate another workspace") {
+    Store otherStore;
+    Conversation other;
+    other.id   = "C_OTHER";
+    other.name = "other";
+    const ConvRef destination = otherStore.addConversation(std::move(other));
+    Harness h;
+    h.backend.deferDm = true;
+    h.ctx.messageUser(h.store.findUser("U0MIRA"));
+    REQUIRE(h.backend.pendingDm);
+    h.sh->leaveWorkspace();
+    h.ctx.store.setTarget(otherStore);
+    REQUIRE(h.sh->current() == kNoConv);
+    auto done = std::move(h.backend.pendingDm);
+    done(destination); // A valid index in both stores is not a cross-workspace identity.
+    CHECK(h.sh->current() == kNoConv);
+    h.ctx.store.setTarget(h.store);
+}
+
 TEST("search: fake backend paginates and scopes results") {
     Harness h;
     const ConvRef design = h.conv("C0DESIGN");
@@ -415,6 +492,8 @@ TEST("search: stale responses cannot replace the active query") {
     REQUIRE(h.backend.pending.size() == 2);
     CHECK_STR(h.backend.pending[0].query, "old-query");
     CHECK_STR(h.backend.pending[1].query, "new-query");
+    CHECK_STR(h.backend.pending[0].cursor, "*");
+    CHECK_STR(h.backend.pending[1].cursor, "*");
 
     const auto result = [&](const char *text, Ts ts) {
         Backend::SearchPage page;
@@ -450,6 +529,101 @@ TEST("search: backend failures stay distinct from empty results and remain retry
     h.backend.respond(0, std::move(failure));
     CHECK_STR(search->emptyText(), "Search failed. Try again.");
     CHECK(search->hasMore()); // the failed cursor remains available for retry
+}
+
+TEST("search: a new query clears every workspace's pagination and failure state") {
+    Harness h;
+    h.backend.deferSearch = true;
+    Store         otherStore;
+    SearchBackend otherBackend(otherStore, app().platform());
+    otherBackend.deferSearch = true;
+
+    std::vector<shell::QuickSwitchTab> tabs = {
+        {"here", "Here", {}, &h.store, {}}, {"other", "Other", {}, &otherStore, {}}
+    };
+    tabs[0].backend = &h.backend;
+    tabs[1].backend = &otherBackend;
+    auto popup      = std::make_unique<shell::QuickSwitcher>(
+        h.ctx, h.sh->avatars(), std::vector<ConvRef>{}, std::move(tabs)
+    );
+    auto *search = popup.get();
+    h.win->showPopup(std::move(popup));
+
+    search->field().setText("first-query");
+    for (int i = 0; i < 1000 && (h.backend.pending.empty() || otherBackend.pending.empty()); ++i)
+        pump(5);
+    REQUIRE(h.backend.pending.size() == 1);
+    REQUIRE(otherBackend.pending.size() == 1);
+
+    Backend::SearchPage failure;
+    failure.error = "ratelimited";
+    otherBackend.respond(0, std::move(failure));
+    Backend::SearchPage first;
+    Backend::SearchHit  hit;
+    hit.conv = h.conv("C0DESIGN");
+    hit.ts   = 1700000001000000;
+    hit.text = "first result";
+    first.hits.push_back(std::move(hit));
+    first.nextCursor = "next-page";
+    h.backend.respond(0, std::move(first));
+    REQUIRE(search->messageResults().size() == 1);
+    CHECK(search->hasMore()); // one workspace has another page; the other needs a retry
+
+    search->field().setText("second-query");
+    CHECK(search->messageResults().empty());
+    CHECK_FALSE(search->hasMore());
+    for (int i = 0; i < 1000 && (h.backend.pending.size() < 2 || otherBackend.pending.size() < 2);
+         ++i)
+        pump(5);
+    REQUIRE(h.backend.pending.size() == 2);
+    REQUIRE(otherBackend.pending.size() == 2);
+    h.backend.respond(1, {});
+    otherBackend.respond(1, {});
+    CHECK_STR(search->emptyText(), "No results found.");
+    CHECK_FALSE(search->hasMore());
+    search->close();
+    pump();
+}
+
+TEST("search: load more and retry preserve the requested cursor") {
+    Harness h;
+    h.backend.deferSearch = true;
+    h.sh->showQuickSwitcher();
+    auto *search = h.sh->quickSwitcher();
+    REQUIRE(search);
+    search->field().setText("cursor-query");
+    for (int i = 0; i < 1000 && h.backend.pending.empty(); ++i)
+        pump(5);
+    REQUIRE(h.backend.pending.size() == 1);
+    CHECK_STR(h.backend.pending[0].cursor, "*");
+
+    Backend::SearchPage first;
+    first.nextCursor = "page-two";
+    h.backend.respond(0, std::move(first));
+    // The rendered footer action remains available when results cannot scroll.
+    const auto clickFooter = [&] {
+        pump();
+        ui::View *footer = search->child(search->childCount() - 1);
+        REQUIRE(footer->visible());
+        const ui::RectF rect = footer->windowRect();
+        hooks().injectPointerMove(h.win->native(), {rect.x + rect.w / 2, rect.y + rect.h / 2});
+        hooks().injectButton(h.win->native(), plat::Button::Left, true);
+        hooks().injectButton(h.win->native(), plat::Button::Left, false);
+        pump();
+    };
+    clickFooter();
+    REQUIRE(h.backend.pending.size() == 2);
+    CHECK_STR(h.backend.pending[1].cursor, "page-two");
+
+    Backend::SearchPage failure;
+    failure.error = "ratelimited";
+    h.backend.respond(1, std::move(failure));
+    clickFooter();
+    REQUIRE(h.backend.pending.size() == 3);
+    CHECK_STR(h.backend.pending[2].cursor, "page-two");
+    h.backend.respond(2, {});
+    CHECK_FALSE(search->hasMore());
+    CHECK_STR(search->emptyText(), "No results found.");
 }
 
 TEST("search: choosing a thread reply opens the correct thread") {

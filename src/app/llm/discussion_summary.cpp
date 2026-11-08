@@ -50,6 +50,51 @@ std::string entryLine(const SummaryEntry &e) {
     return line + text;
 }
 
+std::string summaryTranscript(const std::vector<SummaryEntry> &entries) {
+    std::vector<std::string> lines;
+    std::vector<size_t>      sizes; // in characters
+    size_t                   total = 0;
+    lines.reserve(entries.size());
+    for (const SummaryEntry &e : entries) {
+        lines.push_back(entryLine(e));
+        sizes.push_back(utf8::countCodePoints(lines.back()));
+        total += sizes.back() + 1;
+    }
+    // Over budget: keep [0, headEnd) and [tailBegin, n), drop the middle.
+    size_t headEnd = lines.size(), tailBegin = lines.size();
+    if (total > kMaxTranscriptChars) {
+        size_t headSize = 0, tailSize = 0;
+        headEnd = 0;
+        while (headEnd < tailBegin) {
+            if (headSize <= tailSize) {
+                if (headSize + sizes[headEnd] > kMaxTranscriptChars / 2)
+                    break;
+                headSize += sizes[headEnd++] + 1;
+            } else {
+                if (tailSize + sizes[tailBegin - 1] > kMaxTranscriptChars / 2)
+                    break;
+                tailSize += sizes[--tailBegin] + 1;
+            }
+        }
+    }
+    std::string transcript;
+    for (size_t k = 0; k < lines.size(); ++k) {
+        if (k == headEnd && headEnd < tailBegin)
+            transcript += str::concat(
+                {k ? "\n" : "",
+                 "[\xE2\x80\xA6 ",
+                 str::number(int64_t(tailBegin - headEnd)),
+                 " messages omitted \xE2\x80\xA6]"}
+            );
+        if (k >= headEnd && k < tailBegin)
+            continue;
+        if (!transcript.empty())
+            transcript += '\n';
+        transcript += lines[k];
+    }
+    return transcript;
+}
+
 } // namespace
 
 const char *const kAiLanguages[16] = {
@@ -65,47 +110,7 @@ const char *languageName(std::string_view code) {
 }
 
 Request summaryRequest(const std::vector<SummaryEntry> &entries, std::string_view languageCode) {
-    std::vector<std::string> lines;
-    std::vector<size_t>      sizes; // in characters
-    size_t                   total = 0;
-    lines.reserve(entries.size());
-    for (const SummaryEntry &e : entries) {
-        lines.push_back(entryLine(e));
-        sizes.push_back(utf8::countCodePoints(lines.back()));
-        total += sizes.back() + 1;
-    }
-    // Over budget: keep a head [0, i) and a tail [j, n), drop the middle.
-    size_t i = lines.size(), j = lines.size();
-    if (total > kMaxTranscriptChars) {
-        size_t headSize = 0, tailSize = 0;
-        i = 0;
-        while (i < j) {
-            if (headSize <= tailSize) {
-                if (headSize + sizes[i] > kMaxTranscriptChars / 2)
-                    break;
-                headSize += sizes[i++] + 1;
-            } else {
-                if (tailSize + sizes[j - 1] > kMaxTranscriptChars / 2)
-                    break;
-                tailSize += sizes[--j] + 1;
-            }
-        }
-    }
-    std::string transcript;
-    for (size_t k = 0; k < lines.size(); ++k) {
-        if (k == i && i < j)
-            transcript += str::concat(
-                {k ? "\n" : "",
-                 "[\xE2\x80\xA6 ",
-                 str::number(int64_t(j - i)),
-                 " messages omitted \xE2\x80\xA6]"}
-            );
-        if (k >= i && k < j)
-            continue;
-        if (!transcript.empty())
-            transcript += '\n';
-        transcript += lines[k];
-    }
+    const std::string transcript = summaryTranscript(entries);
 
     const char *language = languageName(languageCode);
     Request     req;

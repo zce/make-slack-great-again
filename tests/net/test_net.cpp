@@ -15,6 +15,7 @@
 // and pass: the local TLS server (needs openssl, and our own CA loading,
 // which honours SSL_CERT_FILE — the posix transport only).
 #include "support/test.h"
+#include "support/linux_threads.h"
 #include "net/net.h"
 #include "net/transport.h"
 #include "base/thread.h"
@@ -48,7 +49,6 @@ extern char **environ;
 #include <sys/socket.h>
 
 #include <atomic>
-#include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <poll.h>
@@ -1219,28 +1219,22 @@ TEST("error: cancel wakes a blocked exchange at once") {
     }
 }
 
-#ifdef NET_TEST_POSIX
-namespace {
-int threadCount() {
-    int  n = 0;
-    DIR *d = opendir("/proc/self/task");
-    if (!d)
-        return -1;
-    while (const dirent *e = readdir(d))
-        n += e->d_name[0] != '.';
-    closedir(d);
-    return n;
-}
-} // namespace
-#endif
-
 TEST("client: idle workers end; the next request starts one") {
     NEED_SERVER();
     net::detail::setWorkerIdleMs(150);
     {
         net::Client c(app());
-#ifdef NET_TEST_POSIX
-        const int before = threadCount();
+#ifdef __linux__
+        // A previous test's joined thread can remain visible briefly in /proc.
+        // Make an unrelated thread disappear after the baseline deterministically.
+        std::atomic<bool> retire{false};
+        base::Thread      unrelated;
+        REQUIRE(unrelated.start([&] {
+            while (!retire)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }));
+        const auto before = base::test::liveThreadIds();
+        CHECK_FALSE(before.empty());
 #endif
         for (int round = 0; round < 2; ++round) {
             int done = 0;
@@ -1248,13 +1242,17 @@ TEST("client: idle workers end; the next request starts one") {
                 c.send({.url = srv.base + "/plain"}, [&](net::Response r) {
                     done += r.body == "hello world";
                 });
-            REQUIRE(pumpUntil([&] { return done == 3; }));
-#ifdef NET_TEST_POSIX
-            CHECK(threadCount() > before);
+#ifdef __linux__
+            // Capture the workers while the requests are in flight, before idle retirement.
+            const auto workers = base::test::newThreadIds(before);
+            CHECK_FALSE(workers.empty());
+            retire = true;
+            unrelated.join();
 #endif
-#ifdef NET_TEST_POSIX
-            // Past the idle time every worker ends (a busy machine may take a while).
-            CHECK(pumpUntil([&] { return threadCount() == before; }, 5000));
+            REQUIRE(pumpUntil([&] { return done == 3; }));
+#ifdef __linux__
+            // Every observed worker must end, even if unrelated baseline threads also exited.
+            CHECK(pumpUntil([&] { return base::test::threadsExited(workers); }, 5000));
 #else
             pumpFor(500); // past the idle time: every worker has ended
 #endif

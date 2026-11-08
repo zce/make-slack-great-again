@@ -7,7 +7,6 @@
 #include "base/log.h"
 #include "base/file.h"
 #include "base/i18n.h"
-#include "base/json.h"
 #include "base/str.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
@@ -56,7 +55,6 @@
 #include <tuple>
 #include <cmath>
 #include <cstring>
-#include <mutex>
 #include <limits>
 
 using namespace ui;
@@ -80,8 +78,6 @@ constexpr float kTitleBarH = 46; // compact integrated title and toolbar (48 px 
 constexpr float kRailW = 64;
 constexpr float kListW = 248, kListMinW = 180, kListMaxW = 400;
 constexpr float kResizeEdge          = 6;
-// Settings changes are written this long after the first of a burst.
-constexpr int   kSettingsSaveDelayMs = 500;
 
 } // namespace
 
@@ -1130,10 +1126,12 @@ Shell::Shell(
             showError(message);
         });
     };
-    ctx.messageUser = [this](model::UserRef u) {
-        std::weak_ptr<int> alive = _alive;
-        _ctx.backend.openDm(u, [this, alive](ConvRef c) {
-            if (!alive.expired() && c != kNoConv)
+    ctx.messageUser = [this, alive = std::weak_ptr<int>(_alive)](model::UserRef u) {
+        if (alive.expired())
+            return;
+        const model::Store *store = &_ctx.store();
+        _ctx.backend.openDm(u, [this, alive, store](ConvRef c) {
+            if (!alive.expired() && store == &_ctx.store() && c != kNoConv)
                 open(c);
         });
     };
@@ -1251,7 +1249,7 @@ Shell::Shell(
 void Shell::saveSettingsSoon() {
     if (_saveTimer)
         return;
-    _saveTimer = _ctx.app.addTimer(kSettingsSaveDelayMs, false, [this] {
+    _saveTimer = _ctx.app.addTimer(kStateSaveDelayMs, false, [this] {
         _saveTimer = 0;
         _settings.saveInBackground(_ctx.app.platform(), _settingsPath);
     });
@@ -1268,129 +1266,6 @@ void Shell::saveSettingsNow() {
         _ctx.app.cancelTimer(std::exchange(_saveTimer, 0));
     if (!_settings.save(_settingsPath) && !_settingsPath.empty())
         LOG_WARN("shell", "could not save %s", _settingsPath.c_str());
-}
-
-// A month unclicked is never going to be clicked, and only the newest
-// clicks matter: keeps the file (and _notified) small on a chatty workspace.
-constexpr int64_t kNotifyMaxAgeSecs = 30 * 86400;
-constexpr size_t  kNotifyMaxEntries = 500;
-
-namespace {
-
-// notifications.json writes land in the order they were asked for: a late
-// worker never overwrites a newer file (as settings.cpp does for settings).
-std::mutex                                g_notifiedMutex;
-std::unordered_map<std::string, uint64_t> g_notifiedWritten;
-uint64_t                                  g_notifiedAsked = 0; // UI thread
-
-bool writeNotified(const std::string &path, const std::string &text, uint64_t n) {
-    std::lock_guard<std::mutex> lock(g_notifiedMutex);
-    uint64_t                   &done = g_notifiedWritten[path];
-    if (n <= done)
-        return true;
-    done = n;
-    return file::writeAtomic(path, text, 0600);
-}
-
-} // namespace
-
-void Shell::loadNotified() {
-    // Seed from the clock, not 1, when nothing's persisted yet:
-    // - first run: only matters once, every later run resumes from disk.
-    // - tests: many Shells share one backend/process; a fixed 1 would
-    //   collide with ids an earlier test's Shell already used.
-    _nextNotifyId = uint64_t(base::nowMicros());
-    if (_notifyPath.empty())
-        return;
-    std::string    text;
-    json::Document d;
-    if (!file::readAll(_notifyPath, &text) || !d.parse(std::move(text), nullptr))
-        return;
-    const json::Value root = d.root();
-    if (const int64_t next = root["nextId"].integer(); next > 0)
-        _nextNotifyId = uint64_t(next);
-    for (const json::Value &e : root["entries"]) {
-        Notified n;
-        n.key                                  = json::owned(e["key"]);
-        n.convId                               = json::owned(e["convId"]);
-        n.root                                 = Ts(e["root"].integer());
-        n.ts                                   = Ts(e["ts"].integer());
-        n.join                                 = json::owned(e["join"]);
-        n.postedAt                             = e["postedAt"].integer();
-        _notified[uint64_t(e["id"].integer())] = std::move(n);
-    }
-    pruneNotified();
-}
-
-void Shell::pruneNotified() {
-    const int64_t horizon = base::nowSecs() - kNotifyMaxAgeSecs;
-    std::erase_if(_notified, [&](const auto &e) { return e.second.postedAt < horizon; });
-    if (_notified.size() <= kNotifyMaxEntries)
-        return;
-    // The newest kNotifyMaxEntries stay; ids grow with time, so the oldest
-    // are the smallest.
-    std::vector<uint64_t> ids;
-    ids.reserve(_notified.size());
-    for (const auto &[id, n] : _notified)
-        ids.push_back(id);
-    const auto cut = ids.end() - ptrdiff_t(kNotifyMaxEntries);
-    std::nth_element(ids.begin(), cut, ids.end());
-    for (auto it = ids.begin(); it != cut; ++it)
-        _notified.erase(*it);
-}
-
-void Shell::saveNotifiedSoon() {
-    if (_notifySaveTimer || _notifyPath.empty())
-        return;
-    _notifySaveTimer = _ctx.app.addTimer(kSettingsSaveDelayMs, false, [this] {
-        _notifySaveTimer = 0;
-        // Built here, written on a worker (in order with every other write).
-        model::runInBackground(
-            _ctx.app.platform(),
-            [path = _notifyPath, text = notifiedFileText(), n = ++g_notifiedAsked] {
-                if (!writeNotified(path, text, n))
-                    LOG_WARN("shell", "could not save %s", path.c_str());
-            },
-            [] {}
-        );
-    });
-}
-
-void Shell::saveNotifiedNow() {
-    if (_notifySaveTimer)
-        _ctx.app.cancelTimer(std::exchange(_notifySaveTimer, 0));
-    if (!_notifyPath.empty() && !writeNotified(_notifyPath, notifiedFileText(), ++g_notifiedAsked))
-        LOG_WARN("shell", "could not save %s", _notifyPath.c_str());
-}
-
-std::string Shell::notifiedFileText() {
-    pruneNotified();
-    json::Writer w;
-    w.beginObject();
-    w.key("nextId").value(int64_t(_nextNotifyId));
-    w.key("entries").beginArray();
-    for (const auto &[id, n] : _notified) {
-        w.beginObject();
-        w.key("id").value(int64_t(id));
-        w.key("key").value(n.key);
-        w.key("convId").value(n.convId);
-        if (n.root)
-            w.key("root").value(int64_t(n.root));
-        if (n.ts)
-            w.key("ts").value(int64_t(n.ts));
-        if (!n.join.empty())
-            w.key("join").value(n.join);
-        w.key("postedAt").value(n.postedAt);
-        w.endObject();
-    }
-    w.endArray();
-    w.endObject();
-    return w.str();
-}
-
-uint64_t Shell::nextNotifyId() {
-    // Saved along with the entry it goes to (postNotification), or at quit.
-    return _nextNotifyId++;
 }
 
 // Routes Slack's /dnd, /status, /mute and app commands through the backend
@@ -1432,24 +1307,25 @@ Shell::~Shell() {
     for (int id : _shortcutIds)
         _win.removeShortcut(id);
     _shortcutIds.clear();
-    _win.keyFilter = nullptr;
+    _win.keyFilter   = nullptr;
     _win.inputFilter = nullptr;
+    _win.onEvent     = nullptr;
     _win.native().setHitTest({});
 
     // Context hooks and the global emoji observer are owned by this Shell.
     _ctx.openConversation = nullptr;
-    _ctx.openThread = nullptr;
-    _ctx.closeThread = nullptr;
-    _ctx.openProfile = nullptr;
-    _ctx.openUrl = nullptr;
-    _ctx.openMessage = nullptr;
-    _ctx.profileHover = nullptr;
-    _ctx.messageUser = nullptr;
-    _ctx.forwardMessage = nullptr;
-    _ctx.attachFiles = nullptr;
-    _ctx.quickReactions = nullptr;
-    _ctx.openCanvas = nullptr;
-    _ctx.openAiSettings = nullptr;
+    _ctx.openThread       = nullptr;
+    _ctx.closeThread      = nullptr;
+    _ctx.openProfile      = nullptr;
+    _ctx.openUrl          = nullptr;
+    _ctx.openMessage      = nullptr;
+    _ctx.profileHover     = nullptr;
+    _ctx.messageUser      = nullptr;
+    _ctx.forwardMessage   = nullptr;
+    _ctx.attachFiles      = nullptr;
+    _ctx.quickReactions   = nullptr;
+    _ctx.openCanvas       = nullptr;
+    _ctx.openAiSettings   = nullptr;
 #ifdef MSGA_HAVE_MESSAGES
     screens::EmojiPicker::setStateObserver(nullptr);
 #endif
@@ -4125,12 +4001,9 @@ void Shell::showQuickSwitcher(bool currentConversation) {
     };
     raw->onChoosePersonIn = [this](const std::string &key, model::UserRef user) {
         if (onSwitchWorkspace) onSwitchWorkspace(key);
-        if (const Running *r = findRunning(key); r && r->store == &_ctx.store() && _signedIn) {
-            std::weak_ptr<int> alive = _alive;
-            r->backend->openDm(user, [this, alive](ConvRef conv) {
-                if (!alive.expired() && conv != kNoConv) open(conv);
-            });
-        }
+        if (const Running *r = findRunning(key);
+            r && r->store == &_ctx.store() && _signedIn && _ctx.messageUser)
+            _ctx.messageUser(user);
     };
     const SizeF ws = _win.size();
     p->setAnchor({(ws.w - 620) / 2, 90, 620, 0}, Popup::Place::Below);

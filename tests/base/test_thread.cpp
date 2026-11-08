@@ -2,6 +2,7 @@
 // net::Client workers and the image caches' serial workers).
 #include "base/thread.h"
 #include "support/test.h"
+#include "support/linux_threads.h"
 
 #include <atomic>
 #include <chrono>
@@ -11,7 +12,7 @@
 #include <thread>
 
 #ifdef __linux__
-#include <dirent.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -37,19 +38,6 @@ struct Gate {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 };
-
-#ifdef __linux__
-int threadCount() {
-    int  n = 0;
-    DIR *d = opendir("/proc/self/task");
-    if (!d)
-        return -1;
-    while (const dirent *e = readdir(d))
-        n += e->d_name[0] != '.';
-    closedir(d);
-    return n;
-}
-#endif
 
 } // namespace
 
@@ -161,15 +149,22 @@ TEST("pool: stop drops the queued tasks, waits for the one under way") {
 
 TEST("pool: idle workers end; the next task starts a fresh one") {
 #ifdef __linux__
-    const int before = threadCount();
+    std::atomic<int> workerId{0};
 #endif
     base::WorkerPool pool({.maxWorkers = 2, .maxParked = 2, .idleMs = 30});
     std::atomic<int> done{0};
-    pool.post([&] { ++done; });
+    pool.post([&] {
+#ifdef __linux__
+        workerId = ::gettid();
+#endif
+        ++done;
+    });
     REQUIRE(waitFor([&] { return done == 1; }));
     REQUIRE(waitFor([&] { return pool.stats().workers == 0; }));
 #ifdef __linux__
-    CHECK(waitFor([&] { return threadCount() == before; })); // gone, not just parked
+    REQUIRE(workerId > 0);
+    // The exact worker is gone, not just parked or hidden by another thread's exit.
+    CHECK(waitFor([&] { return base::test::threadsExited({workerId.load()}); }));
 #endif
     pool.post([&] { ++done; });
     REQUIRE(waitFor([&] { return done == 2; }));

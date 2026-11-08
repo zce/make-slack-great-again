@@ -38,6 +38,8 @@ public:
     TokenDeriver(const TokenDeriver &)            = delete;
     TokenDeriver &operator=(const TokenDeriver &) = delete;
 
+    // Replaces any previous run: its pending delivery is cancelled by Client.
+    // Candidates run serially; lastError is returned only when none succeeds.
     void run(std::string cookie, std::vector<TeamSession> candidates, Done done);
 
 private:

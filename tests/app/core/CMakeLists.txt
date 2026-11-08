@@ -2,8 +2,8 @@
 # test fixture (../../assets), and the Slack Web API against a fake server
 # (../../support/fake_slack.py). Suites of msga_app_tests (../CMakeLists.txt),
 # ctest test core_<suite> each.
-set(core_suites mrkdwn markdown_compose emoji store jobs fixture languages slack slack_write
-    slack_read slack_cache slack_realtime slack_features)
+set(core_suites mrkdwn markdown_compose emoji store jobs mem_stats fixture languages slack slack_write
+    slack_auth slack_read slack_cache slack_realtime slack_features)
 if(TARGET msga_app_update)
     list(APPEND core_suites update)
     target_link_libraries(msga_app_tests PRIVATE msga_app_update)

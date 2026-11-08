@@ -56,15 +56,21 @@ src/text/font_libs.cmake) and compiled with msga's own trimmed configuration.
   license. Compiled in by the macOS, Windows and static Linux release builds
   (src/text/font_libs.cmake); other Linux builds link the system HarfBuzz.
 
-Linked statically into the release binaries
--------------------------------------------
+Platform and toolchain libraries
+--------------------------------
 
-The Linux release is one static binary built on Alpine Linux, and the
-Windows release one static exe. Besides the code above, they contain
-these system libraries. Other builds link them dynamically from the system,
-and the macOS app links only Apple's system frameworks.
+The fork's Linux release is dynamically linked on Ubuntu 24.04; the shared
+libraries required by each release are listed in its DEPENDENCIES.txt. It
+does not embed musl or the Linux libraries listed below. Optional fully
+static Linux builds can embed those libraries; their listed versions describe
+the upstream static-build baseline, not the fork's dynamic release.
 
-Linux:
+The Windows release is a single executable built with MSYS2/MinGW, statically
+linked to its GCC runtime. Toolchain versions follow the build environment,
+not fixed package versions in this notice. The macOS app links Apple's system
+frameworks in addition to the bundled font libraries listed above.
+
+Optional static Linux builds:
 - musl 1.2.5 (https://musl.libc.org), MIT License.
 - GCC 15.2 runtime: libstdc++ and libgcc (https://gcc.gnu.org), GNU General
   Public License version 3 with the GCC Runtime Library Exception.
@@ -80,14 +86,14 @@ Linux:
   License version 2 or later; used here under the GPL option (msga's LICENSE
   is version 3, which the "or later" covers).
 
-Windows (Ubuntu's mingw-w64 cross toolchain):
-- GCC 13.2 runtime: libstdc++ and libgcc (https://gcc.gnu.org), GNU General
+Windows (MSYS2/MinGW, or a local mingw-w64 cross toolchain):
+- GCC runtime: libstdc++ and libgcc (https://gcc.gnu.org), GNU General
   Public License version 3 with the GCC Runtime Library Exception.
-- mingw-w64 13.0 runtime (https://www.mingw-w64.org), Zope Public License
+- mingw-w64 runtime (https://www.mingw-w64.org), Zope Public License
   2.1, with parts under BSD-style licenses (NetBSD, the math library), the
   gdtoa license and, for headers imported from Wine, the GNU Lesser General
   Public License version 2.1 or later (COPYING.MinGW-w64-runtime, below).
-- winpthreads from mingw-w64 13.0, MIT License, with parts under BSD-style
+- winpthreads from mingw-w64, MIT License, with parts under BSD-style
   licenses.
 
 Optional

@@ -30,16 +30,12 @@
 // notification level, group-DM names, muted and followed threads, AI
 // transcripts.
 //
-// Claude Code: the sessions' star, mute and level were kept in the same
-// cache; they go into <dataDir>/claude-code/known-sessions.json, which
-// the backend keeps them in (claude/backend.cpp loadKnown).
-//
 // Not imported: the unread counts (stale; the server's answer has them), the
 // cached messages (the old ones were parsed text with entities, not Slack's
 // mrkdwn — the network gives them back on open), the images (pictures are
 // cached elsewhere now), the old notification level "Default" (= "All
-// new posts" until there is a per-conversation default) and the agent role
-// "ar" (Claude Code keeps it itself).
+// new posts" until there is a per-conversation default) and the obsolete
+// agent role "ar".
 //
 // The old files are only read.
 #pragma once
@@ -59,10 +55,6 @@ std::string oldCacheDir(plat::App &app, const std::string &workspaceKey);
 // One Slack workspace: `from` the old directory, `to` the new one
 // (cache::WorkspaceCache::dirFor). False when `from` has no conversations.
 bool importSlackCache(plat::App &app, const std::string &from, const std::string &to);
-
-// One Claude Code workspace's sessions: star, mute and level, where
-// known-sessions.json has none. False when nothing changed.
-bool importClaudeCodeCache(const std::string &from, const std::string &knownSessionsPath);
 
 // Every workspace of workspaces.json not done yet (`markerPath` lists the
 // keys done, one per line): each is imported once, ever.

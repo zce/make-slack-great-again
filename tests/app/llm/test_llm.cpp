@@ -4,6 +4,7 @@
 #include "app/llm/discussion_summary.h"
 #include "app/llm/provider.h"
 #include "app/llm/service.h"
+#include "app/llm/server_url.h"
 #include "support/fake_llm_server.h"
 #include "app/llm/wire.h"
 #include "base/json.h"

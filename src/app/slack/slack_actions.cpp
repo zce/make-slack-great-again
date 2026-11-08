@@ -152,31 +152,6 @@ int parseDndMinutes(std::string_view args) {
 
 } // namespace
 
-// The answer-or-error call most writes are: a cancel is silent (the backend
-// is going), a failure is logged and `done` hears it; on ok, onOk(doc) runs
-// first, then done(true).
-void SlackBackend::api(
-    std::string_view                            method,
-    std::string                                 form,
-    std::function<void(const json::Document &)> onOk,
-    Done                                        done
-) {
-    api(method,
-        std::move(form),
-        [m    = std::string(method),
-         onOk = std::move(onOk),
-         done = std::move(done)](const json::Document &doc, const std::string &err) {
-            if (err == "cancelled")
-                return;
-            if (!err.empty())
-                LOG_WARN("slack", "%s: %s", m.c_str(), err.c_str());
-            else if (onOk)
-                onOk(doc);
-            if (done)
-                done(err.empty(), err);
-        });
-}
-
 struct SlackBackend::Write {
     explicit Write(SlackBackend &b) : b(b) {}
 

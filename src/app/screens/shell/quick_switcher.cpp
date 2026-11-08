@@ -11,6 +11,7 @@
 #include "screens/shell/sidebar.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 using namespace ui;
@@ -562,10 +563,7 @@ QuickSwitcher::QuickSwitcher(
     const bool multi = _tabs.size() > 1;
     if (_scope != model::kNoConv && searchScopeQuery(ctx.store(), _scope).empty())
         _scope = model::kNoConv;
-    _nextCursor.assign(_tabs.size(), "*");
-    _failedCursor.assign(_tabs.size(), std::string());
-    _pageErrors.assign(_tabs.size(), std::string());
-    _hasMorePage.assign(_tabs.size(), false);
+    _searchPages.assign(_tabs.size(), SearchPageState{});
     style().width(620).padding(10).spacing(8);
     // The tabs first — the card's header when there is a choice to make.
     if (multi) {
@@ -646,17 +644,6 @@ QuickSwitcher::QuickSwitcher(
     _moreButton->onClick = [this] { loadMore(); };
     refreshStrip();
     refilter();
-}
-
-// The best score: the same key and bias as the list rows, so "the
-// workspace with the best match" is the one whose top row would rank highest.
-std::optional<double> QuickSwitcher::bestScore(QuickSwitchTab &t, std::string_view query) {
-    const std::vector<uint32_t> q = fuzzyQuery(str::trim(query));
-    std::optional<double>       best;
-    for (const QuickSwitchName &n : names(t))
-        if (const std::optional<double> s = scoreOf(n, q); s && (!best || *s > *best))
-            best = s;
-    return best;
 }
 
 // Names change with Meta and Users changes only (renames, a member's new
@@ -802,8 +789,9 @@ void QuickSwitcher::refilter(Scored *scored) {
 }
 
 bool QuickSwitcher::hasMore() const {
-    for (bool more : _hasMorePage) if (more) return true;
-    for (const std::string &failed : _failedCursor) if (!failed.empty()) return true;
+    for (const SearchPageState &page : _searchPages)
+        if (page.hasMore || !page.failedCursor.empty())
+            return true;
     return false;
 }
 
@@ -853,10 +841,7 @@ void QuickSwitcher::queueSearch() {
     }
     _hits.clear();
     _pendingSearches = 0;
-    _nextCursor.assign(_tabs.size(), "*");
-    _failedCursor.assign(_tabs.size(), std::string());
-    _pageErrors.assign(_tabs.size(), std::string());
-    _hasMorePage.assign(_tabs.size(), false);
+    _searchPages.assign(_tabs.size(), SearchPageState{});
     _searchError.clear();
     const std::string query(searchQuery());
     _searching = !str::trim(_field->text()).empty();
@@ -891,8 +876,10 @@ void QuickSwitcher::requestPage(size_t origin, std::string cursor, uint32_t gene
     if (!backend && _tabs[origin].store == &_ctx.store()) backend = &_ctx.backend;
     if (!backend) return;
     std::weak_ptr<int> alive = _alive;
+    // Copy the retry cursor: moving it into the callback in this call can
+    // empty the request argument before searchPage receives it.
     backend->searchPage(query, cursor,
-        [this, generation, origin, cursor = std::move(cursor), alive](
+        [this, generation, origin, cursor, alive](
             model::Backend::SearchPage result
         ) {
             if (alive.expired() || generation != _searchGeneration) return;
@@ -915,14 +902,15 @@ void QuickSwitcher::receivePage(size_t origin, std::string cursor, uint32_t gene
     if (keepViewport && anchorSelection >= int(oldMessageStart))
         visible = _hits[size_t(anchorSelection) - oldMessageStart];
 
+    SearchPageState &page = _searchPages[origin];
     if (!result.error.empty()) {
-        _failedCursor[origin] = cursor;
-        _pageErrors[origin] = result.error;
+        page.failedCursor = cursor;
+        page.error        = result.error;
     } else {
-        _failedCursor[origin].clear();
-        _pageErrors[origin].clear();
-        _nextCursor[origin] = result.nextCursor;
-        _hasMorePage[origin] = !result.nextCursor.empty();
+        page.failedCursor.clear();
+        page.error.clear();
+        page.nextCursor           = result.nextCursor;
+        page.hasMore              = !result.nextCursor.empty();
         const model::Store &store = *_tabs[origin].store;
         for (auto &hit : result.hits) {
             if (hit.conv >= store.conversationCount()) continue;
@@ -936,9 +924,9 @@ void QuickSwitcher::receivePage(size_t origin, std::string cursor, uint32_t gene
         });
     }
     _searchError.clear();
-    for (const std::string &error : _pageErrors)
-        if (!error.empty()) {
-            _searchError = error;
+    for (const SearchPageState &workspacePage : _searchPages)
+        if (!workspacePage.error.empty()) {
+            _searchError = workspacePage.error;
             break;
         }
     const auto findMessage = [this](const MessageMatch &saved) {
@@ -979,8 +967,11 @@ void QuickSwitcher::loadMore() {
     std::vector<std::pair<size_t, std::string>> targets;
     for (size_t i = 0; i < _tabs.size(); ++i) {
         if (_scope != model::kNoConv && int(i) != _tab) continue;
-        if (!_failedCursor[i].empty()) targets.emplace_back(i, _failedCursor[i]);
-        else if (_hasMorePage[i]) targets.emplace_back(i, _nextCursor[i]);
+        const SearchPageState &page = _searchPages[i];
+        if (!page.failedCursor.empty())
+            targets.emplace_back(i, page.failedCursor);
+        else if (page.hasMore)
+            targets.emplace_back(i, page.nextCursor);
     }
     if (targets.empty()) return;
     _pendingSearches = targets.size();
@@ -1021,19 +1012,15 @@ void QuickSwitcher::choose(int index) {
         else if (!here && in) in(key, c);
     } else if (size_t(index) < messageStart) {
         const model::UserRef user = _people[size_t(index) - conversations];
-        const auto open = _ctx.openConversation;
+        const auto open = _ctx.messageUser;
         const auto in = onChoosePersonIn;
-        model::Backend *backend = tab.backend ? tab.backend : &_ctx.backend;
         close();
-        if (here) {
-            backend->openDm(user, [open](ConvRef conv) {
-                if (conv != model::kNoConv && open) open(conv);
-            });
-        } else if (in) in(key, user);
+        if (here && open) open(user);
+        else if (!here && in) in(key, user);
     } else {
         const MessageMatch match = _hits[size_t(index) - messageStart];
         const QuickSwitchTab &messageTab = _tabs[match.workspace];
-        const std::string messageKey = messageTab.key;
+        const std::string     messageKey  = messageTab.key;
         const bool messageHere = messageTab.store == &_ctx.store();
         const auto openMessage = _ctx.openMessage;
         const auto openIn = onChooseMessageIn;

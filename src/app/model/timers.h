@@ -32,7 +32,8 @@ private:
 
 // fn on the loop's next turn, unless its owner is gone by then: `alive` is
 // the owner's flag (set false as it goes), or a weak hold on something the
-// owner owns (expired once it went).
+// owner owns (expired once it went). Calls and flag updates belong to the
+// UI thread; a shared bool is not worker-thread synchronization.
 void postWhileAlive(plat::App &app, std::shared_ptr<bool> alive, std::function<void()> fn);
 void postWhileAlive(plat::App &app, std::weak_ptr<void> alive, std::function<void()> fn);
 

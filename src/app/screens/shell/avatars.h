@@ -1,7 +1,6 @@
 // Small bitmaps the shell draws everywhere (avatars, the workspace icon,
 // notification and tray pictures): decoded once per (path, size) and shared.
-// Files are PNG / JPEG / GIF / WebP, or SVG (Claude Code's teammate tiles),
-// which is rendered at the size asked for.
+// Files are PNG / JPEG / GIF / WebP, or SVG, rendered at the size asked for.
 //
 // Nothing is decoded on the UI thread: get() hands out an EMPTY bitmap — ui::
 // Image paints its placeholder for it — and the ImageCache worker decodes the

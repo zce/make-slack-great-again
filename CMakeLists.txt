@@ -106,6 +106,8 @@ if(MSGA_ASAN)
         message(FATAL_ERROR "MSGA_ASAN needs GCC or Clang")
     endif()
     set(MSGA_ASAN_FLAGS -fsanitize=address -fno-omit-frame-pointer -O1 -g)
+    # Keep diagnostic paths compiler-independent; Clang does not define GCC's ASan macro.
+    target_compile_definitions(msga_flags INTERFACE MSGA_ASAN)
     target_compile_options(msga_flags INTERFACE ${MSGA_ASAN_FLAGS})
     target_link_options(msga_flags INTERFACE -fsanitize=address)
 endif()

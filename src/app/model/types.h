@@ -78,7 +78,7 @@ enum class ConvKind : uint8_t { Channel, Private, Dm, Group };
 // Which new messages notify ("Notify you about…"); `muted` is separate
 // and silences everything, the badge included. Default follows the global
 // setting; an explicit All overrides a global "Just mentions". The values are
-// persisted (workspace cache, Claude Code teammates): 0 is what caches written
+// persisted in the workspace cache: 0 is what caches written
 // before Default existed stored for an untouched conversation.
 enum class NotifyLevel : uint8_t { Default, Mentions, Nothing, All };
 
@@ -169,7 +169,7 @@ struct Attachment {
     bool                         operator==(const Attachment &) const;
 };
 
-// A button under a message (Claude Code's permission question: its options);
+// A Slack app's button under a message (Block Kit or a legacy attachment);
 // pressing one is Backend::pressButton.
 struct Button {
     enum class Style : uint8_t { Default, Primary, Danger };

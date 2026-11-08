@@ -9,6 +9,8 @@
 //            net; a rotating token is refreshed (oauth.v2.access)
 //
 // The implementation is split by concern (one class, several files):
+//   slack_backend_core.cpp shared request dispatch, token-refresh routing,
+//                       construction, teardown and auth-loss delivery
 //   slack_backend.cpp   connect, roster, users, emoji, history, threads,
 //                       polling for new messages and unread counts
 //   slack_actions.cpp   every write: send/edit/delete, reactions, read
@@ -19,6 +21,7 @@
 //   slack_realtime.cpp  Socket Mode events into the Store, the reconnect
 //                       backfill (resyncUnreads), the presence link, token
 //                       refresh
+//   slack_activity.cpp  Activity feed loading and read-state updates
 //   slack_json.{h,cpp}  Web API JSON → model (users, conversations, messages)
 #pragma once
 
@@ -44,7 +47,9 @@ class RtmPresence;
 class SlackBackend final : public model::Backend {
 public:
     SlackBackend(model::Store &store, plat::App &app, net::Client &client, Credentials creds);
-    ~SlackBackend() override; // cancels everything; no callback runs afterwards
+    // Cancels requests/timers and suppresses owner callbacks. Outstanding file
+    // downloads still receive their terminal "cancelled" result on the next turn.
+    ~SlackBackend() override;
 
     const Credentials                            &credentials() const { return _creds; }
     const Auth                                   &auth() const { return _auth; }
@@ -209,7 +214,7 @@ public:
     }
     void reloadConversationsForTest() { reloadConversations(); }
 
-    // ── Shared by both halves ───────────────────────────────────────────────
+    // ── Shared request and model helpers ────────────────────────────────────
     // A Web API call with this workspace's auth; tracked so the destructor
     // cancels it (done never runs after ~SlackBackend). An auth error also
     // fires onAuthLost (once).
@@ -219,7 +224,7 @@ public:
     void sectionCall(
         std::string_view method, std::string form, std::function<void(const json::Document &)> onOk
     );
-    // The same for a call whose answer is ok or an error (slack_actions.cpp):
+    // The same for a call whose answer is ok or an error (slack_backend_core.cpp):
     // a cancel is silent, a failure is logged and `done` hears it; on ok
     // onOk(doc) runs first, then done(true). Either may be null.
     void

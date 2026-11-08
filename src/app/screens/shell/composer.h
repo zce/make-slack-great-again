@@ -148,7 +148,7 @@ public:
     // A fixed placeholder, whatever the target (the forward dialog's); ""
     // goes back to the target's ("Message #design", "Reply in thread…").
     void               setPlaceholder(std::string text);
-    // Claude Code's suggested reply, shown in place of the placeholder while
+    // A backend-provided reply suggestion, shown in place of the placeholder while
     // the editor is empty ("…  →"); → or Tab takes it. "" drops it.
     void               setSuggestion(std::string text);
     const std::string &suggestion() const { return _suggestion; }
@@ -161,14 +161,14 @@ public:
     // follows, unless locked or fixed.
     void               refreshPlaceholder();
 
-    // ── Agent sessions ──────────────────────────────────────────────────────
+    // ── History and commands ────────────────────────────────────────────────
     // The prompt history source (newest first): ↑ / ↓ from an empty
     // editor step through it, Ctrl+R searches it. Unset: no history.
     std::function<std::vector<std::string>()> historySource;
     HistorySearch                            *historySearch() const { return _historySearch; }
     // "/name args" for a known command msga runs itself (Command::local,
     // Capabilities::slashCommands): asked instead of sending; others go out
-    // as messages (Claude Code's commandsAreMessages).
+    // as ordinary messages.
     std::function<void(const std::string &name, const std::string &args)> onCommand;
     // What the history search dims above the box (the message
     // area; default the composer's parent).

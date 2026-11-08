@@ -18,8 +18,6 @@
 #include "net/net.h"
 
 #include <string>
-#include <string_view>
-#include <vector>
 
 namespace llm {
 
@@ -43,21 +41,6 @@ constexpr int kTimeoutMs = 120000;
 
 net::Request buildChat(const Endpoint &ep, const Request &req);
 net::Request buildListModels(const Endpoint &ep);
-
-// ── Custom servers ──────────────────────────────────────────────────────────
-
-// What the user typed as an OpenAI-compatible server → the base URL to use:
-// http:// added when no scheme is given, trailing '/' and a pasted
-// "/chat/completions" dropped, "/v1" appended to a bare host. "" when the
-// result is no usable http(s) URL.
-std::string normalizeOpenAiBaseUrl(std::string_view raw);
-// Plain http to a host that is not this machine or the local network
-// (loopback, *.localhost, *.local, link-local, RFC 1918, fc00::/7 are
-// local): the API key would cross the internet unencrypted.
-bool        isCleartextRemote(std::string_view url);
-// A sentence for net's "no HTTP answer" reasons ("dns", "timeout: …");
-// "network error" for anything else.
-std::string transportFailure(std::string_view netError);
 
 // A finished net::Response (status 0: no HTTP answer, see its error).
 ChatResult   parseChat(Format format, const net::Response &r);

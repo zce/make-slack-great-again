@@ -9,10 +9,10 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace shell {
@@ -62,7 +62,7 @@ struct QuickSwitchTab {
     // quickSwitchNames(order), and the store's metaRevision they were made at.
     std::vector<QuickSwitchName> names;
     uint64_t                     namesRev = UINT64_MAX;
-    model::Backend              *backend = nullptr; // search/open DM for this workspace
+    model::Backend              *backend = nullptr; // search for this workspace
 };
 
 // With several workspaces a strip of their bubbles sits above the field,
@@ -121,8 +121,15 @@ private:
     std::string                                searchQuery() const;
     void                                       clearScope();
     void                                       refreshStrip();
-    std::optional<double>                      bestScore(QuickSwitchTab &t, std::string_view query);
     static const std::vector<QuickSwitchName> &names(QuickSwitchTab &t); // brought up to date
+
+    // One workspace's pagination state, reset together when the query changes.
+    struct SearchPageState {
+        std::string nextCursor = "*";
+        std::string failedCursor;
+        std::string error;
+        bool        hasMore = false;
+    };
 
     screens::Context           &_ctx;
     Avatars                    &_avatars;
@@ -134,8 +141,7 @@ private:
     std::vector<MessageMatch> _hits;
     size_t _pendingSearches = 0;
     model::ConvRef _scope = model::kNoConv;
-    std::vector<std::string> _nextCursor, _failedCursor, _pageErrors;
-    std::vector<bool>        _hasMorePage;
+    std::vector<SearchPageState> _searchPages; // parallel to _tabs
     std::string _searchError;
     uint32_t                    _searchGeneration = 0;
     plat::TimerId               _searchTimer = 0;

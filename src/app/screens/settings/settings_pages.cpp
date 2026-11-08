@@ -6,7 +6,7 @@
 #include "app/diag/mem_stats.h"
 #include "app/llm/discussion_summary.h"
 #include "app/llm/service.h"
-#include "app/llm/wire.h"
+#include "app/llm/server_url.h"
 #include "app/screens/common/remote_images.h"
 #include "app/spell/spell.h"
 #ifdef MSGA_SELF_UPDATE

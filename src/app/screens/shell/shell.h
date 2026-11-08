@@ -51,6 +51,9 @@ class WorkspaceStack;
 
 class Shell {
 public:
+    // Sole owner of this Window's view tree, event filters, native hit test
+    // and Context navigation hooks until destruction. The caller retains
+    // onCloseRequested and any shortcuts it registers separately.
     Shell(
         screens::Context &ctx,
         ui::Window       &win,
@@ -141,8 +144,7 @@ public:
         const std::string              &text,
         const std::vector<std::string> &files
     );
-    // The error banner: a message no call waits for (a queued Claude Code
-    // message that never went out), shown for a few seconds.
+    // The error banner: a backend failure no call waits for, shown for a few seconds.
     void               showError(const std::string &message);
     ui::Label         *errorBanner() const { return _errorBanner; } // tests
     // The parallel-usage banner: the same app keys run on another device and
@@ -179,7 +181,7 @@ public:
     // The profile card; beside `anchor` (window rect of the avatar/name)
     // when given, else centred near the top.
     void           showProfile(model::UserRef u, ui::RectF anchor = {});
-    // The rename dialog: a local name for a group DM (or agent session).
+    // The rename dialog: a local name for a group DM.
     void           renameConversation(model::ConvRef c);
     // "Find a channel" on its Channels (0) or
     // People (1) tab — a channel opens (joined first), a person's DM opens.
@@ -296,6 +298,7 @@ public:
 #endif
 
 private:
+    static constexpr int kStateSaveDelayMs = 500;      // coalesce settings and notification writes
     void        openSettingsAt(uint8_t page); // a settings::SettingsDialog::Page
     void        buildTitleBar(ui::View *parent);
     void        buildRail(ui::View *parent);
@@ -541,7 +544,7 @@ private:
     ThreadsPage                       *_threadsPage   = nullptr;
     SavedPage                         *_savedPage     = nullptr;
     ScheduledPage                     *_scheduledPage = nullptr;
-    std::vector<int>                    _shortcutIds; // Window shortcuts owned by this Shell
+    std::vector<int>                   _shortcutIds; // Window shortcuts owned by this Shell
     std::shared_ptr<int>               _alive = std::make_shared<int>(0);
     // The error banner (5 s), and what the composer was last given
     // (applyComposerAccess hands changes on only).

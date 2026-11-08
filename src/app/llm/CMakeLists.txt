@@ -1,9 +1,10 @@
 # msga_app_llm — the AI provider layer: the Anthropic Messages and
 # OpenAI-compatible chat wires, the presets, the Service the app asks (over
-# net::Client), and the prompts built on it (discussion summaries.
+# net::Client), and the prompts built on it (discussion summaries).
 add_library(msga_app_llm STATIC
     wire.cpp
     provider.cpp
+    server_url.cpp
     service.cpp
     discussion_summary.cpp
 )

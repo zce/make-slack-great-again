@@ -80,13 +80,13 @@
 #include <ftw.h>
 #include <unistd.h>
 #endif
-#if (defined(__SANITIZE_ADDRESS__) || defined(MSGA_DEV_DIAG)) && !defined(_WIN32)
+#if (defined(MSGA_ASAN) || defined(MSGA_DEV_DIAG)) && !defined(_WIN32)
 #include <csignal>
 #endif
 
 namespace {
 
-#if defined(__SANITIZE_ADDRESS__) && !defined(_WIN32)
+#if defined(MSGA_ASAN) && !defined(_WIN32)
 // ASan builds (scripts/run-asan.sh): Ctrl+C / SIGTERM quit the app normally,
 // so LeakSanitizer gets to print its report at exit.
 volatile std::sig_atomic_t gQuitSignal = 0;
@@ -322,7 +322,7 @@ int main(int argc, char **argv) {
     // Dev builds only: the main-thread hang watchdog (crash_handler.h), its
     // heartbeat started below. AddressSanitizer makes everything ~5-10x
     // slower, so ASan builds get a roomier window and only genuine hangs fire.
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(MSGA_ASAN)
     const bool watchdog = crash::startWatchdog(20000);
 #else
     const bool watchdog = crash::startWatchdog(5000);
@@ -658,7 +658,7 @@ int main(int argc, char **argv) {
     // re-arms its deadline every second; if the loop wedges, it fires.
     if (watchdog)
         app->addTimer(1000, true, [] { crash::heartbeat(); });
-#if defined(__SANITIZE_ADDRESS__) && !defined(_WIN32)
+#if defined(MSGA_ASAN) && !defined(_WIN32)
     std::signal(SIGINT, [](int) { gQuitSignal = 1; });
     std::signal(SIGTERM, [](int) { gQuitSignal = 1; });
     app->addTimer(250, true, [&] {

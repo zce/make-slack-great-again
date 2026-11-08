@@ -13,18 +13,13 @@
 #include "net/net.h"
 #include "plat/plat.h"
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
 
 #ifndef _WIN32
-#include <csignal>
-#include <spawn.h>
-#include <sys/wait.h>
 #include <unistd.h>
-extern char **environ;
 
 namespace {
 
@@ -33,40 +28,11 @@ using model::Ts;
 
 using fakeslack::app;
 using fakeslack::ctl;
+using fakeslack::Log;
 using fakeslack::pumpFor;
 using fakeslack::pumpUntil;
+using fakeslack::script;
 using fakeslack::server;
-
-void script(const char *method, const char *responsesJson) {
-    ctl("POST",
-        "/_ctl/script",
-        std::string("{\"method\":\"") + method + "\",\"responses\":" + responsesJson + "}");
-}
-
-// The requests the fake has seen.
-struct Log {
-    json::Document doc;
-    Log() { doc.parse(ctl("GET", "/_ctl/log").body, nullptr); }
-    int count(std::string_view method) const {
-        int n = 0;
-        for (json::Value r : doc.root())
-            n += r["method"].str() == method;
-        return n;
-    }
-    // The n-th request of `method` (an empty Value if there are fewer).
-    json::Value get(std::string_view method, int n = 0) const {
-        for (json::Value r : doc.root())
-            if (r["method"].str() == method && n-- == 0)
-                return r;
-        return {};
-    }
-    std::string order() const { // "a,b,c"
-        std::string s;
-        for (json::Value r : doc.root())
-            s.append(s.empty() ? "" : ",").append(r["method"].str());
-        return s;
-    }
-};
 
 // A signed-in session workspace with #general, a DM and one older message.
 struct Env {

@@ -1,11 +1,16 @@
 // The shell's desktop notifications: new messages (maybeNotify with its
 // gates, waiting for the people named to resolve), huddles starting
 // (huddleChanged) and message reminders going off (notifyReminderDue).
+// Notification deduplication and its persisted click routes live here too.
 // Shell members kept apart from shell.cpp; the clicks are handleAppEvent's.
 #include "app/media/sounds.h"
+#include "app/model/jobs.h"
 #include "app/screens/common/message_rules.h"
 #include "app/screens/common/message_text.h"
 #include "base/i18n.h"
+#include "base/file.h"
+#include "base/json.h"
+#include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
 #include "base/utf8.h"
@@ -15,6 +20,8 @@
 #include "screens/shell/standin.h"
 
 #include <algorithm>
+#include <mutex>
+#include <utility>
 
 using i18n::tr;
 using model::ConvRef;
@@ -30,6 +37,26 @@ constexpr int    kNotifyResolveStep  = 150; // ms between tries to resolve names
 constexpr int    kNotifyResolveTries = 10;
 constexpr size_t kMaxBody            = 100;
 constexpr int    kNotifyTimeoutMs    = 5000;
+
+// A month unclicked is never going to be clicked, and only the newest
+// clicks matter: keeps the file (and _notified) small on a chatty workspace.
+constexpr int64_t kNotifyMaxAgeSecs = 30 * 86400;
+constexpr size_t  kNotifyMaxEntries = 500;
+
+// notifications.json writes land in the order they were asked for: a late
+// worker never overwrites a newer file (as settings.cpp does for settings).
+std::mutex                                g_notifiedMutex;
+std::unordered_map<std::string, uint64_t> g_notifiedWritten;
+uint64_t                                  g_notifiedAsked = 0; // UI thread
+
+bool writeNotified(const std::string &path, const std::string &text, uint64_t n) {
+    std::lock_guard<std::mutex> lock(g_notifiedMutex);
+    uint64_t                   &done = g_notifiedWritten[path];
+    if (n <= done)
+        return true;
+    done = n;
+    return file::writeAtomic(path, text, 0600);
+}
 
 // The body's cap: 97 characters and "…".
 std::string capped(std::string_view s) {
@@ -85,6 +112,105 @@ bool hasUserIdPrefix(std::string_view id) {
 }
 
 } // namespace
+
+void Shell::loadNotified() {
+    // Seed from the clock, not 1, when nothing's persisted yet:
+    // - first run: only matters once, every later run resumes from disk.
+    // - tests: many Shells share one backend/process; a fixed 1 would
+    //   collide with ids an earlier test's Shell already used.
+    _nextNotifyId = uint64_t(base::nowMicros());
+    if (_notifyPath.empty())
+        return;
+    std::string    text;
+    json::Document d;
+    if (!file::readAll(_notifyPath, &text) || !d.parse(std::move(text), nullptr))
+        return;
+    const json::Value root = d.root();
+    if (const int64_t next = root["nextId"].integer(); next > 0)
+        _nextNotifyId = uint64_t(next);
+    for (const json::Value &e : root["entries"]) {
+        Notified n;
+        n.key                                  = json::owned(e["key"]);
+        n.convId                               = json::owned(e["convId"]);
+        n.root                                 = Ts(e["root"].integer());
+        n.ts                                   = Ts(e["ts"].integer());
+        n.join                                 = json::owned(e["join"]);
+        n.postedAt                             = e["postedAt"].integer();
+        _notified[uint64_t(e["id"].integer())] = std::move(n);
+    }
+    pruneNotified();
+}
+
+void Shell::pruneNotified() {
+    const int64_t horizon = base::nowSecs() - kNotifyMaxAgeSecs;
+    std::erase_if(_notified, [&](const auto &e) { return e.second.postedAt < horizon; });
+    if (_notified.size() <= kNotifyMaxEntries)
+        return;
+    // The newest kNotifyMaxEntries stay; ids grow with time, so the oldest
+    // are the smallest.
+    std::vector<uint64_t> ids;
+    ids.reserve(_notified.size());
+    for (const auto &[id, n] : _notified)
+        ids.push_back(id);
+    const auto cut = ids.end() - ptrdiff_t(kNotifyMaxEntries);
+    std::nth_element(ids.begin(), cut, ids.end());
+    for (auto it = ids.begin(); it != cut; ++it)
+        _notified.erase(*it);
+}
+
+void Shell::saveNotifiedSoon() {
+    if (_notifySaveTimer || _notifyPath.empty())
+        return;
+    _notifySaveTimer = _ctx.app.addTimer(kStateSaveDelayMs, false, [this] {
+        _notifySaveTimer = 0;
+        // Built here, written on a worker (in order with every other write).
+        model::runInBackground(
+            _ctx.app.platform(),
+            [path = _notifyPath, text = notifiedFileText(), n = ++g_notifiedAsked] {
+                if (!writeNotified(path, text, n))
+                    LOG_WARN("shell", "could not save %s", path.c_str());
+            },
+            [] {}
+        );
+    });
+}
+
+void Shell::saveNotifiedNow() {
+    if (_notifySaveTimer)
+        _ctx.app.cancelTimer(std::exchange(_notifySaveTimer, 0));
+    if (!_notifyPath.empty() && !writeNotified(_notifyPath, notifiedFileText(), ++g_notifiedAsked))
+        LOG_WARN("shell", "could not save %s", _notifyPath.c_str());
+}
+
+std::string Shell::notifiedFileText() {
+    pruneNotified();
+    json::Writer w;
+    w.beginObject();
+    w.key("nextId").value(int64_t(_nextNotifyId));
+    w.key("entries").beginArray();
+    for (const auto &[id, n] : _notified) {
+        w.beginObject();
+        w.key("id").value(int64_t(id));
+        w.key("key").value(n.key);
+        w.key("convId").value(n.convId);
+        if (n.root)
+            w.key("root").value(int64_t(n.root));
+        if (n.ts)
+            w.key("ts").value(int64_t(n.ts));
+        if (!n.join.empty())
+            w.key("join").value(n.join);
+        w.key("postedAt").value(n.postedAt);
+        w.endObject();
+    }
+    w.endArray();
+    w.endObject();
+    return w.str();
+}
+
+uint64_t Shell::nextNotifyId() {
+    // Saved along with the entry it goes to (postNotification), or at quit.
+    return _nextNotifyId++;
+}
 
 // The workspace's name in front ("Team · …") when it isn't the one on
 // screen.

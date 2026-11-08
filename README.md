@@ -193,7 +193,7 @@ The configure scripts install and check everything a build needs:
 ./scripts/configure-mac.sh      # for macOS (Xcode command line tools + Homebrew)
 ```
 
-- **Linux:** installs the compiler and build tools plus the development packages of FreeType, HarfBuzz, xkbcommon, Wayland, XCB and D-Bus. On other distributions, install the equivalents (the script lists them when apt isn't there). Add `--release` to also install what the release scripts use: Docker (checked, not installed), Xvfb and Wine.
+- **Linux:** installs the compiler and build tools plus the development packages of FreeType, HarfBuzz, xkbcommon, Wayland, XCB and D-Bus. On other distributions, install the equivalents (the script lists them when apt isn't there). The generic `--release` option also checks Docker and installs Xvfb and Wine for upstream tooling; fork releases use GitHub Actions instead.
 - **macOS:** only cmake, ninja and clang-format come from Homebrew. The app links nothing but the system frameworks, and msga's CMake builds FreeType and HarfBuzz itself.
 
 On Windows, run the PowerShell script from an **elevated** (Administrator) terminal. It uses winget to install Git and LLVM (for clang-format), and installs MSYS2 to `C:\msys64` (or `$env:MSYS2_ROOT`) with its mingw64 GCC, CMake, Ninja and Python:
@@ -245,11 +245,13 @@ Both build scripts take the same options:
 
 `--test` stays on in that build directory once you've used it.
 
+On Linux and macOS, `build.sh` also accepts `--demo` to include the fixture-driven workspace and `--asan` for an AddressSanitizer/LeakSanitizer Debug build in `build-asan/`. Builds and sanitizer checks default to CPU-count test parallelism. Set `MSGA_CTEST_JOBS` to a positive integer to override it on resource-constrained machines.
+
 ### Step 4. Release builds (optional)
 
 `scripts/release.sh` (Linux, macOS) and `scripts\release.ps1` (Windows) make a stripped release-flags build for the machine you're on, always from a clean configure with no tests. They write to `build-release/` and print the per-module size report. `release.ps1` links the exe fully static, like the shipped one.
 
-For the source layout and the size rules, see [src/README.md](https://github.com/punarinta/make-slack-great-again/blob/master/src/README.md).
+For the source layout and the size rules, see [src/README.md](src/README.md).
 
 ## Maintaining this fork
 
@@ -268,9 +270,22 @@ This section is the source of truth for fork-specific development, upstream sync
 The `.github/workflows/ci.yml` workflow runs on pull requests, pushes to `master` and manual dispatches:
 
 - **Pull requests:** Ubuntu 24.04/GCC builds and runs the full test suite; Ubuntu 24.04/Clang performs a compile check. The GCC job uploads a test-enabled Linux executable. The Windows x86_64/MinGW job builds the portable executable, verifies that it has no MinGW runtime DLL dependencies, and uploads it with its checksum for manual testing. Both PR artifacts have 14-day retention; Windows CTest is not run.
-- **Master pushes and manual runs:** both Linux compiler jobs run the full test suite. CTest currently starts with two workers; tests sharing global resources must declare `RESOURCE_LOCK` or `RUN_SERIAL`. The Windows job also builds and validates the portable executable.
+- **Master pushes and manual runs:** both Linux compiler jobs run the full test suite. CTest starts with four workers; tests sharing global resources must declare `RESOURCE_LOCK` or `RUN_SERIAL`. The Windows job also builds and validates the portable executable.
 - **Successful master pushes:** the GCC job makes a separate production build with tests, demo and upstream self-update disabled, then uploads the dynamically linked Linux x86_64 executable, SHA256 checksum and `DEPENDENCIES.txt`. The Windows job uploads `msga-windows-x86_64.exe` with its SHA256 checksum. Both production artifacts have 30-day retention.
 - Actions are pinned to reviewed commit SHAs. Keep PR test artifacts and production release artifacts distinct.
+
+### Memory validation
+
+The separate `.github/workflows/memory.yml` workflow runs the test suite and a 10-round demo soak under AddressSanitizer/LeakSanitizer on pull requests. A daily scheduled run performs a normal 20-round soak; manual dispatch runs both jobs and accepts 1–100 rounds for the normal soak. Logs are retained as workflow artifacts. Memory measurements are observational, not a hard RSS gate.
+
+With build dependencies and Xvfb available on Linux, the same checks can be run locally:
+
+```sh
+xvfb-run -a scripts/run-asan.sh 10
+xvfb-run -a scripts/soak.sh 20
+```
+
+Both scripts use `tests/assets/fixture.json` unless a top-level `demo/fixture.json` exists, and accept an explicit fixture directory as their second argument. They do not need a signed-in Slack account. See [runtime ownership contracts](docs/ARCHITECTURE.md#asynchronous-lifetime-contracts) before changing deferred callbacks or background work.
 
 ### Releases
 

@@ -21,11 +21,10 @@ namespace fake {
 
 // The first message of `conv` (top-level, then a loaded thread's replies)
 // whose rendered text, file name or attachment title contains `fragment`,
-// case-insensitively; 0 = none. Any backend's Store: the demo tours name
-// messages this way on the Claude Code workspace too.
+// case-insensitively; 0 = none. The lookup works on any backend's Store.
 model::Ts findTs(const model::Store &store, model::ConvRef conv, std::string_view fragment);
 
-// Not final: tests derive from it (e.g. to make a DM an agent session).
+// Not final: tests derive from it to control deferred responses and capabilities.
 class FakeBackend : public model::Backend {
 public:
     FakeBackend(model::Store &store, plat::App &app);

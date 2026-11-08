@@ -1250,18 +1250,6 @@ TEST("settings: Send with Ctrl+Enter makes Enter a new line") {
     h.sh->applySettings();
 }
 
-namespace {
-bool until(const std::function<bool()> &done, int ms = 10000) {
-    const double end = app().nowMs() + ms;
-    while (!done()) {
-        if (app().nowMs() > end)
-            return false;
-        app().pump(2);
-    }
-    return true;
-}
-} // namespace
-
 TEST("settings: Test connection and Fetch models ask the server for its models") {
     const std::string &base = fakellm::server();
     if (base.empty()) {

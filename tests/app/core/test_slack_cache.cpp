@@ -19,15 +19,13 @@
 namespace {
 
 using fakeslack::app;
+using fakeslack::count;
 using fakeslack::ctl;
 using fakeslack::pumpUntil;
+using fakeslack::set;
 using model::ConvRef;
 using model::kNoConv;
 using model::Ts;
-
-void set(const std::string &json) {
-    ctl("POST", "/_ctl/set", json);
-}
 
 const char *kWorkspace = R"({
  "auth.test": {"ok": true, "user_id": "UME", "team_id": "T1", "team": "Lumen",
@@ -53,15 +51,6 @@ const char *kWorkspace = R"({
       "files": [{"id": "F1", "name": "cat.png", "mimetype": "image/png",
                  "url_private": "https://files/cat.png", "original_w": 16, "original_h": 9}]}]}
 })";
-
-int count(std::string_view method) {
-    json::Document d;
-    d.parse(ctl("GET", "/_ctl/log").body, nullptr);
-    int n = 0;
-    for (json::Value r : d.root())
-        n += r["method"].str() == method;
-    return n;
-}
 
 std::string cacheDir() {
     return cache::WorkspaceCache::dirFor(app(), "slack:T1");

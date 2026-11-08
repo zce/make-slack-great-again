@@ -121,5 +121,59 @@ net::Response ctl(const char *method, const std::string &path, std::string body)
     return out;
 }
 
+void set(const std::string &answers) {
+    ctl("POST", "/_ctl/set", answers);
+}
+
+void script(const char *method, const std::string &responses) {
+    ctl("POST",
+        "/_ctl/script",
+        std::string("{\"method\":\"") + method + "\",\"responses\":" + responses + "}");
+}
+
+Log::Log() {
+    _doc.parse(ctl("GET", "/_ctl/log").body, nullptr);
+}
+
+int Log::count(std::string_view method) const {
+    int n = 0;
+    for (json::Value request : entries())
+        n += request["method"].str() == method;
+    return n;
+}
+
+int Log::count(std::string_view method, std::string_view field, std::string_view value) const {
+    int n = 0;
+    for (json::Value request : entries())
+        n += request["method"].str() == method && request["form"][field].str() == value;
+    return n;
+}
+
+json::Value Log::get(std::string_view method, int index) const {
+    for (json::Value request : entries())
+        if (request["method"].str() == method && index-- == 0)
+            return request;
+    return {};
+}
+
+std::string Log::order() const {
+    std::string methods;
+    for (json::Value request : entries())
+        methods.append(methods.empty() ? "" : ",").append(request["method"].str());
+    return methods;
+}
+
+bool Log::frame(std::string_view method, std::string_view needle) const {
+    for (json::Value request : entries())
+        if (request["method"].str() == method &&
+            request["form"]["text"].str().find(needle) != std::string_view::npos)
+            return true;
+    return false;
+}
+
+int count(std::string_view method) {
+    return Log().count(method);
+}
+
 } // namespace fakeslack
 #endif // !_WIN32

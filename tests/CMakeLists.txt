@@ -11,9 +11,14 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 
 # ── Shared ──────────────────────────────────────────────────────────────────
 # The harness: TEST/CHECK/REQUIRE and the portable helpers (support/test.h).
-add_library(msga_test STATIC support/test.cpp)
+add_library(msga_test STATIC support/test.cpp support/linux_threads.cpp)
 target_include_directories(msga_test PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(msga_test PUBLIC msga_base msga_flags)
+
+if(Python3_FOUND)
+    add_test(NAME fork_bundle_metadata
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/workflows/test_bundle_metadata.py)
+endif()
 
 # msga_add_test(<name> COMMAND <exe> [suite] [group] [TZ] [HOME <dir>]
 #               [ENV <var=value>...] [LABELS <label>...] [COST <seconds>])

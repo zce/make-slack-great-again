@@ -20,44 +20,13 @@ namespace {
 
 using fakeslack::app;
 using fakeslack::ctl;
+using fakeslack::Log;
 using fakeslack::pumpUntil;
+using fakeslack::script;
+using fakeslack::set;
 using model::ConvRef;
 using model::kNoConv;
 using model::Ts;
-
-// Standing answers ({key: answer-or-list}), see fake_slack.py /_ctl/set.
-void set(const std::string &json) {
-    ctl("POST", "/_ctl/set", json);
-}
-void script(const char *method, const std::string &responses) {
-    ctl("POST",
-        "/_ctl/script",
-        std::string("{\"method\":\"") + method + "\",\"responses\":" + responses + "}");
-}
-
-struct Log {
-    json::Document doc;
-    Log() { doc.parse(ctl("GET", "/_ctl/log").body, nullptr); }
-    int count(std::string_view method) const {
-        int n = 0;
-        for (json::Value r : doc.root())
-            n += r["method"].str() == method;
-        return n;
-    }
-    // Calls of `method` whose form has field == value.
-    int count(std::string_view method, std::string_view field, std::string_view value) const {
-        int n = 0;
-        for (json::Value r : doc.root())
-            n += r["method"].str() == method && r["form"][field].str() == value;
-        return n;
-    }
-    json::Value get(std::string_view method, int n = 0) const {
-        for (json::Value r : doc.root())
-            if (r["method"].str() == method && n-- == 0)
-                return r;
-        return {};
-    }
-};
 
 // The workspace every connect test starts from: two pages of users, two of
 // conversations (a channel, a muted channel, DMs incl. a Slack Connect peer

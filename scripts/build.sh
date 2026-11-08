@@ -13,7 +13,7 @@ set -euo pipefail
 
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
-        echo "on Windows use scripts\\build.ps1 (PowerShell)" >&2
+        printf '%s\n' 'on Windows use scripts\build.ps1 (PowerShell)' >&2
         exit 2
         ;;
 esac

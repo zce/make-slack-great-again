@@ -15,17 +15,16 @@ namespace {
 // A pool of parked workers (base::WorkerPool): a call wakes one, else starts
 // a new thread while fewer than workerCap() run; past that the task waits
 // for the next free worker. No task waits on another (that would deadlock a
-// full pool), but a CLI run may hold its worker up to its timeout, so the
-// cap stays above the few such runs at once. Up to kMaxParked finished
-// workers wait 30 s for the next call, so a quiet app holds no threads.
+// full pool). Up to kMaxParked finished workers wait 30 s for the next call,
+// so a quiet app holds no threads.
 //
 // Workers outlive nothing they post to: once stopBackground() ran, a worker
 // that finishes drops its result (the app is going away; the loop may be gone).
 constexpr int kMaxParked = 4;
 
-// The hardware threads, clamped to 4..8: enough for blocking CLI runs beside
-// file work, few enough that a burst (every transcript at launch) doesn't
-// start a thread, and a malloc arena, per task.
+// The hardware threads, clamped to 4..8: enough for concurrent file and CPU
+// work, few enough that a burst of tasks doesn't start a thread, and a malloc
+// arena, per task.
 int workerCap() {
     static const int cap = std::clamp(int(std::thread::hardware_concurrency()), 4, 8);
     return cap;
@@ -33,9 +32,9 @@ int workerCap() {
 
 struct Background {
     std::mutex              mutex;
-    std::condition_variable idle; // running dropped to 0
+    std::condition_variable idle; // outstanding dropped to 0
     bool                    stopped = false;
-    int                     running = 0; // tasks queued or under way (waitBackground)
+    int                     outstanding = 0; // tasks queued or under way (waitBackground)
     base::WorkerPool        pool{{.maxWorkers = workerCap(), .maxParked = kMaxParked}};
 };
 
@@ -52,7 +51,7 @@ void runInBackground(plat::App &app, std::function<void()> work, std::function<v
     Background &b = background();
     {
         std::lock_guard<std::mutex> lock(b.mutex);
-        ++b.running;
+        ++b.outstanding;
     }
     b.pool.post([&b, app = &app, work = std::move(work), then = std::move(then)]() mutable {
         if (work)
@@ -64,7 +63,7 @@ void runInBackground(plat::App &app, std::function<void()> work, std::function<v
                 if (then)
                     then();
             });
-        if (--b.running == 0)
+        if (--b.outstanding == 0)
             b.idle.notify_all();
         // A dropped then() is released by the pool, outside the lock.
     });
@@ -79,7 +78,7 @@ void stopBackground() {
 void waitBackground() {
     Background                  &b = background();
     std::unique_lock<std::mutex> lock(b.mutex);
-    b.idle.wait(lock, [&b] { return b.running == 0; });
+    b.idle.wait(lock, [&b] { return b.outstanding == 0; });
 }
 
 BackgroundStats backgroundStats() {

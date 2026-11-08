@@ -5,7 +5,7 @@
 //                  language, date/time, threads, link previews, composer,
 //                  conversations, visual effects, tray icon — then Save
 //   Notifications  on/off, level, huddles, highlight, sound, samples — Save
-//   AI assistance  providers (inline editor), your language, voice input
+//   AI assistance  providers (inline editor), your summary language
 //   Storage        cache (size, limit, clear), state
 //   System         version/updates, window, presence, Slack connection,
 //                  GIF picker key, memory

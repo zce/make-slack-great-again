@@ -93,6 +93,7 @@ UINT taskbarCreatedMsg() {
     return m;
 }
 
+#if defined(PLAT_WINRT_TOAST)
 std::string xmlEscape(std::string_view s) {
     return core::escapeMarkup(s, true);
 }
@@ -120,6 +121,7 @@ bool parseToastArguments(std::string_view args, uint64_t *id, std::string *key) 
     *key = core::percentDecode(args.substr(colon + 1));
     return true;
 }
+#endif
 
 } // namespace
 
@@ -754,22 +756,12 @@ LRESULT Shell::handle(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(h, msg, wp, lp);
 }
 
-// ── toasts ──────────────────────────────────────────────────────────────────
-
-#if defined(PLAT_WINRT_TOAST)
+// ── Start-menu shortcut ──────────────────────────────────────────────────────
 
 namespace {
 
-DWORD windowsBuild() {
-    using RtlGetVersionFn = LONG(WINAPI *)(OSVERSIONINFOW *);
-    auto           fn     = sym<RtlGetVersionFn>(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion");
-    OSVERSIONINFOW vi{sizeof(vi)};
-    return fn && fn(&vi) == 0 ? vi.dwBuildNumber : 0;
-}
-
-// Pre-1903 Windows only accepts toasts from an AUMID carried by a Start-menu
-// shortcut. Idempotent: an
-// existing one is left alone.
+// AppInfo::startMenuShortcut does not require WinRT. Pre-1903 Windows also
+// needs this shortcut to accept toasts from an AUMID. Existing links are left alone.
 bool writeStartMenuShortcut(const std::wstring &aumid, const std::wstring &name) {
     PWSTR programs = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_Programs, 0, nullptr, &programs)))
@@ -806,11 +798,6 @@ bool writeStartMenuShortcut(const std::wstring &aumid, const std::wstring &name)
     return ok;
 }
 
-std::wstring tempDir() {
-    std::wstring p = tempPath();
-    return p.empty() ? std::wstring(L".\\") : p;
-}
-
 } // namespace
 
 void Win32App::ensureStartMenuShortcut() {
@@ -819,6 +806,26 @@ void Win32App::ensureStartMenuShortcut() {
         return;
     writeStartMenuShortcut(toWide(info.id), toWide(info.name.empty() ? info.id : info.name));
 }
+
+// ── toasts ──────────────────────────────────────────────────────────────────
+
+#if defined(PLAT_WINRT_TOAST)
+
+namespace {
+
+DWORD windowsBuild() {
+    using RtlGetVersionFn = LONG(WINAPI *)(OSVERSIONINFOW *);
+    auto           fn     = sym<RtlGetVersionFn>(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion");
+    OSVERSIONINFOW vi{sizeof(vi)};
+    return fn && fn(&vi) == 0 ? vi.dwBuildNumber : 0;
+}
+
+std::wstring tempDir() {
+    std::wstring p = tempPath();
+    return p.empty() ? std::wstring(L".\\") : p;
+}
+
+} // namespace
 
 bool Shell::registerAumid() {
     const AppInfo     &info  = app->appInfo();
