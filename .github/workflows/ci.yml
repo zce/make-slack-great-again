@@ -37,11 +37,14 @@ jobs:
       CXX: ${{ matrix.compiler == 'clang' && 'clang++' || 'g++' }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 600M
+      # Run demo tests in the same build tree on GCC PR validation only.
+      MSGA_DEMO: ${{ github.event_name == 'pull_request' && matrix.compiler == 'gcc' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install build dependencies
+        id: dependencies
         timeout-minutes: 15
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
@@ -65,36 +68,27 @@ jobs:
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DMSGA_BUILD_TESTS=ON \
-            -DMSGA_DEMO=OFF \
+            -DMSGA_DEMO=${MSGA_DEMO} \
             -DMSGA_SELF_UPDATE=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Reset compiler cache statistics
+        run: ccache --zero-stats
       - name: Build
         run: cmake --build build-ci --parallel 4
       - name: Test release provenance guard
         run: bash tests/workflows/test-release-provenance.sh
-      # Most CI time is spent running 114 tests serially. Start conservatively
-      # at two workers; resource-sharing tests should use CTest RESOURCE_LOCK.
+      # Four workers match the runner's CPU capacity. Test HOME/XDG state is
+      # isolated per process; the shell suites use distinct test-home paths.
+      # The demo test is registered in this same tree on GCC PR builds only.
       - name: Test
         if: matrix.artifact || github.event_name != 'pull_request'
         timeout-minutes: 15
-        run: ctest --test-dir build-ci --output-on-failure --parallel 2
+        run: ctest --test-dir build-ci --output-on-failure --parallel 4
 
-      # Compile demo-only soak code separately; do not reconfigure the
-      # test-enabled build used for pull-request artifacts.
-      - name: Build and test demo soak harness
-        if: github.event_name == 'pull_request' && matrix.compiler == 'gcc'
-        run: |
-          cmake -S . -B build-demo -G Ninja \
-            -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DMSGA_BUILD_TESTS=ON \
-            -DMSGA_DEMO=ON \
-            -DMSGA_SELF_UPDATE=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-demo --target msga demo_tests --parallel 4
-          ctest --test-dir build-demo --output-on-failure -R '^demo_tests$'
-
+      - name: Show compiler cache statistics
+        if: always() && steps.dependencies.outcome == 'success'
+        run: ccache --show-stats
 
       # PR artifacts are test-enabled executables, never release binaries.
       - name: Prepare pull request test build
@@ -187,7 +181,6 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-python
             mingw-w64-x86_64-ccache
       # The font libraries are pinned by URL_HASH in font_libs.cmake.
       # Keep their extracted FetchContent sources outside build-release, which
