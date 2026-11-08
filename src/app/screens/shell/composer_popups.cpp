@@ -588,7 +588,7 @@ private:
             page->add<Label>(
                 tr("Searching GIFs needs a GIPHY API key.\n\nCreate a free one \xE2\x80\x94 it "
                    "takes a minute \xE2\x80\x94 then paste it below. You can change it later in "
-                   "Settings \xE2\x86\x92 System."),
+                   "Settings \xE2\x86\x92 General."),
                 Font::Control,
                 C::FormTextMuted
             );

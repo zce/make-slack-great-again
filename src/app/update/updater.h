@@ -93,6 +93,7 @@ public:
     using Listener = std::function<void(const Event &)>;
     int  listen(Listener fn); // an id for unlisten
     void unlisten(int id);
+    std::size_t listenerCount() const { return _listeners.size(); } // tests
 
     // A manifest was read (the "Last checked" time, epoch secs): persist it.
     std::function<void(int64_t when)> onChecked;

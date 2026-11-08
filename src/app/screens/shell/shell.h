@@ -99,7 +99,7 @@ public:
     std::function<void()> onNavigation;
 
     std::function<void(const std::vector<std::string> &keys)> onReorderWorkspaces;
-    // Settings → System → Slack connection (the accounts controller's).
+    // Settings → General → Slack connection (the accounts controller's).
     std::function<void()> onImportSlackSession, onConvertToSession;
     std::function<int()>  oauthSlackWorkspaces;
     // Every running workspace: the accounts

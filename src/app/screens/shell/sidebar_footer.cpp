@@ -385,7 +385,7 @@ void SidebarFooter::refresh() {
     else if (sp.phantomAway() && link == L::Idle)
         tip =
             tr("Away \xE2\x80\x94 you haven't used MSGA for a while. Any click or keystroke "
-               "makes you active again (Settings \xE2\x86\x92 System \xE2\x86\x92 Presence).");
+               "makes you active again (Settings \xE2\x86\x92 General \xE2\x86\x92 Presence).");
     else if (sp.phantomAway() && (link == L::Connecting || link == L::Active))
         tip =
             tr("Visible \xE2\x80\x94 connecting so you appear active without the official "
@@ -397,7 +397,7 @@ void SidebarFooter::refresh() {
     else if (sp.phantomAway())
         tip =
             tr("Visible \xE2\x80\x94 but you appear away while no official Slack app is "
-               "connected. MSGA can keep you active: Settings \xE2\x86\x92 System "
+               "connected. MSGA can keep you active: Settings \xE2\x86\x92 General "
                "\xE2\x86\x92 Presence.");
     else if (link == L::Active)
         tip = tr("Visible \xE2\x80\x94 MSGA keeps you active. Click to appear hidden.");

@@ -49,7 +49,7 @@ struct SettingsDialog::Parts {
     ui::Label     *aiCleartext = nullptr, *aiKeyLink = nullptr, *aiKeyHint = nullptr;
     ui::Dropdown  *aiModelPick = nullptr;
     std::string    aiEditing; // provider id; "" = adding a custom server
-    // Storage / System
+    // Storage / General / About
     ui::Label     *cacheSize = nullptr, *ramLabel = nullptr, *updStatus = nullptr;
     int            cacheSeq    = 0; // refreshCache's newest walk
     ui::Label     *modeRestart = nullptr, *credStatus = nullptr, *giphyStatus = nullptr;

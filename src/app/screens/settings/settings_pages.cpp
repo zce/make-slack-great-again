@@ -626,95 +626,9 @@ void SettingsDialog::refreshCache() {
     );
 }
 
-// ── System ──────────────────────────────────────────────────────────────────
+// ── General ─────────────────────────────────────────────────────────────────
 
-void SettingsDialog::buildSystem() {
-    heading(_content, tr("Version"));
-    {
-        body(
-            _content,
-            arg(tr("Version %1, built %2"), str::number(MSGA_VERSION), MSGA_BUILD_TIMESTAMP),
-            C::FormTextMuted
-        );
-#ifdef MSGA_SELF_UPDATE // without it a package manager updates msga
-        auto *g = group(_content);
-        check(g, tr("Check for updates automatically"), &_s.autoUpdates, false);
-        caption(
-            g,
-            tr("When off, msga never contacts the update server on its own \xE2\x80\x94 use "
-               "the\nbutton below to look for a new version.")
-        );
-        auto *checkBtn         = button(g, tr("Check for updates"), Button::Kind::Primary);
-        _p->updStatus          = caption(g, {});
-        auto      *last        = g->add<Label>("", Font::Caption, C::FormTextFaint);
-        // "Last checked: 5 minutes ago"; "Never checked" before the first check.
-        const auto lastChecked = [this, last] {
-            const int64_t at = _s.lastUpdateCheck;
-            last->setText(arg(
-                tr("Last checked: %1"),
-                at <= 0 ? std::string(tr("Never checked")) : base::relativeTime(at, base::nowSecs())
-            ));
-        };
-        lastChecked();
-        // The update status now, then again on each of the updater's changes.
-        update::Updater *u      = _hooks.updater;
-        const auto       status = [this, checkBtn](bool enabled, std::string text) {
-            checkBtn->setEnabled(enabled);
-            _p->updStatus->setText(text);
-            _p->updStatus->setVisible(!text.empty());
-        };
-        if (!u)
-            status(false, tr("Update checks not available."));
-        else if (u->busy())
-            status(false, tr("Checking for updates\xE2\x80\xA6"));
-        else if (u->ready())
-            status(true, tr("Update downloaded \xE2\x80\x94 restart the app to apply."));
-        else
-            status(true, {});
-        if (u) {
-            checkBtn->onClick = [u] { u->checkNow(); };
-            u->unlisten(_updListener);
-            std::weak_ptr<char> alive = _p->alive;
-            _updListener = u->listen([alive, status, lastChecked](const update::Updater::Event &e) {
-                if (alive.expired())
-                    return; // another page is up
-                using K = update::Updater::Event::Kind;
-                switch (e.kind) {
-                case K::Started:
-                    status(false, tr("Checking for updates\xE2\x80\xA6"));
-                    break;
-                case K::UpToDate:
-                    status(true, tr("msga is up to date."));
-                    lastChecked();
-                    break;
-                case K::Available:
-                    status(
-                        false,
-                        arg(tr("Version %1 available \xE2\x80\x94 downloading\xE2\x80\xA6"),
-                            str::number(int64_t(e.version)))
-                    );
-                    break;
-                case K::Progress:
-                    status(
-                        false,
-                        arg(tr("Downloading update\xE2\x80\xA6 %1%"),
-                            str::number(int64_t(e.percent)))
-                    );
-                    break;
-                case K::Ready:
-                    status(true, tr("Update downloaded \xE2\x80\x94 restart the app to apply."));
-                    lastChecked();
-                    break;
-                case K::Failed:
-                    status(true, arg(tr("Check failed: %1"), e.message));
-                    lastChecked();
-                    break;
-                }
-            });
-        }
-#endif
-    }
-
+void SettingsDialog::buildGeneral() {
     heading(_content, tr("Window"));
     {
         auto *g       = group(_content);
@@ -904,20 +818,111 @@ void SettingsDialog::buildSystem() {
         };
     }
 
-    heading(_content, tr("Memory"));
-    _p->ramLabel = body(_content, {});
-    refreshRam();
-    _ramTimer = _ctx.app.addTimer(5000, true, [this] { refreshRam(); });
 }
 
 void SettingsDialog::refreshRam() {
-    if (_p->ramLabel)
-        _p->ramLabel->setText(arg(tr("RAM used: %1"), formatRam(privateBytes())));
+    if (_page == Page::About && _p->ramLabel)
+        _p->ramLabel->setText(arg(tr("App memory: %1"), formatRam(privateBytes())));
 }
 
 // ── About ───────────────────────────────────────────────────────────────────
 
 void SettingsDialog::buildAbout() {
+    heading(_content, tr("Version & Updates"));
+    {
+        body(
+            _content,
+            arg(tr("Version %1, built %2"), str::number(MSGA_VERSION), MSGA_BUILD_TIMESTAMP),
+            C::FormTextMuted
+        );
+#ifdef MSGA_SELF_UPDATE // without it a package manager updates msga
+        auto *g = group(_content);
+        check(g, tr("Check for updates automatically"), &_s.autoUpdates, false);
+        caption(
+            g,
+            tr("When off, msga never contacts the update server on its own \xE2\x80\x94 use "
+               "the\nbutton below to look for a new version.")
+        );
+        auto *checkBtn         = button(g, tr("Check for updates"), Button::Kind::Primary);
+        _p->updStatus          = caption(g, {});
+        auto      *last        = g->add<Label>("", Font::Caption, C::FormTextFaint);
+        // "Last checked: 5 minutes ago"; "Never checked" before the first check.
+        const auto lastChecked = [this, last] {
+            const int64_t at = _s.lastUpdateCheck;
+            last->setText(arg(
+                tr("Last checked: %1"),
+                at <= 0 ? std::string(tr("Never checked")) : base::relativeTime(at, base::nowSecs())
+            ));
+        };
+        lastChecked();
+        // The update status now, then again on each of the updater's changes.
+        update::Updater *u      = _hooks.updater;
+        auto *updStatus = _p->updStatus;
+        const auto status = [checkBtn, updStatus](bool enabled, std::string text) {
+            checkBtn->setEnabled(enabled);
+            updStatus->setText(text);
+            updStatus->setVisible(!text.empty());
+        };
+        if (!u)
+            status(false, tr("Update checks not available."));
+        else if (u->busy())
+            status(false, tr("Checking for updates\xE2\x80\xA6"));
+        else if (u->ready())
+            status(true, tr("Update downloaded \xE2\x80\x94 restart the app to apply."));
+        else
+            status(true, {});
+        if (u) {
+            checkBtn->onClick = [u] { u->checkNow(); };
+            const std::weak_ptr<char> alive = _p->alive;
+            _updListener = u->listen([alive, status, lastChecked](const update::Updater::Event &e) {
+                if (alive.expired())
+                    return; // another page is up
+                using K = update::Updater::Event::Kind;
+                switch (e.kind) {
+                case K::Started:
+                    status(false, tr("Checking for updates\xE2\x80\xA6"));
+                    break;
+                case K::UpToDate:
+                    status(true, tr("msga is up to date."));
+                    lastChecked();
+                    break;
+                case K::Available:
+                    status(
+                        false,
+                        arg(tr("Version %1 available \xE2\x80\x94 downloading\xE2\x80\xA6"),
+                            str::number(int64_t(e.version)))
+                    );
+                    break;
+                case K::Progress:
+                    status(
+                        false,
+                        arg(tr("Downloading update\xE2\x80\xA6 %1%"),
+                            str::number(int64_t(e.percent)))
+                    );
+                    break;
+                case K::Ready:
+                    status(true, tr("Update downloaded \xE2\x80\x94 restart the app to apply."));
+                    lastChecked();
+                    break;
+                case K::Failed:
+                    status(true, arg(tr("Check failed: %1"), e.message));
+                    lastChecked();
+                    break;
+                }
+            });
+        }
+#endif
+    }
+
+    heading(_content, tr("Diagnostics"));
+    _p->ramLabel = body(_content, {});
+    refreshRam();
+    const std::weak_ptr<char> alive = _p->alive;
+    _ramTimer = _ctx.app.addTimer(5000, true, [this, alive] {
+        if (!alive.expired() && _page == Page::About)
+            refreshRam();
+    });
+
     heading(_content, tr("License"));
     body(
         _content,

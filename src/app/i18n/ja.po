@@ -954,8 +954,8 @@ msgid "Storage"
 msgstr "ストレージ"
 
 #: src/app/screens/settings/settings_dialog.cpp
-msgid "System"
-msgstr "システム"
+msgid "General"
+msgstr "一般"
 
 #: src/app/screens/settings/settings_dialog.cpp
 msgid "About"
@@ -1615,6 +1615,10 @@ msgid "Version"
 msgstr "バージョン"
 
 #: src/app/screens/settings/settings_pages.cpp
+msgid "Version & Updates"
+msgstr "バージョンとアップデート"
+
+#: src/app/screens/settings/settings_pages.cpp
 msgid "Version %1, built %2"
 msgstr "バージョン %1（ビルド: %2）"
 
@@ -1820,12 +1824,12 @@ msgid "Key saved."
 msgstr "キーを保存しました。"
 
 #: src/app/screens/settings/settings_pages.cpp
-msgid "Memory"
-msgstr "メモリ"
+msgid "Diagnostics"
+msgstr "診断"
 
 #: src/app/screens/settings/settings_pages.cpp
-msgid "RAM used: %1"
-msgstr "RAM使用量: %1"
+msgid "App memory: %1"
+msgstr "アプリのメモリ: %1"
 
 #: src/app/screens/settings/settings_pages.cpp
 msgid "License"
@@ -2239,11 +2243,11 @@ msgstr "予約"
 msgid ""
 "Searching GIFs needs a GIPHY API key.\n"
 "\n"
-"Create a free one — it takes a minute — then paste it below. You can change it later in Settings → System."
+"Create a free one — it takes a minute — then paste it below. You can change it later in Settings → General."
 msgstr ""
 "GIFの検索にはGIPHYのAPIキーが必要です。\n"
 "\n"
-"無料で取得できます — 1分ほどで済みます — 取得したら下に貼り付けてください。後から設定 → システムで変更できます。"
+"無料で取得できます — 1分ほどで済みます — 取得したら下に貼り付けてください。後から設定 → 一般で変更できます。"
 
 #: src/app/screens/shell/composer_popups.cpp
 msgid "Get a free GIPHY key…"
@@ -2885,8 +2889,8 @@ msgid "Hidden — you appear away to everyone. Click to use automatic presence."
 msgstr "非表示 — 全員に離席中と表示されます。クリックすると自動プレゼンスを使用します。"
 
 #: src/app/screens/shell/sidebar_footer.cpp
-msgid "Away — you haven't used MSGA for a while. Any click or keystroke makes you active again (Settings → System → Presence)."
-msgstr "離席中 — しばらくMSGAを使っていません。クリックやキー入力でまたアクティブになります（設定 → システム → プレゼンス）。"
+msgid "Away — you haven't used MSGA for a while. Any click or keystroke makes you active again (Settings → General → Presence)."
+msgstr "離席中 — しばらくMSGAを使っていません。クリックやキー入力でまたアクティブになります（設定 → 一般 → プレゼンス）。"
 
 #: src/app/screens/shell/sidebar_footer.cpp
 msgid "Visible — connecting so you appear active without the official Slack app…"
@@ -2897,8 +2901,8 @@ msgid "Visible — but you appear away while no official Slack app is connected.
 msgstr "表示中 — ただし公式Slackアプリが接続されていない間は離席中と表示されます。このワークスペースではMSGAはプレゼンスを維持できません。"
 
 #: src/app/screens/shell/sidebar_footer.cpp
-msgid "Visible — but you appear away while no official Slack app is connected. MSGA can keep you active: Settings → System → Presence."
-msgstr "表示中 — ただし公式Slackアプリが接続されていない間は離席中と表示されます。MSGAでアクティブに保てます：設定 → システム → プレゼンス。"
+msgid "Visible — but you appear away while no official Slack app is connected. MSGA can keep you active: Settings → General → Presence."
+msgstr "表示中 — ただし公式Slackアプリが接続されていない間は離席中と表示されます。MSGAでアクティブに保てます：設定 → 一般 → プレゼンス。"
 
 #: src/app/screens/shell/sidebar_footer.cpp
 msgid "Visible — MSGA keeps you active. Click to appear hidden."
@@ -3282,11 +3286,11 @@ msgstr "サインインしました — ワークスペースを検索してい�
 msgid ""
 "No Slack app keys are set up yet.\n"
 "\n"
-"Open Settings → System, choose “Slack app keys”, and paste your client ID, client secret and app token. Building msga yourself? Put them in credentials.cmake instead and rebuild."
+"Open Settings → General, choose “Slack app keys”, and paste your client ID, client secret and app token. Building msga yourself? Put them in credentials.cmake instead and rebuild."
 msgstr ""
 "Slackアプリキーがまだ設定されていません。\n"
 "\n"
-"設定 → システムを開いて「Slackアプリキー」を選び、クライアントID、クライアントシークレット、アプリトークンを貼り付けてください。msgaを自分でビルドしている場合は、代わりに credentials.cmake に記入して再ビルドしてください。"
+"設定 → 一般を開いて「Slackアプリキー」を選び、クライアントID、クライアントシークレット、アプリトークンを貼り付けてください。msgaを自分でビルドしている場合は、代わりに credentials.cmake に記入して再ビルドしてください。"
 
 #: src/app/slack/slack_actions.cpp
 msgid "You can't reply to this message."
@@ -4381,8 +4385,8 @@ msgstr "ダウンロードした更新ファイルが破損しています（チ
 #~ msgid ""
 #~ "No Microsoft Teams app is set up yet.\n"
 #~ "\n"
-#~ "Open Settings → System, find “Microsoft Teams”, and paste your Entra app's client ID. Building msga yourself? Put it in credentials.cmake as MSGA_TEAMS_CLIENT_ID instead and rebuild."
+#~ "Open Settings → General, find “Microsoft Teams”, and paste your Entra app's client ID. Building msga yourself? Put it in credentials.cmake as MSGA_TEAMS_CLIENT_ID instead and rebuild."
 #~ msgstr ""
 #~ "Microsoft Teamsアプリがまだ設定されていません。\n"
 #~ "\n"
-#~ "設定 → システムを開いて「Microsoft Teams」を探し、EntraアプリのクライアントIDを貼り付けてください。msgaを自分でビルドしている場合は、代わりに credentials.cmake に MSGA_TEAMS_CLIENT_ID として記入して再ビルドしてください。"
+#~ "設定 → 一般を開いて「Microsoft Teams」を探し、EntraアプリのクライアントIDを貼り付けてください。msgaを自分でビルドしている場合は、代わりに credentials.cmake に MSGA_TEAMS_CLIENT_ID として記入して再ビルドしてください。"

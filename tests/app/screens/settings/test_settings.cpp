@@ -6,6 +6,10 @@
 // can apply live does (theme and palettes, font size, time format, link
 // previews, Ctrl+Enter, the notification level).
 #include "app/fake/fake_backend.h"
+#ifdef MSGA_SELF_UPDATE
+#include "app/update/updater.h"
+#include "net/net.h"
+#endif
 #include "app/llm/service.h"
 #include "support/fake_llm_server.h"
 #include "app/media/sounds.h"
@@ -430,10 +434,11 @@ TEST("settings: the profile menu opens a window-filling overlay; Escape and back
 TEST("settings: the pages and their sections, in order") {
     Harness         h;
     SettingsDialog &d = h.open();
-    // Rows are 41 px apart under 8 px of padding: row 4 is System.
+    CHECK(int(SettingsDialog::Page::Count) == 6);
+    // Rows are 41 px apart under 8 px of padding: row 4 is General.
     const ui::RectF r = d.sections().windowRect();
     h.clickAt(r.x + 40, r.y + 8 + 41 * 4 + 20);
-    CHECK(d.page() == SettingsDialog::Page::System);
+    CHECK(d.page() == SettingsDialog::Page::General);
     h.key(plat::Key::Down);
     CHECK(d.page() == SettingsDialog::Page::About);
     h.key(plat::Key::Home);
@@ -491,25 +496,29 @@ TEST("settings: the pages and their sections, in order") {
           "Generous (64 → 48 MiB)",
           "State",
           "Clear state"}},
-        {SettingsDialog::Page::System,
-         {"Version",
-#ifdef MSGA_SELF_UPDATE // built without it: no update checks
-          "Check for updates automatically",
-          "Check for updates",
-#endif
-          "Window",
+        {SettingsDialog::Page::General,
+         {"Window",
           "Use tray",
 #ifndef __APPLE__ // macOS minimizes to the Dock
           "Minimize to tray",
 #endif
           "Presence",
           "Slack connection",
-          "Import Slack session\xE2\x80\xA6",
+          "Import Slack session\\xE2\\x80\\xA6",
           "GIF picker",
-          "API key",
-          "Memory"}},
+          "API key"}},
         {SettingsDialog::Page::About,
-         {"License", "View full license", "Contact", "Found a bug?", "Report a bug"}},
+         {"Version & Updates",
+#ifdef MSGA_SELF_UPDATE // built without it: no update checks
+          "Check for updates automatically",
+          "Check for updates",
+#endif
+          "Diagnostics",
+          "License",
+          "View full license",
+          "Contact",
+          "Found a bug?",
+          "Report a bug"}},
     };
     for (const auto &pg : kPages) {
         d.showPage(pg.page);
@@ -531,10 +540,39 @@ TEST("settings: the pages and their sections, in order") {
         }
     }
     // Nothing of Microsoft Teams (dropped from next).
-    d.showPage(SettingsDialog::Page::System);
+    d.showPage(SettingsDialog::Page::General);
     pump();
     CHECK(d.find("Microsoft Teams") == nullptr);
     CHECK(d.find("Client ID") == nullptr); // the app-keys box is hidden in session mode
+    CHECK(d.find("Version & Updates") == nullptr);
+    CHECK(d.find("Diagnostics") == nullptr);
+    d.showPage(SettingsDialog::Page::About);
+    pump();
+    CHECK(d.find("Version & Updates") != nullptr);
+    CHECK(d.find("Diagnostics") != nullptr);
+    CHECK(d.find("App memory: \\xE2\\x80\\x94") == nullptr); // a live process metric
+}
+
+TEST("settings: diagnostics monitoring follows the About page") {
+    Harness h;
+    SettingsDialog &d = h.open();
+    CHECK_FALSE(d.diagnosticsTimerActive());
+
+    d.showPage(SettingsDialog::Page::General);
+    CHECK_FALSE(d.diagnosticsTimerActive());
+
+    d.showPage(SettingsDialog::Page::About);
+    CHECK(d.diagnosticsTimerActive());
+    d.showPage(SettingsDialog::Page::About); // same-page navigation must not add a timer
+    CHECK(d.diagnosticsTimerActive());
+
+    d.showPage(SettingsDialog::Page::Storage);
+    CHECK_FALSE(d.diagnosticsTimerActive());
+    d.showPage(SettingsDialog::Page::About);
+    CHECK(d.diagnosticsTimerActive());
+
+    h.key(plat::Key::Escape);
+    CHECK(h.sh->settingsDialog() == nullptr);
 }
 
 TEST("settings: color mode and theme cards apply and persist at once") {
@@ -1035,12 +1073,12 @@ TEST("settings: AI providers connect through the inline editor") {
     file::remove(path);
 }
 
-TEST("settings: System and Storage controls persist at once") {
+TEST("settings: General and Storage controls persist at once") {
     const std::string path = testPath();
     file::remove(path);
     Harness         h(path);
     SettingsDialog &d = h.open();
-    d.showPage(SettingsDialog::Page::System);
+    d.showPage(SettingsDialog::Page::General);
     pump();
 #ifndef __APPLE__ // not offered on macOS
     h.click(d.find("Minimize to tray"));
@@ -1115,27 +1153,68 @@ TEST("settings: System and Storage controls persist at once") {
     for (int i = 0; i < 2000 && !d.find("0 B"); ++i)
         app().pump(2);
     CHECK(d.find("0 B") != nullptr);
+
+    // Clear state removes stale visit stamps from persisted sidebar state.
+    h.settings.visitedAt.emplace_back("stale-id", 123);
+    ui::View *clearState = d.find("Clear state");
+    REQUIRE(clearState != nullptr);
+    h.click(clearState);
+    const auto hasStaleVisit = [](const auto &items) {
+        return std::any_of(items.begin(), items.end(), [](const auto &entry) {
+            return entry.first == "stale-id";
+        });
+    };
+    CHECK_FALSE(hasStaleVisit(h.settings.visitedAt));
+    CHECK(until([&] {
+        const auto saved = shell::Settings::load(path);
+        return !hasStaleVisit(saved.visitedAt);
+    }));
     file::remove(path);
 }
 
 #ifdef MSGA_SELF_UPDATE
+TEST("settings: updater listener follows the About page lifecycle") {
+    // Shell owns one listener; Settings adds exactly one while About is active.
+    net::Client client(app().platform());
+    update::Updater updater(app().platform(), client, 0);
+    Harness h;
+    h.sh->setUpdater(&updater);
+    CHECK(updater.listenerCount() == 1);
+
+    SettingsDialog &d = h.open();
+    CHECK(updater.listenerCount() == 1); // Appearance has no updater UI listener
+    d.showPage(SettingsDialog::Page::About);
+    CHECK(updater.listenerCount() == 2);
+    d.showPage(SettingsDialog::Page::About);
+    CHECK(updater.listenerCount() == 2); // no duplicate subscription
+
+    d.showPage(SettingsDialog::Page::General);
+    CHECK(updater.listenerCount() == 1);
+    d.showPage(SettingsDialog::Page::About);
+    CHECK(updater.listenerCount() == 2);
+
+    h.key(plat::Key::Escape);
+    CHECK(h.sh->settingsDialog() == nullptr);
+    CHECK(updater.listenerCount() == 1); // dialog destruction unregisters its listener
+}
+
 TEST("settings: the last update check reads as a relative time") {
     Harness h;
     h.settings.lastUpdateCheck = 0;
     SettingsDialog &d          = h.open();
-    d.showPage(SettingsDialog::Page::System);
+    d.showPage(SettingsDialog::Page::About);
     pump();
     CHECK(d.find("Last checked: Never checked") != nullptr);
     h.key(plat::Key::Escape);
     h.settings.lastUpdateCheck = base::nowSecs() - 5 * 60 - 10;
     SettingsDialog &d2         = h.open();
-    d2.showPage(SettingsDialog::Page::System);
+    d2.showPage(SettingsDialog::Page::About);
     pump();
     CHECK(d2.find("Last checked: 5 minutes ago") != nullptr);
     h.key(plat::Key::Escape);
     h.settings.lastUpdateCheck = base::nowSecs() - 86400 - 10;
     SettingsDialog &d3         = h.open();
-    d3.showPage(SettingsDialog::Page::System);
+    d3.showPage(SettingsDialog::Page::About);
     pump();
     CHECK(d3.find("Last checked: 1 day ago") != nullptr);
 }

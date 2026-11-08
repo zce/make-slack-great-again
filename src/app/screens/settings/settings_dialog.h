@@ -36,20 +36,20 @@ namespace settings {
 
 class SettingsDialog final : public ui::Dialog {
 public:
-    enum class Page : uint8_t { Appearance, Notifications, Ai, Storage, System, About, Count };
+    enum class Page : uint8_t { Appearance, Notifications, Ai, Storage, General, About, Count };
 
     struct Hooks {
         std::function<void()> changed; // shell::Settings changed: persist and apply
-        // System → Slack connection (unset: the buttons show disabled).
+        // General → Slack connection (unset: the buttons show disabled).
         std::function<void()> importSlackSession;       // "Import Slack session…"
         std::function<void()> convertToSession;         // "Convert them to session"
         int                   oauthSlackWorkspaces = 0; // Slack workspaces on app keys
 #ifdef MSGA_SELF_UPDATE
-        // System → Version: "Check for updates" (null: "Update checks not
+        // About → Version & Updates: "Check for updates" (null: "Update checks not
         // available.").
         update::Updater *updater = nullptr;
 #endif
-        // System → "Save and restart" (the Slack app keys).
+        // General → "Save and restart" (the Slack app keys).
         std::function<void()>                            restart;
         // Appearance → Tray icon: the tray icon dialog; it updates the
         // settings itself, then calls `after` (also when cancelled).
@@ -76,6 +76,10 @@ public:
 
     void                   showPage(Page p);
     Page                   page() const { return _page; }
+    bool                   diagnosticsTimerActive() const { return _ramTimer != 0; } // tests
+#ifdef MSGA_SELF_UPDATE
+    bool                   updaterListenerActive() const { return _updListener != 0; } // tests
+#endif
     ui::SectionList       &sections() { return *_sections; }
     ui::ScrollView        &scroll() { return *_scroll; }
     // The first visible view on the current page whose accessible name is
@@ -103,13 +107,14 @@ private:
     ui::TextField *fieldRow(ui::View *parent, const char *label, std::string placeholder);
     void           saveButton(void (SettingsDialog::*save)());
     void           changed();
+    void           stopPageActivity();
 
     // Pages.
     void buildAppearance();
     void buildNotifications();
     void buildAi();
     void buildStorage();
-    void buildSystem();
+    void buildGeneral();
     void buildAbout();
 
     // Appearance.
@@ -127,7 +132,7 @@ private:
     void showAiEditor(const std::string &id); // "" = a new custom server
     void saveAiEditor();
     void probeAiEditor(bool fillModels); // "Test connection" / "Fetch models"
-    // Storage / System.
+    // Storage / General / About.
     void refreshCache();
     void refreshRam();
 
@@ -143,7 +148,7 @@ private:
     std::unique_ptr<Parts> _p;
     plat::TimerId          _ramTimer = 0;
 #ifdef MSGA_SELF_UPDATE
-    int _updListener = 0; // on _hooks.updater (the System page)
+    int _updListener = 0; // on _hooks.updater (the About page)
 #endif
     Page _page = Page::Count;
 };

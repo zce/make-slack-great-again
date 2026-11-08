@@ -39,7 +39,7 @@ const char *const kPageNames[] = {
     N_("Notifications"),
     N_("AI assistance"),
     N_("Storage"),
-    N_("System"),
+    N_("General"),
     N_("About")
 };
 static_assert(std::size(kPageNames) == size_t(SettingsDialog::Page::Count));
@@ -264,20 +264,29 @@ SettingsDialog::SettingsDialog(screens::Context &ctx, shell::Settings &s, Hooks 
     showPage(first);
 }
 
-SettingsDialog::~SettingsDialog() {
+void SettingsDialog::stopPageActivity() {
+    // Invalidate page callbacks before their widgets are destroyed. Updater::emit()
+    // snapshots listeners, so the lifetime token also protects an in-flight copy.
+    _p->alive.reset();
     _ctx.app.cancelTimer(_ramTimer);
+    _ramTimer = 0;
 #ifdef MSGA_SELF_UPDATE
-    if (_hooks.updater)
+    if (_hooks.updater && _updListener) {
         _hooks.updater->unlisten(_updListener);
+        _updListener = 0;
+    }
 #endif
+}
+
+SettingsDialog::~SettingsDialog() {
+    stopPageActivity();
 }
 
 void SettingsDialog::showPage(Page p) {
     if (p >= Page::Count || p == _page)
         return;
-    _ctx.app.cancelTimer(_ramTimer);
-    _ramTimer = 0;
-    _page     = p;
+    stopPageActivity();
+    _page = p;
     _sections->setSelected(int(p));
     _content->clearChildren();
     *_p                                             = Parts{};
@@ -286,7 +295,7 @@ void SettingsDialog::showPage(Page p) {
         &SettingsDialog::buildNotifications,
         &SettingsDialog::buildAi,
         &SettingsDialog::buildStorage,
-        &SettingsDialog::buildSystem,
+        &SettingsDialog::buildGeneral,
         &SettingsDialog::buildAbout,
     };
     (this->*kBuild[size_t(p)])();

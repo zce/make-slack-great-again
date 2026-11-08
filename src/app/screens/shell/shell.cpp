@@ -3972,7 +3972,7 @@ void Shell::applySettings() {
         base::setDateLanguage(_settings.language);
     _ctx.linkPreviews   = _settings.linkPreviews;
     _ctx.threadsInline  = _settings.threadsInline;
-    // Settings → System → Presence: global, applied to every running
+    // Settings → General → Presence: global, applied to every running
     // workspace (Accounts hands it to every new one).
     const auto presence = model::Backend::PresenceMode(_settings.presence);
     if (_running.empty())
@@ -4049,7 +4049,7 @@ void Shell::applySettings() {
     _sidebar->setFilters(f);
     for (const auto &r : _running)
         r->dirty = true; // the default level decides what counts
-    // Settings → System → Use tray: the icon comes and goes at once. Without
+    // Settings → General → Use tray: the icon comes and goes at once. Without
     // it the window's close quits and minimizing leaves it on the taskbar.
     if (_settings.useTray && !_tray) {
         _tray = _ctx.app.platform().createTray();

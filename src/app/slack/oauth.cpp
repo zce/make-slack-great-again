@@ -53,7 +53,7 @@ void OAuthFlow::start(Done done) {
         _app.post([this] {
             fail(
                 i18n::tr(
-                    "No Slack app keys are set up yet.\n\nOpen Settings \xE2\x86\x92 System, "
+                    "No Slack app keys are set up yet.\n\nOpen Settings \xE2\x86\x92 General, "
                     "choose "
                     "\xE2\x80\x9CSlack app keys\xE2\x80\x9D, and paste your client ID, client "
                     "secret "
