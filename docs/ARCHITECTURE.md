@@ -124,6 +124,16 @@ Regression coverage lives in `tests/app/core/test_slack*`,
 `tests/app/core/test_audio.cpp`, `tests/app/llm/test_llm.cpp` and
 `tests/app/screens/settings/test_settings.cpp`.
 
+## Memory validation
+
+- Pull requests run `scripts/run-asan.sh 10` under Xvfb, covering the test
+  suite and a 10-round demo soak with AddressSanitizer and LeakSanitizer.
+- A daily scheduled run and manual dispatch execute `scripts/soak.sh` under
+  Xvfb. Manual runs accept a round count (1–100; default 20).
+- Workflow logs are uploaded as artifacts for inspection and trend comparison.
+  Memory measurements are observational; there is intentionally no hard RSS
+  threshold until a stable runner baseline has been established.
+
 ## Audit decisions
 
 - No broad Store rewrite was justified: Store is already the single workspace
