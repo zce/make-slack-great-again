@@ -104,6 +104,9 @@ wires workspace actions and starts saved workspaces.
   writes; a process-wide disk mutex serializes writes with cache wipes.
 - Accounts uses per-workspace serials to reject callbacks from dropped workspaces.
   Objects destroyed from their own callbacks are released on a later loop turn.
+- Shell owns the Context navigation hooks, Window filters, native hit-test callback
+  and installed shortcuts. Teardown invalidates its callback token first, then
+  unregisters those hooks before destroying the view tree.
 
 ## Fork feature boundary
 

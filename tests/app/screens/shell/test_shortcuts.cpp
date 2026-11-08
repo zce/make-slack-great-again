@@ -259,6 +259,37 @@ TEST("shortcuts: Ctrl+K opens the switcher once, Enter opens the pick, Ctrl+W cl
     CHECK(h.closeRequests == 0); // the dialog went, not the window
 }
 
+TEST("shell: releases window and context callbacks on destruction") {
+    Harness h;
+    h.sh.reset();
+
+    CHECK_FALSE(h.ctx.openConversation);
+    CHECK_FALSE(h.ctx.openThread);
+    CHECK_FALSE(h.ctx.closeThread);
+    CHECK_FALSE(h.ctx.openProfile);
+    CHECK_FALSE(h.ctx.openUrl);
+    CHECK_FALSE(h.ctx.openMessage);
+    CHECK_FALSE(h.ctx.profileHover);
+    CHECK_FALSE(h.ctx.messageUser);
+    CHECK_FALSE(h.ctx.forwardMessage);
+    CHECK_FALSE(h.ctx.attachFiles);
+    CHECK_FALSE(h.ctx.quickReactions);
+    CHECK_FALSE(h.ctx.openCanvas);
+    CHECK_FALSE(h.ctx.openAiSettings);
+    CHECK(h.ctx.window == nullptr);
+    CHECK_FALSE(h.backend.onError);
+    CHECK_FALSE(h.win->keyFilter);
+    CHECK_FALSE(h.win->inputFilter);
+
+    // Exercise the former Shell-owned shortcut, input filter and native hit test
+    // while the Window itself is still alive.
+    h.chord(kCtrl, K::Comma);
+    hooks().injectPointerMove(h.win->native(), {8, 8});
+    hooks().injectButton(h.win->native(), plat::Button::Left, true);
+    hooks().injectButton(h.win->native(), plat::Button::Left, false);
+    pump();
+}
+
 TEST("shortcuts: Ctrl+, opens Settings, Ctrl+W closes it, then the window") {
     Harness h;
     h.chord(kCtrl, K::Comma);

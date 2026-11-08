@@ -107,6 +107,6 @@ bool ctrlEnterSends();
 void setCtrlEnterSends(bool on);
 
 // A Window-scope binding: one window shortcut per key.
-void install(ui::Window &w, Id id, std::function<void()> fn);
+std::vector<int> install(ui::Window &w, Id id, std::function<void()> fn);
 
 } // namespace shell::shortcuts

@@ -253,9 +253,11 @@ void setCtrlEnterSends(bool on) {
     g_ctrlEnterSends = on;
 }
 
-void install(ui::Window &w, Id id, std::function<void()> fn) {
+std::vector<int> install(ui::Window &w, Id id, std::function<void()> fn) {
     Keys         b[2];
     const size_t n = bindings(id, b);
+    std::vector<int> ids;
+    ids.reserve(n);
     for (size_t i = 0; i < n; ++i) {
         uint32_t mods = 0;
         if (b[i].mods & Shift)
@@ -264,8 +266,9 @@ void install(ui::Window &w, Id id, std::function<void()> fn) {
             mods |= ui::Window::kPrimary;
         if (b[i].mods & Alt)
             mods |= plat::ModAlt;
-        w.addShortcut(b[i].key, mods, fn);
+        ids.push_back(w.addShortcut(b[i].key, mods, fn));
     }
+    return ids;
 }
 
 } // namespace shell::shortcuts

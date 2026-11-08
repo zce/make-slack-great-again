@@ -1203,16 +1203,20 @@ Shell::Shell(
     // Keyboard: the window-scope shortcuts (shortcuts.h), and the
     // app-wide Shift+Del filter.
     using shortcuts::Id;
-    shortcuts::install(win, Id::OpenSettings, [this] { openSettings(); });
-    shortcuts::install(win, Id::NavBack, [this] { navigateHistory(true); });
-    shortcuts::install(win, Id::NavForward, [this] { navigateHistory(false); });
-    shortcuts::install(win, Id::CloseFrontmost, [this] { closeFrontmost(); });
-    shortcuts::install(win, Id::CloseThread, [this] { closeThreadOnEscape(); });
-    shortcuts::install(win, Id::SearchMessages, [this] { showQuickSwitcher(true); });
-    shortcuts::install(win, Id::QuickSwitch, [this] { showQuickSwitcher(); });
-    shortcuts::install(win, Id::PreviousUnread, [this] { navigateUnread(false); });
-    shortcuts::install(win, Id::NextUnread, [this] { navigateUnread(true); });
-    shortcuts::install(win, Id::JumpToUnread, [this] { jumpToUnread(); });
+    const auto installShortcut = [this, &win](Id id, auto fn) {
+        const std::vector<int> ids = shortcuts::install(win, id, std::move(fn));
+        _shortcutIds.insert(_shortcutIds.end(), ids.begin(), ids.end());
+    };
+    installShortcut(Id::OpenSettings, [this] { openSettings(); });
+    installShortcut(Id::NavBack, [this] { navigateHistory(true); });
+    installShortcut(Id::NavForward, [this] { navigateHistory(false); });
+    installShortcut(Id::CloseFrontmost, [this] { closeFrontmost(); });
+    installShortcut(Id::CloseThread, [this] { closeThreadOnEscape(); });
+    installShortcut(Id::SearchMessages, [this] { showQuickSwitcher(true); });
+    installShortcut(Id::QuickSwitch, [this] { showQuickSwitcher(); });
+    installShortcut(Id::PreviousUnread, [this] { navigateUnread(false); });
+    installShortcut(Id::NextUnread, [this] { navigateUnread(true); });
+    installShortcut(Id::JumpToUnread, [this] { jumpToUnread(); });
     win.keyFilter = [this](const Event &e) {
         noteActivity();
         typeIntoComposer(e);
@@ -1423,6 +1427,35 @@ void Shell::applyComposerAccess() {
 }
 
 Shell::~Shell() {
+    // Invalidate queued work before teardown can re-enter the event loop.
+    _alive.reset();
+    for (int id : _shortcutIds)
+        _win.removeShortcut(id);
+    _shortcutIds.clear();
+    _win.keyFilter = nullptr;
+    _win.inputFilter = nullptr;
+    _win.native().setHitTest({});
+
+    // Context hooks and the global emoji observer are owned by this Shell.
+    _ctx.openConversation = nullptr;
+    _ctx.openThread = nullptr;
+    _ctx.closeThread = nullptr;
+    _ctx.openProfile = nullptr;
+    _ctx.openUrl = nullptr;
+    _ctx.openMessage = nullptr;
+    _ctx.profileHover = nullptr;
+    _ctx.messageUser = nullptr;
+    _ctx.forwardMessage = nullptr;
+    _ctx.attachFiles = nullptr;
+    _ctx.quickReactions = nullptr;
+    _ctx.openCanvas = nullptr;
+    _ctx.openAiSettings = nullptr;
+#ifdef MSGA_HAVE_MESSAGES
+    screens::EmojiPicker::setStateObserver(nullptr);
+#endif
+    if (_ownsBackendError)
+        _ctx.backend.onError = nullptr;
+
     _ctx.app.cancelTimer(_errorTimer);
     _ctx.app.cancelTimer(_historyBudgetTimer);
     for (plat::TimerId id : _resolveTimers)
@@ -1449,17 +1482,8 @@ Shell::~Shell() {
     // may answer a store change once the tree below is cleared.
     _ctx.store.unobserve(_observer);
     _win.closeAllPopups();
-    _win.keyFilter = nullptr;
     _win.root().clearChildren();
-    _ctx.window         = nullptr;
-    _ctx.attachFiles    = nullptr;
-    _ctx.openAiSettings = nullptr;
-#ifdef MSGA_HAVE_MESSAGES
-    screens::EmojiPicker::setStateObserver(nullptr);
-#endif
-    _ctx.messageUser = nullptr;
-    if (_ownsBackendError)
-        _ctx.backend.onError = nullptr;
+    _ctx.window = nullptr;
 }
 
 // The title strip. It continues the rail's window-wide nav gradient, so the

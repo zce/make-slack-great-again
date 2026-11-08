@@ -541,6 +541,7 @@ private:
     ThreadsPage                       *_threadsPage   = nullptr;
     SavedPage                         *_savedPage     = nullptr;
     ScheduledPage                     *_scheduledPage = nullptr;
+    std::vector<int>                    _shortcutIds; // Window shortcuts owned by this Shell
     std::shared_ptr<int>               _alive = std::make_shared<int>(0);
     // The error banner (5 s), and what the composer was last given
     // (applyComposerAccess hands changes on only).
