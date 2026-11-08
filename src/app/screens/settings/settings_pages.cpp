@@ -561,7 +561,26 @@ void SettingsDialog::buildStorage() {
         );
     };
 
-    // 12 px more between the Cache and State blocks.
+    heading(_content, tr("Message history"))->style().margins(0, 12, 0, 0);
+    auto *history = _content->add<RadioGroup>(
+        strs({tr("Compact (16 → 12 MiB)"),
+              tr("Balanced (32 → 24 MiB)"),
+              tr("Generous (64 → 48 MiB)")}),
+        _s.historyProfile
+    );
+    history->onChange = [this](int profile) {
+        _s.historyProfile = profile;
+        changed();
+    };
+    caption(
+        _content,
+        tr("Across all workspaces. The first value is the trim threshold; the second is the target.")
+    );
+    caption(
+        _content,
+        tr("Visible, unread, pinned, saved and unsent messages stay protected, so usage may exceed this soft budget. It is not a total RAM cap; older history can be loaded again.")
+    );
+
     heading(_content, tr("State"))->style().margins(0, 12, 0, 0);
     caption(
         _content,

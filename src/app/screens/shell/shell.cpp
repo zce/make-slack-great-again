@@ -79,8 +79,6 @@ constexpr float kTitleBarH = 46; // compact integrated title and toolbar (48 px 
 #endif
 constexpr float kRailW = 64;
 constexpr float kListW = 248, kListMinW = 180, kListMaxW = 400;
-constexpr size_t kMessageHistoryBudgetBytes = size_t(32) << 20;
-constexpr size_t kMessageHistoryTargetBytes = size_t(24) << 20;
 constexpr float kResizeEdge          = 6;
 // Settings changes are written this long after the first of a burst.
 constexpr int   kSettingsSaveDelayMs = 500;
@@ -3764,13 +3762,13 @@ void Shell::trimHistoryBudget() {
     for (const model::Store *store : stores)
         total += store->historyBytes();
 
-    // Hysteresis avoids repeated small evictions when traffic hovers around
-    // the ceiling: once over 32 MiB, reclaim back to 24 MiB.
-    const bool overBudget = total > kMessageHistoryBudgetBytes;
+    // Hysteresis avoids repeated small evictions around the selected limit.
+    const MessageHistoryBudget budget = _settings.messageHistoryBudget();
+    const bool overBudget = total > budget.limitBytes;
     // First preserve the warm tail in each cold conversation. If the
     // global budget still exceeds its target, a second LRU pass may release it.
     for (const bool includeWarm : {false, true}) {
-        while (overBudget && total > kMessageHistoryTargetBytes) {
+        while (overBudget && total > budget.targetBytes) {
             model::Store *oldest = nullptr;
             uint64_t      age    = std::numeric_limits<uint64_t>::max();
             for (model::Store *store : stores) {
@@ -4013,6 +4011,12 @@ void Shell::applySettings() {
     // …and the downloaded pictures on disk (the cache cap).
     if (_ctx.remote)
         _ctx.remote->setLimitMb(_settings.cacheLimitMb);
+    // Changing the profile applies a lower budget immediately; unrelated
+    // settings changes do not trigger another full history walk.
+    if (_appliedHistoryProfile != _settings.historyProfile) {
+        _appliedHistoryProfile = _settings.historyProfile;
+        trimHistoryBudget();
+    }
     // Rows bake the time format and link previews in: rebuild what is shown.
     if (_builtPreviews != _settings.linkPreviews || _built24h != _settings.use24h ||
         _builtAnimate != _settings.animateMedia || _builtEmoji != _settings.animateEmoji ||

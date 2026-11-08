@@ -214,6 +214,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK(def.relevantDays == 14);
     CHECK(def.names == 0); // as set in Slack
     CHECK(def.cacheLimitMb == 250);
+    CHECK(def.historyProfile == 1);
     CHECK_STR(def.language, "system");
     CHECK(def.ai.size() == 2);
 
@@ -237,6 +238,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.notifyLevel                = 1;
     s.notifySound                = false;
     s.cacheLimitMb               = 600;
+    s.historyProfile              = 2;
     s.minimizeToTray             = true;
     s.useTray                    = false;
     s.presence                   = 2;
@@ -276,6 +278,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK(r.notifyLevel == 1);
     CHECK_FALSE(r.notifySound);
     CHECK(r.cacheLimitMb == 600);
+    CHECK(r.historyProfile == 2);
     CHECK(r.minimizeToTray);
     CHECK_FALSE(r.useTray);
     CHECK(r.presence == 2);
@@ -299,12 +302,30 @@ TEST("settings: every value survives the file, which is owner-only") {
     file::remove(path);
 
     // A corrupt file clamps instead of breaking the dialog.
-    REQUIRE(file::writeAtomic(path, R"({"relevantDays":0,"paletteDark":99,"notifyLevel":7})"));
+    REQUIRE(file::writeAtomic(path, R"({"relevantDays":0,"paletteDark":99,"notifyLevel":7,"historyProfile":99})"));
     const shell::Settings c = shell::Settings::load(path);
     CHECK(c.relevantDays == 1);
     CHECK(c.paletteDark == int(ui::Palette::Count) - 1);
     CHECK(c.notifyLevel == 1);
+    CHECK(c.historyProfile == 2);
     file::remove(path);
+}
+
+TEST("settings: message-history profiles map to bounded budgets") {
+    shell::Settings s;
+    auto budget = s.messageHistoryBudget();
+    CHECK(budget.limitBytes == (size_t(32) << 20));
+    CHECK(budget.targetBytes == (size_t(24) << 20));
+
+    s.historyProfile = 0;
+    budget = s.messageHistoryBudget();
+    CHECK(budget.limitBytes == (size_t(16) << 20));
+    CHECK(budget.targetBytes == (size_t(12) << 20));
+
+    s.historyProfile = 2;
+    budget = s.messageHistoryBudget();
+    CHECK(budget.limitBytes == (size_t(64) << 20));
+    CHECK(budget.targetBytes == (size_t(48) << 20));
 }
 
 TEST("settings: one-click reactions are the most used, or the three picked, topped up") {
@@ -460,6 +481,10 @@ TEST("settings: the pages and their sections, in order") {
           "Limit cache to",
           "250 MB",
           "Clear cache",
+          "Message history",
+          "Compact (16 → 12 MiB)",
+          "Balanced (32 → 24 MiB)",
+          "Generous (64 → 48 MiB)",
           "State",
           "Clear state"}},
         {SettingsDialog::Page::System,
@@ -1072,6 +1097,12 @@ TEST("settings: System and Storage controls persist at once") {
 
     d.showPage(SettingsDialog::Page::Storage);
     pump();
+    h.click(d.find("Compact (16 → 12 MiB)"));
+    CHECK(h.settings.historyProfile == 0);
+    CHECK(until([&] { return shell::Settings::load(path).historyProfile == 0; }));
+    h.click(d.find("Generous (64 → 48 MiB)"));
+    CHECK(h.settings.historyProfile == 2);
+    CHECK(until([&] { return shell::Settings::load(path).historyProfile == 2; }));
     auto *clear = d.find("Clear cache");
     REQUIRE(clear != nullptr);
     h.click(clear);

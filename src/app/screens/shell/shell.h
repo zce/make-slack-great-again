@@ -517,6 +517,7 @@ private:
     plat::TimerId                          _notifySaveTimer = 0; // saveNotifiedSoon's
     uint8_t                                 _historyBudgetPulse = 0;
     plat::TimerId                          _historyBudgetTimer = 0;
+    int                                    _appliedHistoryProfile = -1;
     bool                                    _trimmingHistory = false;
     uint64_t                               _nextNotifyId    = 1; // nextNotifyId's, persisted
     std::vector<plat::TimerId>             _resolveTimers;       // notifyWhenUsersResolve's

@@ -13,6 +13,7 @@
 
 #include "ui/ui.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -29,6 +30,11 @@ struct AiProvider {
     std::string id, name, url, key, model;
     bool        preset() const { return id == "anthropic" || id == "openai"; }
     bool        connected() const { return preset() ? !key.empty() : !url.empty(); }
+};
+
+struct MessageHistoryBudget {
+    size_t limitBytes;  // start trimming above this process-wide estimate
+    size_t targetBytes; // reclaim toward this lower mark (hysteresis)
 };
 
 struct Settings {
@@ -91,6 +97,7 @@ struct Settings {
 
     // ── Storage / System ────────────────────────────────────────────────────
     int         cacheLimitMb    = 250;
+    int         historyProfile  = 1; // 0 compact, 1 balanced, 2 generous
     bool        autoUpdates     = true;
     int64_t     lastUpdateCheck = 0; // unix seconds, 0 = never
     bool        minimizeToTray  = false;
@@ -135,6 +142,16 @@ struct Settings {
     // (MSGA_GIPHY_KEY in credentials.cmake; "" when the build has none).
     std::string        effectiveGiphyKey() const;
     static std::string buildGiphyKey();
+    // A soft, process-wide budget for estimated retained message history.
+    // The three profiles keep the same 75% low-water ratio.
+    MessageHistoryBudget messageHistoryBudget() const {
+        constexpr size_t MiB = size_t(1) << 20;
+        switch (historyProfile) {
+        case 0: return {16 * MiB, 12 * MiB};
+        case 2: return {64 * MiB, 48 * MiB};
+        default: return {32 * MiB, 24 * MiB};
+        }
+    }
 
     // The three one-click reactions the toolbar shows (none when off), topped
     // up with :white_check_mark: :eyes: :raised_hands:. With `usable`, only
