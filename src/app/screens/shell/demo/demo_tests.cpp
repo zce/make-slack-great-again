@@ -68,11 +68,10 @@ TEST("demo tour: the script parses the tour verbs; mistakes are named") {
     CHECK_FALSE(demo::parseTour(R"({"steps": [{"key": "F5"}]})", &s, &err));
     CHECK_FALSE(demo::parseTour(R"({"window": [640, 480], "steps": [{"quit": 1}]})", &s, &err));
     CHECK_FALSE(demo::parseTour(R"({"steps": []})", &s, &err));
-    // The repository's own tours: the Slack workspace's, the Claude Code one's.
+    // A checked-in tour exercises file loading without depending on an
+    // untracked, developer-local demo directory.
     REQUIRE(demo::loadTour(std::string(MSGA_DEMO_DIR) + "/tour.json", &s, &err));
-    CHECK(s.steps.size() > 50);
-    REQUIRE(demo::loadTour(std::string(MSGA_DEMO_DIR) + "/claude/tour.json", &s, &err));
-    CHECK(s.steps.size() > 30);
+    CHECK(s.steps.size() == 3);
 
     char  a0[] = "msga", a1[] = "--demo-tour=demo/tour.json", a2[] = "--demo-tour", a3[] = "t.json";
     char *v1[] = {a0, a1};

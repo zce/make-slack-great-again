@@ -89,13 +89,13 @@ if(MSGA_DEMO)
         demo/tour.cpp demo/tour_script.cpp demo/soak.cpp)
     target_link_libraries(msga PRIVATE msga_app_fake)
     target_compile_definitions(msga PRIVATE MSGA_DEMO)
-    # Demo mode's own checks (the tour parser, ../../../../demo's tour.json and
+    # Demo mode's own checks (the tour parser, ../../../../tests/assets's tour.json and
     # fixture.json): with the demo, never in the test suite under tests/.
     if(MSGA_BUILD_TESTS)
         add_executable(demo_tests demo/demo_tests.cpp demo/tour_script.cpp)
         target_link_libraries(demo_tests PRIVATE msga_app_fake msga_test)
         target_compile_definitions(demo_tests PRIVATE
-            MSGA_DEMO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../demo")
+            MSGA_DEMO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../tests/assets")
         add_test(NAME demo_tests COMMAND demo_tests)
         set_tests_properties(demo_tests PROPERTIES ENVIRONMENT "PLAT_BACKEND=headless;TZ=Europe/Stockholm")
     endif()
