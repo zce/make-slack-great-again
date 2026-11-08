@@ -1,6 +1,7 @@
 name: Memory validation
 
 on:
+  pull_request:
   schedule:
     # Daily at 03:37 UTC (11:37 China Standard Time).
     - cron: "37 3 * * *"
@@ -35,6 +36,56 @@ jobs:
           key: mbedtls-${{ hashFiles('src/net/posix/posix.cmake') }}
       - name: Download and verify Mbed TLS source
         run: scripts/prepare-mbedtls.sh
+
+  asan:
+    needs: prepare-mbedtls
+    name: ASan + LSan / 10-round soak
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      MSGA_MBEDTLS_SOURCE_DIR: ${{ github.workspace }}/.ci-cache/fetchcontent/msga_mbedtls-src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore pinned Mbed TLS source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: mbedtls-${{ hashFiles('src/net/posix/posix.cmake') }}
+
+      - name: Install build and display dependencies
+        timeout-minutes: 15
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            clang lld cmake ninja-build pkg-config python3 ccache jq \
+            libfreetype-dev libharfbuzz-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev wayland-protocols \
+            libxcb1-dev libxcb-xkb-dev libxcb-shm0-dev \
+            libxcb-randr0-dev libxcb-cursor-dev libxcb-xfixes0-dev \
+            libxcb-xinput-dev libxcb-xtest0-dev libdbus-1-dev \
+            fonts-inter fonts-noto-color-emoji \
+            xvfb xauth
+
+      - name: Run tests and memory soak under ASan / LSan
+        timeout-minutes: 55
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            scripts/run-asan.sh 10 2>&1 | tee artifacts/asan-soak.log
+
+      - name: Upload sanitizer log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: memory-asan-lsan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/asan-soak.log
+          if-no-files-found: warn
+          retention-days: 14
 
   soak:
     needs: prepare-mbedtls
