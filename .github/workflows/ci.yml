@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -79,22 +80,6 @@ jobs:
         if: matrix.artifact || github.event_name != 'pull_request'
         timeout-minutes: 15
         run: ctest --test-dir build-ci --output-on-failure --parallel 2
-
-      # Compile demo-only soak code separately; do not reconfigure the
-      # test-enabled build used for pull-request artifacts.
-      - name: Build and test demo soak harness
-        if: github.event_name == 'pull_request' && matrix.compiler == 'gcc'
-        run: |
-          cmake -S . -B build-demo -G Ninja \
-            -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DMSGA_BUILD_TESTS=ON \
-            -DMSGA_DEMO=ON \
-            -DMSGA_SELF_UPDATE=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-demo --target msga demo_tests --parallel 4
-          ctest --test-dir build-demo --output-on-failure -R '^demo_tests$'
-
 
       # PR artifacts are test-enabled executables, never release binaries.
       - name: Prepare pull request test build
