@@ -80,6 +80,20 @@ jobs:
         timeout-minutes: 15
         run: ctest --test-dir build-ci --output-on-failure --parallel 2
 
+      # Compile demo-only soak code separately; do not reconfigure the
+      # test-enabled build used for pull-request artifacts.
+      - name: Build and test demo soak harness
+        if: github.event_name == 'pull_request' && matrix.compiler == 'gcc'
+        run: |
+          cmake -S . -B build-demo -G Ninja \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DMSGA_BUILD_TESTS=ON \
+            -DMSGA_DEMO=ON \
+            -DMSGA_SELF_UPDATE=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-demo --target msga demo_tests --parallel 4
+          ctest --test-dir build-demo --output-on-failure -R '^demo_tests
       # PR artifacts are test-enabled executables, never release binaries.
       - name: Prepare pull request test build
         if: github.event_name == 'pull_request' && matrix.artifact
@@ -100,21 +114,6 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
-
-      # The normal CI build deliberately excludes demo-only code. Compile the
-      # scripted soak harness separately on GCC so it cannot silently rot.
-      - name: Build and test demo soak harness
-        if: github.event_name == 'pull_request' && matrix.compiler == 'gcc'
-        run: |
-          cmake -S . -B build-demo -G Ninja \
-            -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DMSGA_BUILD_TESTS=ON \
-            -DMSGA_DEMO=ON \
-            -DMSGA_SELF_UPDATE=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-demo --target msga demo_tests --parallel 4
-          ctest --test-dir build-demo --output-on-failure -R '^demo_tests
 
       # Make the actual production binary during successful master CI, so
       # publishing can reuse this verified SHA's artifact without compiling again.
@@ -268,6 +267,28 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+
+
+      # PR artifacts are test-enabled executables, never release binaries.
+      - name: Prepare pull request test build
+        if: github.event_name == 'pull_request' && matrix.artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp build-ci/msga dist/msga
+          chmod +x dist/msga
+          (cd dist && sha256sum msga > SHA256SUMS)
+      - name: Upload pull request test build
+        if: github.event_name == 'pull_request' && matrix.artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msga-linux-x86_64-pr${{ github.event.pull_request.number }}
+          path: |
+            dist/msga
+            dist/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
 
       # Make the actual production binary during successful master CI, so
       # publishing can reuse this verified SHA's artifact without compiling again.
