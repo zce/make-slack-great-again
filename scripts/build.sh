@@ -53,9 +53,16 @@ fi
 # without build.ninja (stale or wrong generator).
 if [[ ! -f "${BUILD_DIR}/build.ninja" ]]; then
     rm -rf "${BUILD_DIR}"
-    cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-        -DMSGA_ASAN="$([[ "$ASAN" == "1" ]] && echo ON || echo OFF)" \
-        "${OPTIONS[@]+"${OPTIONS[@]}"}"
+    CMAKE_ARGS=(
+        "-DCMAKE_BUILD_TYPE=$BUILD_TYPE"
+        "-DMSGA_ASAN=$([[ "$ASAN" == "1" ]] && echo ON || echo OFF)"
+    )
+    # CI pre-stages the pinned TLS source so configure/build jobs do not need
+    # network access. Local builds keep CMake's normal FetchContent behavior.
+    if [[ -n "${MSGA_MBEDTLS_SOURCE_DIR:-}" ]]; then
+        CMAKE_ARGS+=("-DFETCHCONTENT_SOURCE_DIR_MSGA_MBEDTLS=${MSGA_MBEDTLS_SOURCE_DIR}")
+    fi
+    cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" -G Ninja "${CMAKE_ARGS[@]}" "${OPTIONS[@]}"
 elif [[ ${#OPTIONS[@]} -gt 0 ]]; then
     cmake "$BUILD_DIR" "${OPTIONS[@]}"
 fi

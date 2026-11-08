@@ -14,7 +14,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare-mbedtls:
+    name: Prepare pinned Mbed TLS source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache pinned Mbed TLS source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: mbedtls-${{ hashFiles('src/net/posix/posix.cmake') }}
+      - name: Download and verify Mbed TLS source
+        run: scripts/prepare-mbedtls.sh
+
   linux:
+    needs: prepare-mbedtls
     name: ${{ matrix.runner }} / ${{ matrix.compiler }}
     strategy:
       fail-fast: false
@@ -37,6 +54,7 @@ jobs:
       CXX: ${{ matrix.compiler == 'clang' && 'clang++' || 'g++' }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 600M
+      MSGA_MBEDTLS_SOURCE_DIR: ${{ github.workspace }}/.ci-cache/fetchcontent/msga_mbedtls-src
       # Run demo tests in the same build tree on GCC PR validation only.
       MSGA_DEMO: ${{ github.event_name == 'pull_request' && matrix.compiler == 'gcc' }}
       # GCC uses ordinary TUs for ccache reuse; Clang keeps exercising PCH.
@@ -45,6 +63,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Restore pinned Mbed TLS source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: mbedtls-${{ hashFiles('src/net/posix/posix.cmake') }}
       - name: Install build dependencies
         id: dependencies
         timeout-minutes: 15
@@ -73,6 +96,7 @@ jobs:
             -DMSGA_DEMO=${MSGA_DEMO} \
             -DMSGA_PCH=${MSGA_PCH} \
             -DMSGA_SELF_UPDATE=OFF \
+            -DFETCHCONTENT_SOURCE_DIR_MSGA_MBEDTLS="${MSGA_MBEDTLS_SOURCE_DIR}" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Reset compiler cache statistics
@@ -141,6 +165,7 @@ jobs:
             -DMSGA_DEMO=OFF \
             -DMSGA_SELF_UPDATE=OFF \
             -DMSGA_SIZE_MAP=OFF \
+            -DFETCHCONTENT_SOURCE_DIR_MSGA_MBEDTLS="${MSGA_MBEDTLS_SOURCE_DIR}" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build production binary

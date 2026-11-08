@@ -21,15 +21,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  asan:
-    name: ASan + LSan / 10-round soak
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+  prepare-mbedtls:
+    name: Prepare pinned Mbed TLS source
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Cache pinned Mbed TLS source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: mbedtls-${{ hashFiles('src/net/posix/posix.cmake') }}
+      - name: Download and verify Mbed TLS source
+        run: scripts/prepare-mbedtls.sh
+
+  asan:
+    needs: prepare-mbedtls
+    name: ASan + LSan / 10-round soak
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      MSGA_MBEDTLS_SOURCE_DIR: ${{ github.workspace }}/.ci-cache/fetchcontent/msga_mbedtls-src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore pinned Mbed TLS source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: mbedtls-${{ hashFiles('src/net/posix/posix.cmake') }}
 
       - name: Install build and display dependencies
         timeout-minutes: 15
@@ -64,16 +88,23 @@ jobs:
           retention-days: 14
 
   soak:
+    needs: prepare-mbedtls
     name: Long-session soak / scheduled
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       SOAK_ROUNDS: ${{ inputs.soak_rounds || 20 }}
+      MSGA_MBEDTLS_SOURCE_DIR: ${{ github.workspace }}/.ci-cache/fetchcontent/msga_mbedtls-src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Restore pinned Mbed TLS source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-cache/fetchcontent
+          key: mbedtls-${{ hashFiles('src/net/posix/posix.cmake') }}
 
       - name: Install build and display dependencies
         timeout-minutes: 15
