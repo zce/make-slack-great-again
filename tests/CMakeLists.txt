@@ -23,6 +23,8 @@ target_link_libraries(msga_test PUBLIC msga_base msga_flags)
 # caches. Without one, runAll makes a temporary home of its own (deleted at
 # exit); a <dir> must have "test-home" in its name for runAll to keep it
 # (support/test.cpp).
+# COST seeds CTest's long-first scheduler. CI starts with a fresh build tree,
+# so learned test timings do not persist between workflow runs.
 function(msga_add_test name)
     cmake_parse_arguments(PARSE_ARGV 1 arg "TZ" "HOME;COST" "COMMAND;ENV;LABELS")
     set(env "PLAT_BACKEND=headless")
