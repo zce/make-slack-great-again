@@ -238,7 +238,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.notifyLevel                = 1;
     s.notifySound                = false;
     s.cacheLimitMb               = 600;
-    s.historyProfile              = 2;
+    s.historyProfile             = 2;
     s.minimizeToTray             = true;
     s.useTray                    = false;
     s.presence                   = 2;
@@ -302,7 +302,11 @@ TEST("settings: every value survives the file, which is owner-only") {
     file::remove(path);
 
     // A corrupt file clamps instead of breaking the dialog.
-    REQUIRE(file::writeAtomic(path, R"({"relevantDays":0,"paletteDark":99,"notifyLevel":7,"historyProfile":99})"));
+    REQUIRE(file::writeAtomic(
+        path,
+        R"({"relevantDays":0,"paletteDark":99,"notifyLevel":7,)"
+        R"("historyProfile":99})"
+    ));
     const shell::Settings c = shell::Settings::load(path);
     CHECK(c.relevantDays == 1);
     CHECK(c.paletteDark == int(ui::Palette::Count) - 1);

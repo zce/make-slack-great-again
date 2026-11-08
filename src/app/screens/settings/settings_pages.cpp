@@ -574,11 +574,14 @@ void SettingsDialog::buildStorage() {
     };
     caption(
         _content,
-        tr("Across all workspaces. The first value is the trim threshold; the second is the target.")
+        tr("Across all workspaces. The first value is the trim threshold; the second is the "
+           "target.")
     );
     caption(
         _content,
-        tr("Visible, unread, pinned, saved and unsent messages stay protected, so usage may exceed this soft budget. It is not a total RAM cap; older history can be loaded again.")
+        tr("Visible, unread, pinned, saved, pending and uncertain messages stay protected, so "
+           "usage may exceed this soft budget. It is not a total RAM cap; older history can be "
+           "loaded again.")
     );
 
     heading(_content, tr("State"))->style().margins(0, 12, 0, 0);
