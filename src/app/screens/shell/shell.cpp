@@ -2926,6 +2926,11 @@ void Shell::onChange(const model::Change &ch) {
         _composer->refreshPlaceholder();
         return;
     }
+    // The active Store is not always attached to _running. In that case
+    // this observer is its only path for keeping the process-wide history
+    // budget in check; attached Stores are handled by onWorkspaceChange().
+    if (!attached && ch.kind != K::Typing)
+        maybeTrimHistoryBudget();
     if (ch.kind == K::Meta || ch.kind == K::Roster) {
         if (ch.kind == K::Meta && !attached && _live)
             huddleChanged(_ctx.store(), {}, ch.conv);
