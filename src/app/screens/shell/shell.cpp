@@ -4014,8 +4014,10 @@ void Shell::applySettings() {
     // Changing the profile applies a lower budget immediately; unrelated
     // settings changes do not trigger another full history walk.
     if (_appliedHistoryProfile != _settings.historyProfile) {
+        const bool previouslyApplied = _appliedHistoryProfile >= 0;
         _appliedHistoryProfile = _settings.historyProfile;
-        trimHistoryBudget();
+        if (previouslyApplied)
+            trimHistoryBudget();
     }
     // Rows bake the time format and link previews in: rebuild what is shown.
     if (_builtPreviews != _settings.linkPreviews || _built24h != _settings.use24h ||
