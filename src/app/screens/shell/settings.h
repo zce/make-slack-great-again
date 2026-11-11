@@ -73,7 +73,13 @@ struct Settings {
     // (model::Backend::NamesMode).
     int                      names        = 0;
     bool                     showAgentsApps = true, unreadsOnly = false;
-    bool                     externalSection = true; // off: Connect chats stay in Channels / DMs
+    // Slack Connect channels and DMs in their own External connections
+    // section; off, they stay in Channels / Direct messages.
+    bool                     externalSection        = true;
+    // Direct messages and External connections above Starred, custom
+    // sections and Channels; off, the existing order is unchanged. A
+    // workspace with its own section order keeps that order.
+    bool                     directAndExternalFirst = false;
     bool                     animateEmoji = true, animateMedia = true;
     // The message toolbar's one-click reactions: 0 off, 1 the most used (the
     // emoji picker's Frequently used), 2 quickReactionNames.

@@ -110,8 +110,9 @@ public:
         int                relevantDays   = 14;
         bool               showAgentsApps = true, unreadsOnly = false;
         bool               externalSection = true; // off: Connect chats stay in Channels / DMs
-        bool               highlightMentionsOnly = true; // "Highlight mentions-only channels…"
-        model::NotifyLevel defaultLevel          = model::NotifyLevel::All;
+        bool               directAndExternalFirst = false;
+        bool               highlightMentionsOnly  = true; // "Highlight mentions-only channels…"
+        model::NotifyLevel defaultLevel           = model::NotifyLevel::All;
         bool               operator==(const Filters &) const = default;
     };
     void setFilters(const Filters &f);
@@ -159,6 +160,8 @@ public:
     void                  setSectionOrder(std::vector<std::string> order);
     const std::vector<std::string> &sectionOrder() const { return _sectionOrder; }
     bool                  moveSection(const std::string &key, int step);
+    // Back to the default order: the workspace's own is forgotten.
+    bool                  resetSectionOrder();
     std::function<void()> onSectionOrderChanged;
     // A section's key: a custom one's id, a "#"-prefixed name for every
     // other built-in ("" for the Team, which has no sort or collapse state).

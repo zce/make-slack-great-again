@@ -53,6 +53,7 @@ constexpr ui::MenuDef kDefs[] = {
     {Menus::kUnreadsFirst, kNone, N_("Unreads on top"), nullptr, nullptr},
     {Menus::kMentionsFirst, kNone, N_("Mentions on top"), nullptr, nullptr},
     {Menus::kShowUnreadWhenCollapsed, kNone, N_("Show unread when collapsed"), nullptr, nullptr},
+    {Menus::kResetSectionOrder, kNone, N_("Reset section order"), nullptr, nullptr},
 };
 
 ui::MenuItem &add(std::vector<ui::MenuItem> &out, int id, bool direct = false, bool on = true) {
@@ -158,7 +159,8 @@ std::vector<ui::MenuItem> Menus::sectionItems(
     const std::string &section,
     SectionSort sort,
     std::optional<std::pair<bool, bool>> localMoves,
-    std::optional<bool> showUnreadWhenCollapsed
+    std::optional<bool> showUnreadWhenCollapsed,
+    bool canResetOrder
 ) const {
     std::vector<ui::MenuItem> items;
     if (_ctx.backend.capabilities().customSections) {
@@ -180,6 +182,8 @@ std::vector<ui::MenuItem> Menus::sectionItems(
     if (localMoves) {
         add(items, kSectionUp, false, localMoves->first);
         add(items, kSectionDown, false, localMoves->second);
+        if (canResetOrder)
+            add(items, kResetSectionOrder);
         ui::addMenuSeparator(items);
     }
     // The sort: one of the orders ticked, and unreads / mentions on top on or off.
@@ -244,14 +248,18 @@ void Menus::showSection(
     std::pair<bool, bool>            canMove,
     std::function<void(int)>         onMove,
     bool                             showUnreadWhenCollapsed,
-    std::function<void()>            onToggleCollapsedUnreads
+    std::function<void()>            onToggleCollapsedUnreads,
+    bool                             canResetOrder,
+    std::function<void()>            onResetOrder
 ) {
     ui::Menu::popupAt(
         _win,
         at,
-        sectionItems(section, sort, canMove, showUnreadWhenCollapsed),
+        sectionItems(section, sort, canMove, showUnreadWhenCollapsed, canResetOrder),
         [this, section, sort, onSort = std::move(onSort), onMove = std::move(onMove),
-         onToggle = std::move(onToggleCollapsedUnreads)](int id) {
+         onToggle = std::move(onToggleCollapsedUnreads), onReset = std::move(onResetOrder)](
+            int id
+        ) {
             if (id >= kSortDefault && id <= kMentionsFirst) {
                 if (onSort)
                     onSort(sortAfter(id, sort));
@@ -259,6 +267,8 @@ void Menus::showSection(
                 onToggle();
             } else if ((id == kSectionUp || id == kSectionDown) && onMove) {
                 onMove(id == kSectionUp ? -1 : 1);
+            } else if (id == kResetSectionOrder && onReset) {
+                onReset();
             } else if (id)
                 runSection(id, section);
         }

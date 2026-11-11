@@ -60,6 +60,7 @@ bool shell::Settings::*const kAppearanceBools[] = {
     &shell::Settings::showAgentsApps,
     &shell::Settings::externalSection,
     &shell::Settings::unreadsOnly,
+    &shell::Settings::directAndExternalFirst,
     &shell::Settings::animateEmoji,
     &shell::Settings::animateMedia,
 };
@@ -654,6 +655,17 @@ void SettingsDialog::buildAppearance() {
         );
         check(g, tr("Show the Agents & apps section"), &d.showAgentsApps, true);
         check(g, tr("Show the External connections section"), &d.externalSection, true);
+        check(
+            g,
+            tr("Show direct messages and External connections at the top"),
+            &d.directAndExternalFirst,
+            true
+        );
+        caption(
+            g,
+            tr("External connections moves up only while its section is shown.\n"
+               "A workspace with its own section order keeps that order.")
+        );
         auto *unread = check(g, tr("Show only unread conversations"), &d.unreadsOnly, true);
         caption(
             g,

@@ -1193,20 +1193,53 @@ void Sidebar::rebuild() {
         size_t                      customIndex = 0;
     };
     std::vector<Entry> entries;
-    // A draft lifts its conversation out of every other section, right under
-    // VIP unreads: pinned there, not part of the user's own order.
+    // A draft lifts its conversation out of every section and sits right
+    // under VIP unreads: pinned there, not part of the base order below.
     if (!drafts.empty())
         entries.push_back({Drafts, Icon::Edit3, tr("Drafts"), &drafts, {}});
-    for (int s = 0; s < 4; ++s) {
-        if (s == Channels)
-            for (size_t i = 0; i < custom.size(); ++i)
-                entries.push_back({Custom, Icon::List, secs[i].name, &custom[i], secs[i].id, i});
-        // Starred and Agents & apps are hidden while they have no rows.
-        if (!lists[s].empty() || (s != Starred && s != Apps))
-            entries.push_back({Kind(s), defs[s].icon, defs[s].title, &lists[s], {}});
-        // Default placement: Channels, Direct messages, then External connections.
-        if (s == Direct && !external.empty())
-            entries.push_back({External, Icon::Building, tr("External connections"), &external, {}});
+    // The base order: each kind collects its entry, and the DMs-first option
+    // (or the user's own section order, applied after) places them.
+    const auto collectCustom = [&] {
+        for (size_t i = 0; i < custom.size(); ++i)
+            entries.push_back({Custom, Icon::List, secs[i].name, &custom[i], secs[i].id, i});
+    };
+    const auto collectExternal = [&] {
+        if (!external.empty())
+            entries.push_back(
+                {External, Icon::Building, tr("External connections"), &external, {}}
+            );
+    };
+    const auto collectStarred = [&] {
+        if (!lists[Starred].empty())
+            entries.push_back(
+                {Starred, defs[Starred].icon, defs[Starred].title, &lists[Starred], {}}
+            );
+    };
+    const auto collectChannels = [&] {
+        entries.push_back({Channels, defs[Channels].icon, defs[Channels].title, &lists[Channels], {}});
+    };
+    const auto collectDirect = [&] {
+        entries.push_back({Direct, defs[Direct].icon, defs[Direct].title, &lists[Direct], {}});
+    };
+    const auto collectApps = [&] {
+        if (lists[Apps].empty())
+            return;
+        entries.push_back({Apps, defs[Apps].icon, defs[Apps].title, &lists[Apps], {}});
+    };
+    if (_filters.directAndExternalFirst) {
+        collectDirect();
+        collectExternal();
+        collectStarred();
+        collectCustom();
+        collectChannels();
+        collectApps();
+    } else {
+        collectStarred();
+        collectCustom();
+        collectChannels();
+        collectDirect();
+        collectExternal();
+        collectApps();
     }
     if (!_sectionOrder.empty()) {
         std::unordered_map<std::string, size_t> ranks;
@@ -1599,7 +1632,9 @@ void Sidebar::sectionMenu(SectionHeader *h, PointF at) {
          it != reorderable.end() && position + 1 < reorderable.size()},
         [this, key](int step) { moveSection(key, step); },
         showUnreadWhenCollapsed(key),
-        [this, key] { toggleCollapsedUnreads(key); }
+        [this, key] { toggleCollapsedUnreads(key); },
+        !_sectionOrder.empty(),
+        [this] { resetSectionOrder(); }
     );
 }
 
@@ -1680,6 +1715,16 @@ void Sidebar::openUp(SectionHeader *h) {
     applyCollapse(h);
     if (const std::string key = sectionKey(h->kind, h->sectionId); !key.empty())
         _openedUp.insert(key);
+}
+
+bool Sidebar::resetSectionOrder() {
+    if (_sectionOrder.empty())
+        return false;
+    _sectionOrder.clear();
+    rebuildSoon(false); // the menu's clicked header may still be on the stack
+    if (onSectionOrderChanged)
+        onSectionOrderChanged();
+    return true;
 }
 
 // A collapsed section may show its unread rows, but never its action rows.
