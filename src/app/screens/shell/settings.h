@@ -80,6 +80,10 @@ struct Settings {
     // sections and Channels; off, the existing order is unchanged. A
     // workspace with its own section order keeps that order.
     bool                     directAndExternalFirst = false;
+    // "Show only unread conversations" also hides the read ones in the
+    // user's own sections / in Starred (off: those are always listed).
+    bool                     unreadsOnlyAppliesToCustomSections = false;
+    bool                     unreadsOnlyAppliesToStarred        = false;
     bool                     animateEmoji = true, animateMedia = true;
     // The message toolbar's one-click reactions: 0 off, 1 the most used (the
     // emoji picker's Frequently used), 2 quickReactionNames.

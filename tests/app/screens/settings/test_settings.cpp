@@ -249,6 +249,8 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK(def.paletteDark == int(ui::Palette::Charcoal));
     CHECK(def.relevantDays == 14);
     CHECK_FALSE(def.directAndExternalFirst);
+    CHECK_FALSE(def.unreadsOnlyAppliesToCustomSections);
+    CHECK_FALSE(def.unreadsOnlyAppliesToStarred);
     CHECK(def.names == 0); // as set in Slack
     CHECK(def.cacheLimitMb == 250);
     CHECK(def.historyProfile == 1);
@@ -272,6 +274,8 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.names                      = 2;
     s.unreadsOnly                = true;
     s.directAndExternalFirst     = true;
+s.unreadsOnlyAppliesToCustomSections = true;
+s.unreadsOnlyAppliesToStarred        = true;
     s.animateMedia               = false;
     s.notifyLevel                = 1;
     s.notifySound                = false;
@@ -310,6 +314,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK_STR(r.language, "ja");
     CHECK(r.use24h && r.threadsInline && r.ctrlEnterSends && r.unreadsOnly);
     CHECK(r.directAndExternalFirst);
+    CHECK(r.unreadsOnlyAppliesToCustomSections && r.unreadsOnlyAppliesToStarred);
     CHECK_FALSE(r.linkPreviews);
     CHECK_FALSE(r.animateMedia);
     CHECK(r.relevantDays == 45);
@@ -940,6 +945,43 @@ TEST("settings: unread-only greys out the activity window; typing digits sets it
         h.key(plat::Key::Num9);
     h.key(plat::Key::Enter);
     CHECK(days->value() == 365);
+}
+
+TEST("settings: unread-only's scopes are greyed out without it, and written on Save") {
+    const std::string path = testPath();
+    file::remove(path);
+    Harness         h(path);
+    SettingsDialog &d       = h.open();
+    ui::View       *unread  = d.find("Show only unread conversations");
+    ui::View       *own     = d.find("Hide read conversations in your sections too");
+    ui::View       *starred = d.find("Hide read starred conversations too");
+    REQUIRE(unread != nullptr);
+    REQUIRE(own != nullptr);
+    REQUIRE(starred != nullptr);
+    CHECK_FALSE(static_cast<ui::CheckBox *>(own)->checked()); // off by default
+    CHECK_FALSE(static_cast<ui::CheckBox *>(starred)->checked());
+    CHECK_FALSE(own->enabled()); // nothing to scope while unread-only is off
+    CHECK_FALSE(starred->enabled());
+    h.click(unread);
+    CHECK(own->enabled());
+    CHECK(starred->enabled());
+    d.scroll().ensureVisible(starred);
+    pump();
+    h.click(own);
+    h.click(starred);
+    CHECK(d.draft().unreadsOnlyAppliesToCustomSections);
+    CHECK(d.draft().unreadsOnlyAppliesToStarred);
+    CHECK_FALSE(h.settings.unreadsOnlyAppliesToStarred); // waits for Save
+    ui::View *save = d.find("Save");
+    REQUIRE(save != nullptr);
+    d.scroll().ensureVisible(save);
+    pump();
+    h.click(save);
+    CHECK(h.settings.unreadsOnly);
+    CHECK(h.settings.unreadsOnlyAppliesToCustomSections && h.settings.unreadsOnlyAppliesToStarred);
+    const shell::Settings r = shell::Settings::load(path);
+    CHECK(r.unreadsOnlyAppliesToCustomSections && r.unreadsOnlyAppliesToStarred);
+    file::remove(path);
 }
 
 TEST("settings: notification level, and the master switch greys out the rest") {

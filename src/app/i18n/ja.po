@@ -1242,10 +1242,17 @@ msgstr "未読の会話のみ表示"
 #: src/app/screens/settings/settings_dialog.cpp
 msgid ""
 "The conversation you are reading stays listed until you move on.\n"
-"Starred conversations are always shown."
+"Drafts are always shown, and so are starred conversations and your\n"
+"sections unless you hide their read ones below."
 msgstr ""
-"閲覧中の会話は、別の会話に移るまで表示されたままになります。\n"
-"スター付きの会話は常に表示されます。"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Hide read conversations in your sections too"
+msgstr ""
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Hide read starred conversations too"
+msgstr ""
 
 #: src/app/screens/settings/settings_dialog.cpp
 msgid "Visual effects"
