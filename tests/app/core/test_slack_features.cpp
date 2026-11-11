@@ -869,6 +869,7 @@ TEST("slack features: custom sidebar sections — the list, moves, create, a ref
     e.be->moveSection("L2", -1);
     REQUIRE(pumpUntil([] { return count("users.channelSections.set") == 2; }));
     {
+        // Both are in flight at once: the log order is the arrival order.
         const Log   sets;
         json::Value r = sets.get("users.channelSections.set", 0)["form"];
         json::Value m = sets.get("users.channelSections.set", 1)["form"];

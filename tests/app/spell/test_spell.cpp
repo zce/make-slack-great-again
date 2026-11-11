@@ -8,6 +8,7 @@
 #include "app/spell/spell_internal.h"
 
 #include "base/file.h"
+#include "base/time.h"
 #include "support/test.h"
 #include "plat/plat.h"
 
@@ -22,7 +23,8 @@ plat::App &app() {
 
 template <class F>
 bool until(F done, int ms = 3000) {
-    for (int t = 0; t < ms && !done(); t += 5)
+    const int64_t end = base::monotonicMs() + ms; // pump() can return early
+    while (!done() && base::monotonicMs() < end)
         app().pump(5);
     return done();
 }

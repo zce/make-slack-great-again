@@ -60,7 +60,8 @@ void pump(int n = 10) {
 
 template <class F>
 bool until(F done, int ms = 3000) {
-    for (int t = 0; t < ms && !done(); t += 5)
+    const int64_t end = base::monotonicMs() + ms; // pump() can return early
+    while (!done() && base::monotonicMs() < end)
         app().pump(5);
     return done();
 }
@@ -183,7 +184,10 @@ struct Harness {
         backend.setFixture(MSGA_TEST_ASSETS, base::fromLocal(2026, 9, 21, 16, 0));
         bool done = false;
         backend.connect([&](bool ok, const std::string &) { done = ok; });
-        for (int i = 0; i < 200 && !done; ++i)
+        // By the clock: pump() returns early on every post from a worker
+        // thread, so a count of pumps can run out before the connect.
+        const int64_t end = base::monotonicMs() + 10000;
+        while (!done && base::monotonicMs() < end)
             app().pump(5);
         plat::WindowDesc d;
         d.size        = {1200, 800};
@@ -498,21 +502,23 @@ TEST("sidebar: keyboard focus on a row survives a rebuild") {
     ui::View *before = row();
     REQUIRE(before != nullptr);
     h.win->setFocus(before, true); // as if reached with Tab: the ring shows
-    // Synchronous: a filter change rebuilds the rows at once.
+    // Synchronous: a filter change rebuilds the rows at once. (The count, not
+    // the row's address: a new row can be allocated where the old one was.)
+    int                     rebuilt = h.sidebar().rebuildCount();
     shell::Sidebar::Filters f;
     f.relevantDays = 1;
     h.sidebar().setFilters(f);
+    CHECK(h.sidebar().rebuildCount() > rebuilt); // the rows were recreated
     pump();
     REQUIRE(row() != nullptr);
-    CHECK(row() != before); // the rows were recreated
     CHECK(h.win->focusView() == row());
     CHECK(h.win->focusVisible());
     // Deferred: rebuildSoon() after the click that asked for it.
-    before = row();
+    rebuilt = h.sidebar().rebuildCount();
     h.sidebar().showAllChannels();
+    REQUIRE(until([&] { return h.sidebar().rebuildCount() > rebuilt; }));
     pump();
     REQUIRE(row() != nullptr);
-    CHECK(row() != before);
     CHECK(h.win->focusView() == row());
     CHECK(h.win->focusVisible());
 }
