@@ -164,6 +164,8 @@ public:
     void loadMembers(model::ConvRef conv, MembersDone done) override;
     void searchPage(std::string query, std::string cursor, SearchPageDone done) override;
     void markThreadRead(model::ConvRef conv, model::Ts root, model::Ts ts) override;
+    bool canMarkThreadUnread(model::ConvRef conv, model::Ts root) const override;
+    void markThreadUnread(model::ConvRef conv, model::Ts root, model::Ts ts) override;
     void loadChannelCanvas(model::ConvRef conv, std::function<void(std::string)> done) override;
     void loadCanvasMeta(const std::string &fileId, CanvasMetaDone done) override;
     void loadCanvasContent(const std::string &fileId, CanvasHtmlDone done) override;
@@ -287,7 +289,11 @@ private:
         model::ConvRef c, bool active, std::string link, std::vector<model::UserRef> participants
     );
     // My read cursor in a followed thread moved (the Threads entry).
-    void                     threadRead(model::ConvRef c, model::Ts root, model::Ts upTo);
+    void        threadRead(model::ConvRef c, model::Ts root, model::Ts upTo);
+    // ...or moved back ("Mark unread" on a reply): unread past `to` again.
+    void        threadUnread(model::ConvRef c, model::Ts root, model::Ts to);
+    // subscriptions.thread.mark's form (read = false: "Mark unread").
+    std::string threadMarkForm(model::ConvRef c, model::Ts root, model::Ts ts, bool read) const;
     // The DM read-cursor sweeps (the DM activity sweep, resyncUnreads;
     // slack_backend.cpp): which conversations, and one conversations.info
     // on the paced lane (null: it failed; channel_not_found marks it dead).

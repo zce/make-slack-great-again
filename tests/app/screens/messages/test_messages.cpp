@@ -1468,18 +1468,19 @@ TEST("actions: the message menu, item for item, acts through the backend") {
     CHECK_STR(
         menuLabels(e.list->menuItems(linked)),
         "Reply in thread|Add reaction|Forward message|-|Copy link|Copy message|"
-        "Copy link from message|Mark unread from here|-|Save for later|Remind me|"
-        "Pin to channel|-|Summarize down"
+        "Copy link from message|-|Mark unread|Save for later|Remind me|Pin to channel|-|"
+        "Summarize down"
     );
     const auto items = e.list->menuItems(linked);
     CHECK_STR(items[0].hint, "T");
     CHECK_STR(items[1].hint, "R");
     CHECK_STR(items[4].hint, "L");
     CHECK_STR(items[5].hint, "Ctrl+C");
-    CHECK_STR(items[7].hint, "U");
+    CHECK_STR(items[8].hint, "U");
     CHECK_STR(items[11].hint, "P");
     CHECK(items[0].icon == uint16_t(gfx::Icon::MessageSquareReply));
     CHECK(items[1].icon == uint16_t(gfx::Icon::Smile));
+    CHECK(items[8].icon == uint16_t(gfx::Icon::Eye));
     CHECK(items[10].icon == uint16_t(gfx::Icon::AlarmClock));
     CHECK(!items[2].enabled && !items[13].enabled); // no forwarding hook / AI provider here
 
@@ -1532,7 +1533,7 @@ TEST("actions: the message menu, item for item, acts through the backend") {
     CHECK_STR(
         menuLabels(e.list->menuItems(mine)),
         "Reply in thread|Add reaction|Forward message|-|Copy link|Copy message|"
-        "Mark unread from here|-|Save for later|Remind me|Pin to channel|-|"
+        "-|Mark unread|Save for later|Remind me|Pin to channel|-|"
         "Edit message|Move to thread…|Summarize down|-|Delete message…"
     );
     e.list->runMenuAction(mine, M::kEdit);
@@ -1606,6 +1607,115 @@ TEST("actions: Save for later and Remind me need messageReminders (session token
     CHECK(labels.find("Save for later") == std::string::npos);
     CHECK(labels.find("Remind me") == std::string::npos);
     CHECK(labels.find("Pin to channel") != std::string::npos);
+}
+
+TEST("actions: Mark unread moves the cursor back and holds it while the chat is on screen") {
+    Env           e(true);
+    const ConvRef design = e.conv("C0DESIGN");
+    e.store.updateConversation(design, [](model::Conversation &c) { c.lastRead = 0; });
+    e.list->showConversation(design);
+    pump(10);
+    const auto &msgs = e.store.conversation(design).messages;
+    REQUIRE(until([&] { return e.store.conversation(design).lastRead == msgs.back().ts; }));
+    // Someone else's message a few from the end.
+    Ts             target = 0;
+    model::UserRef other  = model::kNoUser;
+    for (size_t i = msgs.size(); i-- > 0 && !target;)
+        if (msgs[i].user != e.store.me && !msgs[i].isReply() && i + 3 <= msgs.size()) {
+            target = msgs[i].ts;
+            other  = msgs[i].user;
+        }
+    REQUIRE(target != 0);
+    CHECK(
+        menuLabels(e.list->menuItems(target)).find("Copy message|-|Mark unread") !=
+        std::string::npos
+    );
+    e.list->runMenuAction(target, MessageList::kMarkUnread);
+    CHECK(e.store.conversation(design).lastRead == target - 1);
+    CHECK(e.store.conversation(design).unread > 0);
+    CHECK(e.ctx.unreadHeld(design, 0));
+    // The newest message is on screen, yet it stays unread...
+    pump(10);
+    CHECK(e.store.conversation(design).lastRead == target - 1);
+    // ...also when a new message comes in, or the list is shown again in
+    // place (a settings change rebuilds it).
+    model::Message m;
+    m.user = other;
+    m.ts   = msgs.back().ts + 1000000;
+    m.text = "one more";
+    e.store.addMessage(design, std::move(m));
+    pump(10);
+    e.list->showConversation(design);
+    pump(10);
+    CHECK(e.store.conversation(design).lastRead == target - 1);
+    // Opened again (the shell drops the hold): read as usual.
+    e.ctx.releaseUnread(design, 0);
+    e.list->showConversation(design);
+    e.list->list().scrollToBottom();
+    REQUIRE(until([&] { return e.store.conversation(design).lastRead == msgs.back().ts; }));
+}
+
+TEST("actions: Mark unread on a reply — the followed thread from there, the channel stays read") {
+    Env     e(true);
+    // A thread I follow (the demo's: started or replied in) and one I don't.
+    ConvRef conv = model::kNoConv, otherConv = model::kNoConv;
+    Ts      root = 0, otherRoot = 0;
+    for (ConvRef c = 0; c < e.store.conversationCount(); ++c)
+        for (const model::Thread &t : e.store.conversation(c).threads) {
+            if (t.replies.size() < 2)
+                continue;
+            if (e.backend.canMarkThreadUnread(c, t.root) && !root) {
+                conv = c;
+                root = t.root;
+            } else if (!e.backend.canMarkThreadUnread(c, t.root) && !otherRoot) {
+                otherConv = c;
+                otherRoot = t.root;
+            }
+        }
+    REQUIRE(root != 0);
+    e.list->showThread(conv, root);
+    REQUIRE(until([&] { return e.list->items().size() > 3; }));
+    pump(10);
+    CHECK(e.store.unreadThreads() == 0);
+    const auto &replies = *e.store.replies(conv, root);
+    const Ts    reply   = replies[replies.size() - 2].ts;
+    const Ts    chRead  = e.store.conversation(conv).lastRead;
+    CHECK(menuLabels(e.list->menuItems(reply)).find("Mark unread") != std::string::npos);
+    // The root in the panel is the channel's message: the channel's cursor.
+    CHECK(menuLabels(e.list->menuItems(root)).find("Mark unread") != std::string::npos);
+    e.list->runMenuAction(reply, MessageList::kMarkUnread);
+    CHECK(e.store.unreadThreads() == 1); // the Threads entry
+    CHECK(e.store.conversation(conv).lastRead == chRead);
+    CHECK(e.ctx.unreadHeld(conv, root));
+    CHECK_FALSE(e.ctx.unreadHeld(conv, 0));
+    pump(10);
+    CHECK(e.store.unreadThreads() == 1); // open, but held
+    // The Threads page sees the cursor just before the reply.
+    bool                        loaded = false;
+    model::Backend::ThreadsView page;
+    e.backend.loadThreadsView({}, [&](bool ok, model::Backend::ThreadsView p) {
+        loaded = ok;
+        page   = std::move(p);
+    });
+    REQUIRE(until([&] { return loaded; }));
+    bool seen = false;
+    for (const auto &t : page.threads)
+        if (t.conv == conv && t.root.ts == root) {
+            seen = true;
+            CHECK(t.lastRead == reply - 1);
+        }
+    CHECK(seen);
+    // Opened again: it reads itself.
+    e.ctx.releaseUnread(conv, root);
+    e.list->showThread(conv, root);
+    REQUIRE(until([&] { return e.store.unreadThreads() == 0; }));
+    // A reply in a thread I don't follow: no item (no cursor of mine there).
+    if (otherRoot) {
+        e.list->showThread(otherConv, otherRoot);
+        REQUIRE(until([&] { return e.list->items().size() > 3; }));
+        const auto &rs = *e.store.replies(otherConv, otherRoot);
+        CHECK(menuLabels(e.list->menuItems(rs.back().ts)).find("Mark unread") == std::string::npos);
+    }
 }
 
 TEST("actions: a message link is a chip; a click jumps there or opens the browser") {

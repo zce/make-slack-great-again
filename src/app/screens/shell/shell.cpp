@@ -2104,6 +2104,8 @@ void Shell::workspaceChanged() {
 void Shell::open(ConvRef conv) {
     if (!_signedIn || conv == kNoConv || conv >= _ctx.store().conversationCount())
         return;
+    // Opened again: one marked unread is read like any other now.
+    _ctx.releaseUnread(conv, 0);
     if (onNavigation)
         onNavigation();
     leavePages();
@@ -2146,6 +2148,7 @@ void Shell::open(ConvRef conv) {
 
 void Shell::leaveWorkspace() {
     leavePages();
+    _ctx.unreadHolds.clear(); // they name the old workspace's conversations
     if (_activityPage)
         _activityPage->clear(); // its items point into the old workspace
     if (_threadsPage)
@@ -2429,6 +2432,7 @@ void Shell::openThread(ConvRef conv, Ts root, Ts jumpTarget) {
         open(conv);
     else if (onNavigation)
         onNavigation();
+    _ctx.releaseUnread(conv, root); // opened again (see open)
     _thread->show(conv, root, jumpTarget); // stashes the previous thread's draft
 #ifdef MSGA_HAVE_MESSAGES
     // Its reply bar in the list says "Close thread".
@@ -2841,7 +2845,8 @@ void Shell::onChange(const model::Change &ch) {
     model::Store &st = _ctx.store();
     if (const std::vector<model::Message> *list =
             ch.thread ? st.replies(ch.conv, ch.thread) : &st.conversation(ch.conv).messages;
-        ch.kind == K::Append && ch.live && list && reading() && ch.conv == _current && !ch.thread)
+        ch.kind == K::Append && ch.live && list && reading() && ch.conv == _current && !ch.thread &&
+        !_ctx.unreadHeld(ch.conv, 0)) // marked unread: it stays so until opened again
         for (size_t i = list->size() - std::min<size_t>(ch.count, list->size()); i < list->size();
              ++i)
             if (const model::Message &m = (*list)[i]; m.user != st.me && !m.pending)

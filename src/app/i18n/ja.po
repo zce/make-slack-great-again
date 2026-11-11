@@ -605,7 +605,7 @@ msgid "Copy message"
 msgstr "メッセージをコピー"
 
 #: src/app/screens/messages/message_list.cpp
-msgid "Mark unread from here"
+msgid "Mark unread"
 msgstr ""
 
 #: src/app/screens/messages/message_list.cpp
