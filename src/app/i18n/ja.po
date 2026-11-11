@@ -2419,6 +2419,10 @@ msgid "Show unread when collapsed"
 msgstr "折りたたみ時も未読を表示"
 
 #: src/app/screens/shell/context_menus.cpp
+msgid "Reset section order"
+msgstr ""
+
+#: src/app/screens/shell/context_menus.cpp
 msgid "Notify you about…"
 msgstr "通知対象…"
 
