@@ -2824,6 +2824,10 @@ void Shell::onChange(const model::Change &ch) {
     // budget in check; attached Stores are handled by onWorkspaceChange().
     if (!attached && ch.kind != K::Typing)
         maybeTrimHistoryBudget();
+    // Read here or elsewhere: its notifications go (an attached
+    // workspace's own observer does that).
+    if ((ch.kind == K::Meta || ch.kind == K::ThreadRead) && !attached)
+        withdrawRead(_ctx.store(), {}, ch);
     if (ch.kind == K::Meta || ch.kind == K::Roster) {
         if (ch.kind == K::Meta && !attached && _live)
             huddleChanged(_ctx.store(), {}, ch.conv);
@@ -3610,6 +3614,8 @@ void Shell::onWorkspaceChange(const std::string &key, const model::Change &ch) {
     Running *r = findRunning(key);
     if (!r)
         return;
+    if (ch.kind == K::Meta || ch.kind == K::ThreadRead)
+        withdrawRead(*r->store, key, ch);
     if (ch.kind == K::Meta || ch.kind == K::Roster) {
         r->dirty = true;
         if (r->store != &_ctx.store())
