@@ -2876,6 +2876,10 @@ msgid "you"
 msgstr "自分"
 
 #: src/app/screens/shell/sidebar.cpp
+msgid "Draft"
+msgstr ""
+
+#: src/app/screens/shell/sidebar.cpp
 msgid "Starred"
 msgstr "スター付き"
 
@@ -2890,6 +2894,10 @@ msgstr "エージェントとアプリ"
 #: src/app/screens/shell/sidebar.cpp
 msgid "VIP unreads"
 msgstr "VIPの未読"
+
+#: src/app/screens/shell/sidebar.cpp
+msgid "Drafts"
+msgstr ""
 
 #: src/app/screens/shell/sidebar.cpp
 msgid "External connections"
