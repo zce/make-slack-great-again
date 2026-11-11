@@ -1006,8 +1006,13 @@ Shell::Shell(
         });
     };
     loadSorts();
+    loadCollapsed();
     _sidebar->onSortsChanged = [this] {
         storeSorts();
+        saveSettingsSoon();
+    };
+    _sidebar->onCollapsedChanged = [this] {
+        storeCollapsed();
         saveSettingsSoon();
     };
     _sidebar->onCollapsedUnreadsChanged = [this] {
@@ -2093,6 +2098,7 @@ void Shell::workspaceChanged() {
     rebuildTrayMenu();
     updateHeader();
     loadSorts();
+    loadCollapsed();
 }
 
 void Shell::open(ConvRef conv) {
@@ -2180,6 +2186,31 @@ void Shell::purgeHistory(const std::string &key) {
     _nav.purge(key);
     if (_pendingNav.key == key)
         _pendingNav = {};
+}
+
+void Shell::forgetSidebarPrefs(const std::string &key) {
+    const auto sorts =
+        std::erase_if(_settings.sidebarSorts, [&key](const Settings::SectionSortPref &p) {
+            return p.workspace == key;
+        });
+    const auto collapsed =
+        std::erase_if(_settings.sidebarCollapsed, [&key](const Settings::SectionCollapsedPref &p) {
+            return p.workspace == key;
+        });
+    const auto order =
+        std::erase_if(_settings.sidebarSectionOrders, [&key](const Settings::SectionOrderPref &p) {
+            return p.workspace == key;
+        });
+    const auto unreads = std::erase_if(
+        _settings.sidebarCollapsedUnreads,
+        [&key](const Settings::CollapsedUnreadPref &p) { return p.workspace == key; }
+    );
+    if (sorts + collapsed + order + unreads > 0)
+        saveSettingsSoon();
+    if (_collapsedFor == key) { // nothing of it stored back, the next one loads
+        _collapsedFor.reset();
+        _sidebar->setCollapsed({});
+    }
 }
 
 NavLocation Shell::here(ConvRef conv) const {
@@ -3506,6 +3537,11 @@ void Shell::detachWorkspace(const std::string &key) {
         return;
     (*it)->store->unobserve((*it)->observer);
     _running.erase(it);
+    // A Store attached again for it is new: its collapsed sections load anew.
+    if (_collapsedFor == key) {
+        _collapsedFor.reset();
+        _sidebar->forgetStore();
+    }
     std::erase_if(_notified, [&](const auto &n) { return n.second.key == key; });
     // Dialogs that reach every workspace let it go.
     if (_forward)
@@ -4087,6 +4123,39 @@ void Shell::storeSorts() {
         _settings.sidebarSorts.begin(),
         _settings.sidebarSorts.end(),
         [](const Settings::SectionSortPref &a, const Settings::SectionSortPref &b) {
+            return std::tie(a.workspace, a.section) < std::tie(b.workspace, b.section);
+        }
+    );
+}
+
+// workspaceChanged also runs for the open one (connected, its icon): the
+// sidebar's state is already what the settings have for it then, and the
+// sections opened up for its chats stay open.
+void Shell::loadCollapsed() {
+    if (_collapsedFor == _activeKey)
+        return;
+    Sidebar::Collapsed collapsed;
+    for (const Settings::SectionCollapsedPref &p : _settings.sidebarCollapsed)
+        if (p.workspace == _activeKey && !p.section.empty())
+            collapsed[p.section] = true;
+    _collapsedFor = _activeKey;
+    _sidebar->setCollapsed(std::move(collapsed));
+}
+
+void Shell::storeCollapsed() {
+    if (!_collapsedFor)
+        return;
+    const std::string &key = *_collapsedFor;
+    std::erase_if(_settings.sidebarCollapsed, [&key](const Settings::SectionCollapsedPref &p) {
+        return p.workspace == key;
+    });
+    for (const auto &[section, on] : _sidebar->collapsed())
+        if (on && !section.empty())
+            _settings.sidebarCollapsed.push_back({key, section});
+    std::sort(
+        _settings.sidebarCollapsed.begin(),
+        _settings.sidebarCollapsed.end(),
+        [](const Settings::SectionCollapsedPref &a, const Settings::SectionCollapsedPref &b) {
             return std::tie(a.workspace, a.section) < std::tie(b.workspace, b.section);
         }
     );

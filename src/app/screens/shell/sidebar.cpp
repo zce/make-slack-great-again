@@ -973,13 +973,7 @@ void Sidebar::rebuild() {
                 break;
             }
     const bool focusRing = win && win->focusVisible();
-    for (auto *h : _sections) { // survives the rebuild
-        if (h->kind == Sidebar::Custom)
-            _collapsedCustom[h->sectionId] = h->collapsed;
-        else
-            _collapsed[h->kind] = h->collapsed;
-    }
-    _dragRow = nullptr; // a drag under way ends with its row
+    _dragRow             = nullptr; // a drag under way ends with its row
     _items->clearChildren();
     _rows.clear();
     _rowOf.assign(_ctx.store().conversationCount(), nullptr);
@@ -1126,16 +1120,13 @@ void Sidebar::rebuild() {
                              const std::vector<ConvRef> &rows,
                              const std::string          &id = {}) {
         auto *h      = _items->add<SectionHeader>(*this, kind, icon, std::move(title));
-        h->collapsed = kind != Custom && kind != Vip && _collapsed[kind];
+        h->sectionId = id;
+        restoreCollapse(h);
         _sections.push_back(h);
         // VIP unreads never collapses: a lift for unreads, not a section to
         // fold away (its header shows the pill, no chevron to say so).
         if (kind != Vip)
-            h->onClick = [this, h] {
-                h->collapsed = !h->collapsed;
-                applyCollapse(h);
-            };
-        h->sectionId = id;
+            h->onClick = [this, h] { toggleCollapse(h); };
         for (size_t i : sortedOrder(sortOf(h), rows)) {
             const ConvRef c   = rows[i];
             auto         *row = _items->add<ConvRow>(*this, c);
@@ -1192,8 +1183,6 @@ void Sidebar::rebuild() {
             const auto &sec = secs[e.customIndex];
             if (!sec.emoji.empty())
                 h->setEmoji(store.emojiFor(sec.emoji));
-            const auto was = _collapsedCustom.find(sec.id);
-            h->collapsed   = was != _collapsedCustom.end() && was->second;
         }
         if (e.kind == Channels && _hiddenChannels > 0) {
             auto *more = _items->add<ActionRow>(
@@ -1223,6 +1212,34 @@ void Sidebar::rebuild() {
     if (win)
         if (ConvRow *r = rowFor(focusConv); r && r->visible() && !win->focusView())
             win->setFocus(r, focusRing);
+    forgetDeletedSections();
+}
+
+// Once the open workspace's Store has its whole list of custom sections
+// (Store::sectionsComplete), a custom key not in it is a deleted section
+// (here, in another client, while another workspace was open or msga was
+// closed): its collapsed state and its sort go. Before that nothing does:
+// the list may simply not have come yet (it is not cached, and a Store
+// attached again after its session expired starts without one).
+void Sidebar::forgetDeletedSections() {
+    const model::Store &store = _ctx.store();
+    if (&store != _collapsedOf || !store.sectionsComplete())
+        return;
+    if (_prunedOf == &store && _prunedRev == store.sectionsRevision())
+        return; // the same list (most rebuilds)
+    _prunedOf       = &store;
+    _prunedRev      = store.sectionsRevision();
+    const auto gone = [&store](const std::string &key) {
+        return !key.empty() && key[0] != '#' && !store.findSection(key);
+    };
+    std::erase_if(_openedUp, gone);
+    const bool collapsed =
+        std::erase_if(_collapsed, [&](const auto &e) { return gone(e.first); }) > 0;
+    const bool sorts = std::erase_if(_sorts, [&](const auto &e) { return gone(e.first); }) > 0;
+    if (collapsed && onCollapsedChanged)
+        onCollapsedChanged();
+    if (sorts && onSortsChanged)
+        onSortsChanged();
 }
 
 // Everything rebuild() reads from the users: which DMs are dead or apps (they
@@ -1433,6 +1450,7 @@ std::string Sidebar::sectionKey(int kind, const std::string &id) {
     case Vip:
         return "#vip";
     case Team:
+        return "#team";
     case KindCount:
         break;
     }
@@ -1448,7 +1466,8 @@ void Sidebar::setSorts(Sorts sorts) {
     std::erase_if(sorts, [](const auto &e) { return e.first.empty() || e.second.plain(); });
     if (sorts == _sorts)
         return;
-    _sorts = std::move(sorts);
+    _sorts    = std::move(sorts);
+    _prunedOf = nullptr; // another state: checked again (the rebuild does)
     rebuild();
 }
 
@@ -1464,6 +1483,31 @@ void Sidebar::setSort(const std::string &key, SectionSort sort) {
     rebuildSoon(false); // not from inside the menu's own pick
     if (onSortsChanged)
         onSortsChanged();
+}
+
+// A switch: the workspace's own, applied to the headers there are (no
+// rebuild); what was opened up for the last one's chats closes again. VIP
+// unreads never collapses (an edited settings file may still say so).
+void Sidebar::setCollapsed(Collapsed collapsed) {
+    const std::string vip = sectionKey(Vip, {});
+    std::erase_if(collapsed, [&vip](const auto &e) {
+        return e.first.empty() || !e.second || e.first == vip;
+    });
+    _collapsed = std::move(collapsed);
+    _openedUp.clear();
+    _collapsedOf = &_ctx.store();
+    _prunedOf    = nullptr; // another state: checked again
+    for (SectionHeader *h : _sections) {
+        const bool was = h->collapsed;
+        restoreCollapse(h);
+        if (h->collapsed != was)
+            applyCollapse(h);
+    }
+    forgetDeletedSections();
+}
+
+void Sidebar::forgetStore() {
+    _collapsedOf = _prunedOf = nullptr; // no other Store at its address stands in for it
 }
 
 void Sidebar::setCollapsedUnreads(CollapsedUnreads enabled) {
@@ -1557,6 +1601,36 @@ bool Sidebar::moveSection(const std::string &key, int step) {
     if (onSectionOrderChanged)
         onSectionOrderChanged();
     return true;
+}
+
+void Sidebar::restoreCollapse(SectionHeader *h) {
+    const std::string key = sectionKey(h->kind, h->sectionId);
+    h->collapsed = h->kind != Vip && !key.empty() && _collapsed.count(key) && !_openedUp.count(key);
+}
+
+// The user's choice: kept, and told to the shell to store.
+void Sidebar::toggleCollapse(SectionHeader *h) {
+    h->collapsed = !h->collapsed;
+    applyCollapse(h);
+    const std::string key = sectionKey(h->kind, h->sectionId);
+    if (key.empty())
+        return;
+    _openedUp.erase(key);
+    const bool changed =
+        h->collapsed ? _collapsed.emplace(key, true).second : _collapsed.erase(key) > 0;
+    if (changed && onCollapsedChanged)
+        onCollapsedChanged();
+}
+
+// Not the user's choice: the section stays collapsed in _collapsed (and in
+// the settings), open until the workspace is set again.
+void Sidebar::openUp(SectionHeader *h) {
+    if (!h->collapsed)
+        return;
+    h->collapsed = false;
+    applyCollapse(h);
+    if (const std::string key = sectionKey(h->kind, h->sectionId); !key.empty())
+        _openedUp.insert(key);
 }
 
 // A collapsed section may show its unread rows, but never its action rows.
@@ -1812,10 +1886,8 @@ void Sidebar::select(ConvRef conv) {
     // lists it (relevance, unreads-only, apps) and
     // expands its section. Rebuilt after the click that got here.
     ConvRow *r = rowFor(conv);
-    if (r && r->section->collapsed && !r->visible()) {
-        r->section->collapsed = false;
-        applyCollapse(r->section);
-    }
+    if (r && !r->visible())
+        openUp(r->section);
     if ((conv != kNoConv && !r) || (_filters.unreadsOnly && old != kNoConv && old != conv))
         rebuildSoon(); // the one left may drop out of unreads-only
     if (r) {
