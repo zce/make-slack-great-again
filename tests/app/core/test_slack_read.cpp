@@ -520,6 +520,115 @@ TEST("slack read: a message deleted while its chat was closed goes on the first 
     CHECK(e.store.findMessage(c, model::parseTs("1700000100.000000")) != nullptr);
 }
 
+TEST("slack read: a thread page unbroadcasts a reply without deleting it") {
+    if (!haveServer())
+        return;
+    Env           e(nullptr);
+    const ConvRef c    = e.addChannel("C1");
+    const Ts      root = model::parseTs("1700000100.000100");
+    const Ts      ts   = model::parseTs("1700000300.000300");
+
+    model::Message rootMsg;
+    rootMsg.ts          = root;
+    rootMsg.threadTs    = root;
+    rootMsg.text        = "original topic";
+    rootMsg.replyCount  = 1;
+    rootMsg.latestReply = ts;
+    model::Message broadcast;
+    broadcast.ts               = ts;
+    broadcast.threadTs         = root;
+    broadcast.text             = "broadcast reply";
+    broadcast.extras().subtype = "thread_broadcast";
+    std::vector<model::Message> history;
+    history.push_back(std::move(rootMsg));
+    history.push_back(std::move(broadcast));
+    e.store.addPage(c, std::move(history));
+    REQUIRE(e.store.findMessage(c, ts)->isBroadcast());
+
+    // "Remove reply from channel": conversations.replies still has the reply,
+    // now without the thread_broadcast subtype and with its full content.
+    script("conversations.replies", R"([
+      {"ok": true, "has_more": false, "messages": [
+        {"type": "message", "ts": "1700000100.000100", "thread_ts": "1700000100.000100",
+         "user": "UMIRA", "text": "original topic", "reply_count": 1,
+         "latest_reply": "1700000300.000300"},
+        {"type": "message", "ts": "1700000300.000300", "thread_ts": "1700000100.000100",
+         "user": "UMIRA", "text": "broadcast reply edited",
+         "files": [{"id": "F1", "name": "report.pdf", "mimetype": "application/pdf",
+                    "url_private": "https://files/report.pdf"}]}]}
+    ])");
+    bool called = false, ok = false;
+    e.be->loadThread(c, root, [&](bool o, const std::string &) {
+        called = true;
+        ok     = o;
+    });
+    REQUIRE(pumpUntil([&] { return called; }) && ok);
+
+    const model::Message *m = e.store.findMessage(c, ts);
+    REQUIRE(m != nullptr);
+    CHECK(!m->isBroadcast());
+    CHECK(m->threadTs == root);
+    CHECK_STR(m->text, "broadcast reply edited");
+    REQUIRE(m->files().size() == 1);
+    CHECK_STR(m->files()[0].name, "report.pdf");
+    CHECK(e.store.indexOf(c, ts) == SIZE_MAX);
+    REQUIRE(e.store.replies(c, root));
+    CHECK(e.store.replies(c, root)->size() == 1);
+    CHECK(e.store.conversation(c).messages.size() == 1);
+    CHECK(e.store.findMessage(c, root)->replyCount == 1);
+    CHECK(e.store.findMessage(c, root)->latestReply == ts);
+}
+
+TEST("slack read: a broadcast removed from history returns to its thread") {
+    if (!haveServer())
+        return;
+    Env e;
+    const Ts root = model::parseTs("1700000100.000000");
+    const Ts ts   = model::parseTs("1700000300.000000");
+    set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
+              {"type": "message", "ts": "1700000300.000000", "thread_ts": "1700000100.000000",
+               "subtype": "thread_broadcast", "user": "UMIRA", "text": "broadcast reply",
+               "root": {"type": "message", "ts": "1700000100.000000", "user": "UJONAS",
+                        "text": "topic"}},
+              {"type": "message", "ts": "1700000100.000000", "thread_ts": "1700000100.000000",
+               "user": "UJONAS", "text": "topic", "reply_count": 1,
+               "latest_reply": "1700000300.000000"}]}})");
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(e.history(c, 0));
+    REQUIRE(e.store.findMessage(c, ts) && e.store.findMessage(c, ts)->isBroadcast());
+
+    // The channel no longer lists it, but the thread still has the reply.
+    set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
+              {"type": "message", "ts": "1700000100.000000", "thread_ts": "1700000100.000000",
+               "user": "UJONAS", "text": "topic", "reply_count": 1,
+               "latest_reply": "1700000300.000000"}]}})");
+    script("conversations.replies", R"([
+      {"ok": true, "has_more": false, "messages": [
+        {"type": "message", "ts": "1700000100.000000", "thread_ts": "1700000100.000000",
+         "user": "UJONAS", "text": "topic", "reply_count": 1,
+         "latest_reply": "1700000300.000000"},
+        {"type": "message", "ts": "1700000300.000000", "thread_ts": "1700000100.000000",
+         "user": "UMIRA", "text": "broadcast reply, still in the thread",
+         "files": [{"id": "F1", "name": "report.pdf", "mimetype": "application/pdf",
+                    "url_private": "https://files/report.pdf"}]}]}
+    ])");
+    e.be->setActiveConversation(c, 0);
+    REQUIRE(pumpUntil(
+        [&] {
+            const model::Message *m = e.store.findMessage(c, ts);
+            return m && !m->isBroadcast() && e.store.indexOf(c, ts) == SIZE_MAX;
+        },
+        3000
+    ));
+    const model::Message *m = e.store.findMessage(c, ts);
+    CHECK_STR(m->text, "broadcast reply, still in the thread");
+    REQUIRE(m->files().size() == 1);
+    CHECK(e.store.replies(c, root) && e.store.replies(c, root)->size() == 1);
+    CHECK(e.store.conversation(c).messages.size() == 1);
+    CHECK(e.store.findMessage(c, root)->replyCount == 1);
+}
+
 TEST("slack read: hidden, the open chat polls slowly, client.counts brings it forward") {
     if (!haveServer())
         return;

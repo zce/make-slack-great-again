@@ -323,6 +323,11 @@ struct SlackBackend::Read {
     // ── History and threads ─────────────────────────────────────────────────
     std::vector<model::Message> mapPage(ConvRef c, const json::Value &arr, bool topLevel);
     void                        loadThreadPages(ConvRef c, Ts root, bool live, Backend::Done done);
+    // A broadcast gone from the channel may have been unbroadcast (its thread
+    // reply still exists) or deleted. conversations.replies is the authority;
+    // read it before removing the logical message.
+    void reconcileMissingBroadcasts(ConvRef c, const std::vector<Ts> &missing);
+    std::unordered_set<std::string> broadcastReconciling;
     // The open thread whose root the head page no longer carries: its root
     // alone (limit 1) tells whether latest_reply moved.
     void                        checkThreadTip(ConvRef c, Ts root);
@@ -2456,12 +2461,30 @@ void SlackBackend::Read::loadThreadPages(ConvRef c, Ts root, bool live, Backend:
                         inject(c, acc->replies[i].clone(), acc->parentIsMe[i]);
             }
             if (!acc->replies.empty())
-                s.addPage(c, std::move(acc->replies));
+                s.addPage(c, std::move(acc->replies), true);
             if (done)
                 done(true, {});
         },
         kMaxThreadPages
     );
+}
+
+void SlackBackend::Read::reconcileMissingBroadcasts(ConvRef c, const std::vector<Ts> &missing) {
+    for (Ts ts : missing) {
+        const model::Message *m = s.findMessage(c, ts);
+        if (!m || !m->isBroadcast()) {
+            s.removeMessage(c, ts);
+            continue;
+        }
+        const std::string key = threadKey(c, m->threadTs);
+        if (!broadcastReconciling.insert(key).second)
+            continue;
+        // A history page cannot say whether the channel copy was removed or
+        // the whole reply was deleted. The complete thread answer can.
+        loadThreadPages(c, m->threadTs, false, [this, key](bool, const std::string &) {
+            broadcastReconciling.erase(key);
+        });
+    }
 }
 
 void SlackBackend::setActiveConversation(ConvRef conv, Ts thread) {
@@ -2656,8 +2679,8 @@ void SlackBackend::Read::refreshCachedHead(ConvRef c, Ts cachedNewest) {
                 if (m.ts >= lo || !more || cut)
                     gone.push_back(m.ts);
             }
-            for (Ts ts : gone)
-                s.removeMessage(c, ts);
+            if (!gone.empty())
+                reconcileMissingBroadcasts(c, gone);
             resolveAuthors(page);
             if (!page.empty()) {
                 Ts &base = baselineOf(c);
@@ -2971,8 +2994,8 @@ void SlackBackend::Read::pollConversation(ConvRef c, bool foreground, Ts hint) {
                 if (at == page.end() || at->ts != m.ts)
                     gone.push_back(m.ts);
             }
-            for (Ts ts : gone)
-                s.removeMessage(c, ts);
+            if (!gone.empty())
+                reconcileMissingBroadcasts(c, gone);
             // An open thread: its root's latest_reply moving is the cue to
             // re-read the replies. A root off the page is asked for alone.
             if (openThread) {

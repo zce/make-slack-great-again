@@ -190,7 +190,11 @@ public:
     // replaced (Update); older ones Prepend, newer ones Append, others
     // Insert. Does not touch unread counts or roots' reply counters — a page
     // is what the server already counted.
-    void addPage(ConvRef c, std::vector<Message> page);
+    // threadReplies: the page is a complete conversations.replies answer, so
+    // a reply without thread_broadcast no longer is a broadcast (its channel
+    // visibility was removed). History pages instead treat a missing subtype
+    // as incomplete metadata and keep the known broadcast identity.
+    void addPage(ConvRef c, std::vector<Message> page, bool threadReplies = false);
     // One live message (a send, a push event). A top-level message bumps
     // `latest` and, when it's someone else's and after lastRead, the unread
     // (and mention) count; a reply updates its root's replyCount,

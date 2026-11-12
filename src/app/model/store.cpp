@@ -121,6 +121,39 @@ void Message::preserveBroadcastContext(const Message &old) {
             x.threadParentUser = old.extra->threadParentUser;
     }
 }
+void Message::mergeBroadcastReference(const Message &complete) {
+    if (!threadTs)
+        threadTs = complete.threadTs;
+    if (reactions.empty())
+        reactions = complete.reactions;
+    if (!complete.extra)
+        return;
+    MessageExtras       &x = extras();
+    const MessageExtras &c = *complete.extra;
+    if (x.files.empty())
+        x.files = c.files;
+    if (x.attachments.empty())
+        x.attachments = c.attachments;
+    if (x.buttons.empty())
+        x.buttons = c.buttons;
+    if (x.blocks.empty())
+        x.blocks = c.blocks;
+    if (x.botName.empty())
+        x.botName = c.botName;
+    if (x.botAvatar.empty())
+        x.botAvatar = c.botAvatar;
+    if (x.botId.empty())
+        x.botId = c.botId;
+    if (x.huddle.attendees.empty())
+        x.huddle = c.huddle;
+    if (x.threadParentText.empty())
+        x.threadParentText = c.threadParentText;
+    if (x.threadParentUser == kNoUser)
+        x.threadParentUser = c.threadParentUser;
+    if (x.sendBlocks.empty())
+        x.sendBlocks = c.sendBlocks;
+    x.sendBroadcast = x.sendBroadcast || c.sendBroadcast;
+}
 const std::vector<File> &Message::files() const {
     return (extra ? *extra : kNoExtras).files;
 }
@@ -658,6 +691,20 @@ static RemovedCopies removeOtherCopies(Conversation &c, Ts ts, Ts keepThread) {
     return out;
 }
 
+struct MessageLocation {
+    Ts   thread = 0;
+    bool found  = false;
+};
+
+static MessageLocation locateMessage(Conversation &c, Ts ts) {
+    if (auto it = lowerByTs(c.messages, ts); it != c.messages.end() && it->ts == ts)
+        return {0, true};
+    for (Thread &t : c.threads)
+        if (auto it = lowerByTs(t.replies, ts); it != t.replies.end() && it->ts == ts)
+            return {t.root, true};
+    return {};
+}
+
 Message *Store::findMessage(ConvRef ref, Ts ts) {
     if (ref >= _convs.size())
         return nullptr;
@@ -749,7 +796,7 @@ size_t Store::indexOf(ConvRef ref, Ts ts, Ts thread) const {
     return (it != list->end() && it->ts == ts) ? size_t(it - list->begin()) : SIZE_MAX;
 }
 
-void Store::addPage(ConvRef ref, std::vector<Message> page) {
+void Store::addPage(ConvRef ref, std::vector<Message> page, bool threadReplies) {
     if (ref >= _convs.size() || page.empty())
         return;
     // A page after restart may confirm a previously unacknowledged local
@@ -774,12 +821,19 @@ void Store::addPage(ConvRef ref, std::vector<Message> page) {
             removeMessage(ref, matched);
     }
     Conversation &c = _convs[ref];
-    // A refetch may omit the subtype that made a reply a broadcast. Keep the
-    // broadcast identity and local state already held for this timestamp.
+    // A history refetch may omit the subtype that made a reply a broadcast;
+    // it still lists the row, so keep the identity already known. A complete
+    // thread page is authoritative: there a missing subtype means the channel
+    // visibility was removed (the reply itself is still in the thread).
     for (Message &m : page) {
         if (const Message *old = findMessage(ref, m.ts)) {
             m.saved = old->saved;
-            m.preserveBroadcastContext(*old);
+            if (threadReplies)
+                continue;
+            if (m.isBroadcast())
+                m.mergeBroadcastReference(*old);
+            else
+                m.preserveBroadcastContext(*old);
         }
     }
     // A page is not necessarily one list: conversations.history returns
@@ -807,8 +861,12 @@ void Store::addPage(ConvRef ref, std::vector<Message> page) {
         const Ts thread = group.thread;
         auto    &list   = *listFor(c, thread, true);
         // Move every reply to its canonical list before comparing contents.
-        for (Message &m : group.messages)
-            removeOtherCopies(c, m.ts, thread);
+        std::vector<Ts> removedChannel;
+        for (Message &m : group.messages) {
+            const RemovedCopies removed = removeOtherCopies(c, m.ts, thread);
+            if (removed.channel)
+                removedChannel.push_back(m.ts);
+        }
         sortByTs(group.messages);
 
         std::vector<Ts>                updated, inserted;
@@ -822,7 +880,6 @@ void Store::addPage(ConvRef ref, std::vector<Message> page) {
                 if (auto it = lowerByTs(list, m.ts); it != list.end() && it->ts == m.ts) {
                     // A refetched page is mostly what we hold: only a real change
                     // is an Update (each one re-lays the list out and is saved).
-                    m.preserveBroadcastContext(*it);
                     if (*it == m)
                         continue;
                     const bool broadcast = m.isBroadcast();
@@ -891,6 +948,13 @@ void Store::addPage(ConvRef ref, std::vector<Message> page) {
                 emit({ChangeKind::Update, ref, root, ts});
             for (const auto &[root, ts] : broadcastInserted)
                 emit({ChangeKind::Insert, ref, root, ts});
+        }
+        if (!removedChannel.empty()) {
+            // The reply was unbroadcast, not deleted: it is in its thread now.
+            recountUnread(c);
+            for (Ts ts : removedChannel)
+                emit({ChangeKind::Remove, ref, 0, ts});
+            emit({ChangeKind::Meta, ref});
         }
     }
     // Retention is coordinated across all workspace Stores by Shell.
@@ -1083,9 +1147,13 @@ void Store::addMessage(ConvRef ref, Message m) {
         oldWasReply  = existing->isReply();
         oldInChannel = indexOf(ref, ts) != SIZE_MAX;
         m.saved      = m.saved || existing->saved;
-        // A refetch or event that omits thread_broadcast keeps the identity
-        // already known for this logical message.
-        m.preserveBroadcastContext(*existing);
+        // A broadcast event is a reference to the thread reply, not a full
+        // second copy: keep the rich parts it cannot carry. Any other payload
+        // only keeps a broadcast identity Slack omitted from the update.
+        if (m.isBroadcast())
+            m.mergeBroadcastReference(*existing);
+        else
+            m.preserveBroadcastContext(*existing);
     }
     const Ts   replyThread = m.isReply() ? m.threadTs : 0;
     const bool broadcast   = m.isBroadcast();
@@ -1198,18 +1266,84 @@ void Store::addMessage(ConvRef ref, Message m) {
 }
 
 bool Store::updateMessage(ConvRef ref, Ts ts, const std::function<void(Message &)> &fn) {
+    if (ref >= _convs.size())
+        return false;
     Message *m = findMessage(ref, ts);
     if (!m)
         return false;
+    Conversation         &c         = _convs[ref];
+    const bool            wasReply  = m->isReply();
+    const MessageLocation oldLoc    = locateMessage(c, ts);
     fn(*m);
-    Conversation       &c         = _convs[ref];
-    const bool          broadcast = m->isBroadcast();
-    const Ts            thread    = m->isReply() && !broadcast ? m->threadTs : 0;
-    const RemovedCopies removed   = removeOtherCopies(c, ts, thread);
-    emit({ChangeKind::Update, ref, thread, ts});
-    if (broadcast)
-        emit({ChangeKind::Update, ref, m->threadTs, ts});
-    if (removed.channel) {
+    const bool broadcast = m->isBroadcast();
+    const Ts   thread    = m->isReply() && !broadcast ? m->threadTs : 0;
+    if (oldLoc.thread == thread) {
+        const RemovedCopies removed = removeOtherCopies(c, ts, thread);
+        emit({ChangeKind::Update, ref, thread, ts});
+        if (broadcast)
+            emit({ChangeKind::Update, ref, m->threadTs, ts});
+        if (removed.channel) {
+            recountUnread(c);
+            emit({ChangeKind::Remove, ref, 0, ts});
+            emit({ChangeKind::Meta, ref});
+        }
+        return true;
+    }
+    // The payload changed which list owns this logical message: a broadcast
+    // becoming a thread reply (or the reverse). Move it, don't copy it.
+    Message updated = std::move(*m);
+    if (oldLoc.thread)
+        eraseByTs(*listFor(c, oldLoc.thread, false), ts);
+    else
+        eraseByTs(c.messages, ts);
+    removeOtherCopies(c, ts, thread);
+    auto &target = *listFor(c, thread, true);
+    eraseByTs(target, ts); // an old copy in the target list loses to this update
+    const bool atEnd = target.empty() || ts > target.back().ts;
+    if (thread) {
+        if (Message *root = findMessage(ref, thread)) {
+            if (!wasReply)
+                ++root->replyCount;
+            root->latestReply = std::max(root->latestReply, ts);
+            if (updated.user != kNoUser && root->replyUsers.size() < 5 &&
+                std::find(root->replyUsers.begin(), root->replyUsers.end(), updated.user) ==
+                    root->replyUsers.end())
+                root->replyUsers.push_back(updated.user);
+            emit({ChangeKind::Update, ref, 0, thread});
+        }
+        target.insert(lowerByTs(target, ts), std::move(updated));
+        emit({ChangeKind::Update, ref, thread, ts});
+    } else {
+        const bool unread  = updated.user != me && ts > c.lastRead;
+        const bool mention = unread && mentions(updated);
+        target.insert(lowerByTs(target, ts), std::move(updated));
+        c.latest = std::max(c.latest, ts);
+        if (unread) {
+            ++c.unread;
+            if (mention)
+                ++c.mentions;
+        }
+        if (wasReply && oldLoc.thread)
+            emit({ChangeKind::Update, ref, oldLoc.thread, ts});
+        emit(
+            {atEnd ? ChangeKind::Append : ChangeKind::Insert,
+             ref,
+             0,
+             atEnd ? 0 : ts,
+             atEnd ? 1u : 0u,
+             false}
+        );
+        emit({ChangeKind::Meta, ref});
+    }
+    if (oldLoc.thread) {
+        if (Message *oldRoot = findMessage(ref, oldLoc.thread)) {
+            const auto timeline = threadTimeline(ref, oldLoc.thread);
+            oldRoot->latestReply = timeline.empty() ? 0 : timeline.back()->ts;
+            emit({ChangeKind::Update, ref, 0, oldLoc.thread});
+        }
+    }
+    if (oldLoc.thread == 0) {
+        // A broadcast lost its channel row but is still the same thread reply.
         recountUnread(c);
         emit({ChangeKind::Remove, ref, 0, ts});
         emit({ChangeKind::Meta, ref});

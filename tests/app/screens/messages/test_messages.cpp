@@ -1704,6 +1704,112 @@ TEST("broadcast: channel rows keep their thread context and view the parent thre
     CHECK(e.store.replies(c, liveTs) == nullptr);
 }
 
+TEST("broadcast: parent edits and profile changes refresh the preview") {
+    Env      e(false);
+    const Ts root  = model::parseTs("1700000100.000000");
+    const Ts reply = model::parseTs("1700000300.000000");
+
+    model::Message rootMsg;
+    rootMsg.ts          = root;
+    rootMsg.user        = 1; // Mira
+    rootMsg.text        = "original topic";
+    rootMsg.replyCount  = 1;
+    rootMsg.latestReply = reply;
+    model::Message broadcast;
+    broadcast.ts                        = reply;
+    broadcast.threadTs                  = root;
+    broadcast.user                      = 0; // me
+    broadcast.text                      = "broadcast reply";
+    broadcast.extras().subtype          = "thread_broadcast";
+    broadcast.extras().threadParentText = "original topic";
+    broadcast.extras().threadParentUser = 1;
+
+    std::vector<model::Message> msgs;
+    msgs.push_back(std::move(rootMsg));
+    msgs.push_back(std::move(broadcast));
+    const ConvRef c = addConv(e.store, std::move(msgs));
+    e.list->showConversation(c);
+    pump(10);
+    REQUIRE(e.row(reply));
+
+    const auto contextText = [&] {
+        std::string                     text;
+        std::function<void(ui::View *)> collect = [&](ui::View *v) {
+            if (!v->accessibleName().empty())
+                text += v->accessibleName() + "\n";
+            for (size_t i = 0; i < v->childCount(); ++i)
+                collect(v->child(i));
+        };
+        ui::View *context = findByTooltip(e.row(reply), "View thread");
+        CHECK(context != nullptr);
+        if (!context)
+            return text;
+        collect(context);
+        return text;
+    };
+    CHECK(contextText().find("original topic") != std::string::npos);
+
+    // The root is edited: the dependent channel row must show the new text
+    // without rebuilding the whole list or navigating away.
+    e.store.updateMessage(c, root, [](model::Message &m) { m.text = "updated topic"; });
+    pump(6);
+    std::string text = contextText();
+    CHECK(text.find("updated topic") != std::string::npos);
+    CHECK(text.find("original topic") == std::string::npos);
+    CHECK_STR(e.store.findMessage(c, reply)->text, "broadcast reply");
+
+    // A profile change on the parent author redraws the preview's name too.
+    e.store.user(1).displayName = "Mira Renamed";
+    e.store.usersChanged(1);
+    pump(20);
+    text = contextText();
+    CHECK(text.find("Mira Renamed: updated topic") != std::string::npos);
+    CHECK_STR(e.store.findMessage(c, reply)->text, "broadcast reply");
+}
+
+TEST("broadcast: a missing parent's fallback preview follows its author") {
+    Env      e(false);
+    const Ts root  = model::parseTs("1700000100.000000");
+    const Ts reply = model::parseTs("1700000300.000000");
+    model::Message broadcast;
+    broadcast.ts                        = reply;
+    broadcast.threadTs                  = root;
+    broadcast.user                      = 0; // me, not the parent author
+    broadcast.text                      = "broadcast reply";
+    broadcast.extras().subtype          = "thread_broadcast";
+    broadcast.extras().threadParentText = "fallback topic";
+    broadcast.extras().threadParentUser = 1; // Mira
+
+    std::vector<model::Message> msgs;
+    msgs.push_back(std::move(broadcast));
+    const ConvRef c = addConv(e.store, std::move(msgs));
+    e.list->showConversation(c);
+    pump(10);
+    REQUIRE(e.row(reply));
+
+    const auto contextText = [&] {
+        std::string                     text;
+        std::function<void(ui::View *)> collect = [&](ui::View *v) {
+            if (!v->accessibleName().empty())
+                text += v->accessibleName() + "\n";
+            for (size_t i = 0; i < v->childCount(); ++i)
+                collect(v->child(i));
+        };
+        ui::View *context = findByTooltip(e.row(reply), "View thread");
+        CHECK(context != nullptr);
+        if (!context)
+            return text;
+        collect(context);
+        return text;
+    };
+    CHECK(contextText().find("Mira: fallback topic") != std::string::npos);
+
+    e.store.user(1).displayName = "Mira Renamed";
+    e.store.usersChanged(1);
+    pump(20);
+    CHECK(contextText().find("Mira Renamed: fallback topic") != std::string::npos);
+}
+
 TEST("actions: Save for later and Remind me need messageReminders (session tokens)") {
     // An OAuth workspace has no saved.* — no items, no toolbar Save.
     Env           e(true);
