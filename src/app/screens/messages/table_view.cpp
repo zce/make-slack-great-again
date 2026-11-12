@@ -105,6 +105,26 @@ void TableGrid::setSelection(uint32_t from, uint32_t to) {
     _selTo   = std::min(to, _textSize);
 }
 
+bool TableGrid::selectionContains(ui::PointF p) const {
+    if (_selFrom == _selTo || p.y < 0 || p.y >= _tableH || p.x < 0 || p.x >= _tableW ||
+        _rowH.empty())
+        return false;
+    const size_t r = rowIndexAt(p.y);
+    if (_texts[r].empty())
+        return false;
+    float          x    = 0;
+    const size_t   c    = colAt(r, p.x, &x);
+    const uint32_t base = _base[r][c], size = uint32_t(_texts[r][c].text.size());
+    const uint32_t from = std::max(_selFrom, base), to = std::min(_selTo, base + size);
+    if (to <= from)
+        return false;
+    const ui::PointF origin{x + kPadX, rowTop(r) + kPadY};
+    for (const gfx::RectF &rect : cell(r, c).selectionRects(from - base, to - base))
+        if (ui::RectF{rect.x + origin.x, rect.y + origin.y, rect.w, rect.h}.contains(p))
+            return true;
+    return false;
+}
+
 size_t TableGrid::rowIndexAt(float y) const {
     float top = 0;
     for (size_t r = 0; r + 1 < _rowH.size(); ++r) {
@@ -384,6 +404,10 @@ void TableView::selectText(uint32_t from, uint32_t to) {
     update();
 }
 
+bool TableView::selectionContains(ui::PointF local) const {
+    return _grid.selectionContains({local.x, local.y - kMarginV});
+}
+
 uint32_t TableView::textOffsetAt(ui::PointF local) const {
     return _grid.offsetAt({local.x, local.y - kMarginV});
 }
@@ -488,6 +512,8 @@ bool TableView::onEvent(ui::Event &e) {
         return true;
     }
     case ui::EventType::ContextMenu: {
+        if (selectionContains(e.pos))
+            return false;
         // Only from a right click (raw set), as RichLabel's.
         const uint32_t id = e.raw ? linkAt(e.pos) : 0;
         return id && id <= _targets.size() && window() &&

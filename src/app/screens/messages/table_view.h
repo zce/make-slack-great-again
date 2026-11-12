@@ -60,6 +60,7 @@ public:
     // The cells' text as one string (tableText): a highlighted range of it,
     // and hit tests (after fit; y from the table's top).
     void     setSelection(uint32_t from, uint32_t to);
+    bool     selectionContains(ui::PointF local) const;
     uint32_t textSize() const { return _textSize; }
     uint32_t offsetAt(ui::PointF p) const;
     void     wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const;
@@ -104,6 +105,7 @@ public:
     ui::View &textView() override { return *this; }
     uint32_t  textSize() const override { return _textSize; }
     void      selectText(uint32_t from, uint32_t to) override;
+    bool      selectionContains(ui::PointF local) const override;
     uint32_t  textOffsetAt(ui::PointF local) const override;
     void      wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const override;
     void      lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const override;

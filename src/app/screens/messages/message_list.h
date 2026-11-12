@@ -198,10 +198,11 @@ public:
         kDeleteFile, // "Delete image…" / "Delete file…"
         kRetryFailed = 50,
         kRecoverOutgoing,
+        kCopySelection,
         kRemindPreset = 40, // + 0…4: in 20 minutes … next week
         kRemindCustom = 45,
     };
-    std::vector<ui::MenuItem>        menuItems(Ts ts) const;
+    std::vector<ui::MenuItem>        menuItems(Ts ts, ui::PointF windowPos = {}) const;
     std::vector<ui::MenuItem>        fileMenuItems(Ts ts, const std::string &path) const;
     static std::vector<ui::MenuItem> remindItems();
     static std::vector<ui::MenuItem> linkMenuItems();
@@ -299,6 +300,7 @@ private:
     void        resetRows();                   // reset, new epoch
     void        loadInline(Ts root);
     void        copySelection();
+    bool        selectionAt(Ts ts, ui::PointF windowPos) const;
     // A drag's end: the nearest message text to a window point (a header,
     // a gap, a picture or past the list's edge too).
     TextPos     dragPosAt(ui::PointF windowPos) const;

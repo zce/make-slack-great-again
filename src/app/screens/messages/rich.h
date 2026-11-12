@@ -30,6 +30,8 @@ public:
     virtual uint32_t    textSize() const                       = 0;
     // The highlighted range (from == to: none).
     virtual void        selectText(uint32_t from, uint32_t to) = 0;
+    // Whether a point lies in the painted highlight (textView coordinates).
+    virtual bool        selectionContains(ui::PointF local) const = 0;
     // The offset nearest to a point in textView()'s coordinates.
     virtual uint32_t    textOffsetAt(ui::PointF local) const   = 0;
     // Double click: the word around an offset; triple click: the line
@@ -123,6 +125,7 @@ public:
     ui::View   &textView() override { return *this; }
     uint32_t    textSize() const override { return uint32_t(text().size()); }
     void        selectText(uint32_t from, uint32_t to) override { setSelection(from, to); }
+    bool        selectionContains(ui::PointF local) const override;
     uint32_t    textOffsetAt(ui::PointF local) const override { return offsetAt(local); }
     void        wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const override;
     void        lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const override;
