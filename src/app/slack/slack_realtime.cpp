@@ -46,6 +46,7 @@ constexpr int     kPresenceRefreshMs     = 2'000; // Slack registers the socket 
 constexpr int     kTypingExpiryMs        = 6'000; // RTM resends while someone is still typing
 constexpr int     kUsergroupsDebounceMs  = 2'000;
 constexpr int     kUnreadPatchMs         = 300;
+constexpr int     kDeletedBroadcastTries = 3;
 
 // oauth.v2.access answers worth trying again later.
 bool transientRefreshError(const json::Document &doc, const std::string &e) {
@@ -94,6 +95,10 @@ struct SlackBackend::Live {
     void onPayload(const json::Value &payload);
     void apply(const json::Value &ev, bool ours);
     void onMessage(const json::Value &ev, bool ours);
+    // A deleted broadcast may have been unbroadcast or deleted: the complete
+    // thread answer says which. Retry a failed read a bounded number of times.
+    void reconcileDeletedBroadcast(ConvRef c, Ts ts, Ts root, int attempt);
+    std::unordered_set<std::string> reconcilingDeletes;
     bool patchUsergroup(std::string_view type, const json::Value &ev);
     void fetchUnknown(const std::string &id, model::Message m, bool parentIsMe);
     void fetchJoined(const std::string &id);
@@ -436,12 +441,27 @@ void SlackBackend::Live::onMessage(const json::Value &ev, bool ours) {
     if (sub == "message_deleted") {
         if (c == kNoConv)
             return;
-        const Ts ts = model::parseTs(ev["deleted_ts"].str());
+        const Ts          ts   = model::parseTs(ev["deleted_ts"].str());
+        const json::Value prev = ev["previous_message"];
+        // "Remove reply from channel" and chat.delete both look like a
+        // deleted message here. A held broadcast may still be alive in its
+        // thread; the complete thread answer settles both cases.
+        const model::Message *held = s.findMessage(c, ts);
+        if (held && held->isBroadcast()) {
+            const std::string key = str::concat({std::to_string(c), ":", std::to_string(ts)});
+            if (!reconcilingDeletes.insert(key).second)
+                return;
+            reconcileDeletedBroadcast(c, ts, held->threadTs, 0);
+            return;
+        }
+        // A redelivered broadcast deletion after the same event moved the
+        // reply into its thread: the channel copy is already gone.
+        if (held && held->isReply() && prev["subtype"].str() == "thread_broadcast")
+            return;
         if (s.removeMessage(c, ts))
             return; // a removed reply decrements its root itself
         // A reply we never loaded only counted on its root.
-        const json::Value prev = ev["previous_message"];
-        const Ts          root = model::parseTs(prev["thread_ts"].str());
+        const Ts root = model::parseTs(prev["thread_ts"].str());
         if (root && root != ts)
             s.updateMessage(c, root, [](model::Message &r) {
                 if (r.replyCount)
@@ -467,10 +487,19 @@ void SlackBackend::Live::onMessage(const json::Value &ev, bool ours) {
         model::Message m = mapjson::toMessage(sub == "message_replied" ? ev["message"] : ev, s);
         if (!m.ts)
             return;
-        s.updateMessage(c, m.ts, [&m](model::Message &x) {
+        // A thread_broadcast payload is Slack's reference form even when it
+        // carries a new edited.ts: it may still omit attachments and buttons.
+        // Merge its newer values with the complete reply; a complete
+        // conversations.replies page remains the authority that can remove
+        // content. Ordinary messages keep their replacement semantics.
+        const bool reference = m.isBroadcast();
+        s.updateMessage(c, m.ts, [&m, reference](model::Message &x) {
             const Ts   thread = x.threadTs;
             const bool saved = x.saved, pending = x.pending;
-            m.preserveBroadcastContext(x);
+            if (reference)
+                m.mergeBroadcastReference(x);
+            else
+                m.preserveBroadcastContext(x);
             x          = std::move(m);
             x.threadTs = thread;
             x.saved    = saved;
@@ -497,6 +526,19 @@ void SlackBackend::Live::onMessage(const json::Value &ev, bool ours) {
     // The same message can come twice (the send's own answer, a redelivered
     // envelope): deliver() drops what is there already.
     b.deliver(c, std::move(m), parentIsMe);
+}
+
+void SlackBackend::Live::reconcileDeletedBroadcast(ConvRef c, Ts ts, Ts root, int attempt) {
+    b.loadThread(c, root, [this, c, ts, root, attempt](bool ok, const std::string &) {
+        const std::string key = str::concat({std::to_string(c), ":", std::to_string(ts)});
+        if (ok || c >= s.conversationCount() || attempt + 1 >= kDeletedBroadcastTries) {
+            reconcilingDeletes.erase(key);
+            return;
+        }
+        later(1000 << attempt, [this, c, ts, root, attempt] {
+            reconcileDeletedBroadcast(c, ts, root, attempt + 1);
+        });
+    });
 }
 
 void SlackBackend::Live::fetchUnknown(const std::string &id, model::Message m, bool parentIsMe) {

@@ -247,6 +247,10 @@ struct Message {
     // A refetch or message_changed event may omit the subtype/root Slack sent
     // with the original thread_broadcast: keep that identity and preview.
     void                           preserveBroadcastContext(const Message &old);
+    // A thread_broadcast reference cannot carry all of the reply's content
+    // (Slack documents no attachments or buttons). Keep the complete copy's
+    // parts the reference omitted.
+    void                           mergeBroadcastReference(const Message &complete);
     MessageExtras                 &extras();         // creates on first use
     const std::string             &subtype() const;
     const std::vector<File>       &files() const;

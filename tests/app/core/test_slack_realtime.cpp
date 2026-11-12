@@ -298,6 +298,301 @@ TEST("slack realtime: a loaded thread reply becomes a broadcast when its event a
     CHECK(e.store.conversation(c).unread == 1);
 }
 
+TEST("slack realtime: a partial broadcast update keeps the complete reply's content") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef c    = e.conv("C1");
+    const Ts      root = model::parseTs("1800000000.000050");
+    const Ts      ts   = model::parseTs("1800000000.000300");
+    const auto    mira = e.store.findUser("UMIRA");
+
+    model::Message rootMsg;
+    rootMsg.ts          = root;
+    rootMsg.threadTs    = root;
+    rootMsg.user        = mira;
+    rootMsg.text        = "root";
+    rootMsg.latestReply = ts;
+    std::vector<model::Message> history;
+    history.push_back(std::move(rootMsg));
+    e.store.addPage(c, std::move(history));
+
+    model::Message reply;
+    reply.ts          = ts;
+    reply.threadTs    = root;
+    reply.user        = mira;
+    reply.text        = "reply";
+    reply.saved       = true;
+    reply.reactions.push_back(model::Reaction{"tada", 1, {e.store.me}});
+    model::File file;
+    file.id   = "F1";
+    file.name = "report.pdf";
+    reply.extras().files.push_back(file);
+    model::Attachment card;
+    card.title = "deployment";
+    reply.extras().attachments.push_back(card);
+    model::Button button;
+    button.id    = "approve";
+    button.label = "Approve";
+    reply.extras().buttons.push_back(button);
+    model::Block block;
+    block.kind = model::Block::Kind::Header;
+    block.text = "Deployment";
+    reply.extras().blocks.push_back(block);
+    std::vector<model::Message> thread;
+    thread.push_back(std::move(reply));
+    e.store.addPage(c, std::move(thread));
+    e.store.updateMessage(c, root, [](model::Message &r) { r.replyCount = 1; });
+
+    // Broadcast the complete reply into the channel.
+    model::Message broadcast;
+    broadcast.ts       = ts;
+    broadcast.threadTs = root;
+    broadcast.user     = mira;
+    broadcast.text     = "reply";
+    broadcast.saved    = true;
+    broadcast.reactions.push_back(model::Reaction{"tada", 1, {e.store.me}});
+    broadcast.extras().files.push_back(file);
+    broadcast.extras().attachments.push_back(card);
+    broadcast.extras().buttons.push_back(button);
+    broadcast.extras().blocks.push_back(block);
+    broadcast.extras().subtype = "thread_broadcast";
+    e.store.addMessage(c, std::move(broadcast));
+    REQUIRE(e.store.findMessage(c, ts)->isBroadcast());
+
+    // Even with a new edited.ts, the broadcast payload is still a reference.
+    REQUIRE(push(envelope(
+        "env-partial-broadcast",
+        R"({"type":"message","subtype":"message_changed","channel":"C1","message":{)"
+        R"("type":"message","subtype":"thread_broadcast","user":"UMIRA","text":"reply edited",)"
+        R"("ts":"1800000000.000300","thread_ts":"1800000000.000050",)"
+        R"("edited":{"user":"UMIRA","ts":"1800000001.000000"},)"
+        R"("root":{"type":"message","ts":"1800000000.000050","user":"UMIRA","text":"root"}},)"
+        R"("previous_message":{"type":"message","ts":"1800000000.000300","user":"UMIRA",)"
+        R"("text":"reply","thread_ts":"1800000000.000050"}})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] { return e.store.findMessage(c, ts)->text == "reply edited"; }
+    ));
+    const model::Message *m = e.store.findMessage(c, ts);
+    CHECK(m->isBroadcast() && m->threadTs == root);
+    CHECK(m->edited);
+    CHECK(m->saved);
+    REQUIRE(m->files().size() == 1);
+    CHECK_STR(m->files()[0].name, "report.pdf");
+    REQUIRE(m->attachments().size() == 1);
+    CHECK_STR(m->attachments()[0].title, "deployment");
+    REQUIRE(m->extra->buttons.size() == 1);
+    CHECK_STR(m->extra->buttons[0].id, "approve");
+    REQUIRE(m->extra->blocks.size() == 1);
+    CHECK_STR(m->extra->blocks[0].text, "Deployment");
+    REQUIRE(m->reactions.size() == 1);
+
+    // The complete thread answer is authoritative and removes the content.
+    script("conversations.replies", R"([
+      {"ok": true, "has_more": false, "messages": [
+        {"type": "message", "ts": "1800000000.000050", "thread_ts": "1800000000.000050",
+         "user": "UMIRA", "text": "root", "reply_count": 1,
+         "latest_reply": "1800000000.000300"},
+        {"type": "message", "ts": "1800000000.000300", "thread_ts": "1800000000.000050",
+         "subtype": "thread_broadcast", "user": "UMIRA", "text": "reply authoritative"}]}
+    ])");
+    bool called = false, ok = false;
+    e.be->loadThread(c, root, [&](bool o, const std::string &) {
+        called = true;
+        ok     = o;
+    });
+    REQUIRE(pumpUntil([&] { return called; }) && ok);
+    m = e.store.findMessage(c, ts);
+    REQUIRE(m != nullptr);
+    CHECK(m->isBroadcast() && m->threadTs == root);
+    CHECK_STR(m->text, "reply authoritative");
+    CHECK(m->saved);
+    CHECK(m->files().empty() && m->attachments().empty() && m->extra->buttons.empty() &&
+          m->extra->blocks.empty() && m->reactions.empty());
+    CHECK(e.store.findMessage(c, root)->replyCount == 1);
+}
+
+TEST("slack realtime: a deleted broadcast stays in its thread when the reply exists") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef c    = e.conv("C1");
+    const Ts      root = model::parseTs("1800000000.000050");
+    const Ts      ts   = model::parseTs("1800000000.000300");
+    const auto    mira = e.store.findUser("UMIRA");
+
+    model::Message rootMsg;
+    rootMsg.ts          = root;
+    rootMsg.threadTs    = root;
+    rootMsg.user        = mira;
+    rootMsg.text        = "root";
+    rootMsg.latestReply = ts;
+    std::vector<model::Message> history;
+    history.push_back(std::move(rootMsg));
+    e.store.addPage(c, std::move(history));
+    model::Message broadcast;
+    broadcast.ts               = ts;
+    broadcast.threadTs         = root;
+    broadcast.user             = mira;
+    broadcast.text             = "reply";
+    broadcast.extras().subtype = "thread_broadcast";
+    e.store.addMessage(c, std::move(broadcast));
+    REQUIRE(e.store.findMessage(c, ts)->isBroadcast());
+
+    // "Remove reply from channel" surfaced as a deletion, but the thread
+    // still has the reply (without the broadcast subtype).
+    script("conversations.replies", R"([
+      {"ok": true, "messages": [
+        {"type": "message", "ts": "1800000000.000300", "thread_ts": "1800000000.000050",
+         "user": "UMIRA", "text": "reply edited",
+         "files": [{"id": "F1", "name": "report.pdf", "mimetype": "application/pdf",
+                    "url_private": "https://files/report.pdf"}]}]}
+    ])");
+    REQUIRE(push(envelope(
+        "env-del-broadcast",
+        R"({"type":"message","subtype":"message_deleted","channel":"C1",)"
+        R"("deleted_ts":"1800000000.000300",)"
+        R"("previous_message":{"ts":"1800000000.000300","thread_ts":"1800000000.000050"}})"
+    )));
+    REQUIRE(pumpUntil([&] {
+        const model::Message *m = e.store.findMessage(c, ts);
+        return m && !m->isBroadcast() && e.store.indexOf(c, ts) == SIZE_MAX;
+    }));
+    const model::Message *m = e.store.findMessage(c, ts);
+    CHECK(m->threadTs == root);
+    CHECK_STR(m->text, "reply edited");
+    REQUIRE(m->files().size() == 1);
+    CHECK(e.store.replies(c, root) && e.store.replies(c, root)->size() == 1);
+    CHECK(e.store.findMessage(c, root)->replyCount == 1);
+    CHECK(e.store.conversation(c).messages.size() == 1);
+}
+
+TEST("slack realtime: a deleted broadcast is removed when the thread confirms deletion") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef c    = e.conv("C1");
+    const Ts      root = model::parseTs("1800000000.000050");
+    const Ts      ts   = model::parseTs("1800000000.000300");
+    const auto    mira = e.store.findUser("UMIRA");
+
+    model::Message rootMsg;
+    rootMsg.ts       = root;
+    rootMsg.threadTs = root;
+    rootMsg.user     = mira;
+    rootMsg.text     = "root";
+    std::vector<model::Message> history;
+    history.push_back(std::move(rootMsg));
+    e.store.addPage(c, std::move(history));
+    model::Message broadcast;
+    broadcast.ts               = ts;
+    broadcast.threadTs         = root;
+    broadcast.user             = mira;
+    broadcast.text             = "reply";
+    broadcast.extras().subtype = "thread_broadcast";
+    e.store.addMessage(c, std::move(broadcast));
+    e.store.markRead(c, ts);
+    REQUIRE(e.store.findMessage(c, ts)->isBroadcast());
+
+    // The complete thread no longer has the reply.
+    script("conversations.replies", R"([
+      {"ok": true, "has_more": false, "messages": [
+        {"type": "message", "ts": "1800000000.000050", "thread_ts": "1800000000.000050",
+         "user": "UMIRA", "text": "root", "reply_count": 0}]}
+    ])");
+    REQUIRE(push(envelope(
+        "env-del-broadcast-gone",
+        R"({"type":"message","subtype":"message_deleted","channel":"C1",)"
+        R"("deleted_ts":"1800000000.000300",)"
+        R"("previous_message":{"ts":"1800000000.000300","subtype":"thread_broadcast",)"
+        R"("thread_ts":"1800000000.000050"}})"
+    )));
+    REQUIRE(pumpUntil([&] { return e.store.findMessage(c, ts) == nullptr; }));
+    CHECK(e.store.conversation(c).messages.size() == 1);
+    CHECK(e.store.findMessage(c, root)->replyCount == 0);
+    CHECK(e.store.findMessage(c, root)->latestReply == 0);
+    CHECK(e.store.conversation(c).unread == 0);
+    CHECK(e.store.threadTimeline(c, root).empty());
+}
+
+TEST("slack realtime: a failed broadcast deletion check retries and settles once") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef c    = e.conv("C1");
+    const Ts      root = model::parseTs("1800000000.000050");
+    const Ts      ts   = model::parseTs("1800000000.000300");
+    const auto    mira = e.store.findUser("UMIRA");
+
+    model::Message rootMsg;
+    rootMsg.ts       = root;
+    rootMsg.threadTs = root;
+    rootMsg.user     = mira;
+    rootMsg.text     = "root";
+    std::vector<model::Message> history;
+    history.push_back(std::move(rootMsg));
+    e.store.addPage(c, std::move(history));
+    model::Message broadcast;
+    broadcast.ts               = ts;
+    broadcast.threadTs         = root;
+    broadcast.user             = mira;
+    broadcast.text             = "reply";
+    broadcast.extras().subtype = "thread_broadcast";
+    e.store.addMessage(c, std::move(broadcast));
+    e.store.markRead(c, ts);
+    REQUIRE(e.store.findMessage(c, ts)->isBroadcast());
+
+    // One unreadable answer, then the reply still exists in its thread.
+    script("conversations.replies", R"([
+      {"ok": false, "error": "lookup_failed"},
+      {"ok": true, "has_more": false, "messages": [
+        {"type": "message", "ts": "1800000000.000300", "thread_ts": "1800000000.000050",
+         "user": "UMIRA", "text": "reply still here"}]}
+    ])");
+    const int before = count("conversations.replies");
+    REQUIRE(push(envelope(
+        "env-del-broadcast-retry",
+        R"({"type":"message","subtype":"message_deleted","channel":"C1",)"
+        R"("deleted_ts":"1800000000.000300",)"
+        R"("previous_message":{"ts":"1800000000.000300","subtype":"thread_broadcast",)"
+        R"("thread_ts":"1800000000.000050"}})"
+    )));
+    REQUIRE(pumpUntil([&] {
+        const model::Message *m = e.store.findMessage(c, ts);
+        return m && !m->isBroadcast() && e.store.indexOf(c, ts) == SIZE_MAX;
+    }));
+    const model::Message *m = e.store.findMessage(c, ts);
+    CHECK_STR(m->text, "reply still here");
+    CHECK(e.store.replies(c, root) && e.store.replies(c, root)->size() == 1);
+    CHECK(e.store.findMessage(c, root)->replyCount == 1);
+    CHECK(e.store.conversation(c).unread == 0);
+    CHECK(count("conversations.replies") - before == 2);
+    // The settled state is not polled again, and a redelivered event leaves
+    // the thread reply alone.
+    pumpFor(200);
+    CHECK(count("conversations.replies") - before == 2);
+    REQUIRE(push(envelope(
+        "env-del-broadcast-retry-duplicate",
+        R"({"type":"message","subtype":"message_deleted","channel":"C1",)"
+        R"("deleted_ts":"1800000000.000300",)"
+        R"("previous_message":{"ts":"1800000000.000300","subtype":"thread_broadcast",)"
+        R"("thread_ts":"1800000000.000050"}})"
+    )));
+    pumpFor(150);
+    CHECK(e.store.findMessage(c, ts) != nullptr);
+    CHECK(e.store.findMessage(c, ts)->threadTs == root);
+    CHECK(e.store.findMessage(c, root)->replyCount == 1);
+}
+
 TEST("slack realtime: edits, deletions, reactions, presence, users and marks") {
     if (!haveServer())
         return;
@@ -311,12 +606,29 @@ TEST("slack realtime: edits, deletions, reactions, presence, users and marks") {
         R"({"type":"message","channel":"C1","user":"UMIRA","text":"v1","ts":"1800000000.000200"})"
     )));
     REQUIRE(pumpUntil([&] { return e.store.findMessage(c, ts); }));
+    // A normal message is replaced by its edit, rich content included.
+    e.store.updateMessage(c, ts, [](model::Message &m) {
+        model::File file;
+        file.id = "F1";
+        m.extras().files.push_back(file);
+        model::Attachment card;
+        card.title = "preview";
+        m.extras().attachments.push_back(card);
+        model::Button button;
+        button.id = "open";
+        m.extras().buttons.push_back(button);
+        m.reactions.push_back(model::Reaction{"tada", 1, {}});
+    });
     REQUIRE(push(envelope(
         "b",
         R"({"type":"message","subtype":"message_changed","channel":"C1","message":{"type":"message","user":"UMIRA","text":"v2","ts":"1800000000.000200","edited":{"ts":"1"}}})"
     )));
     REQUIRE(pumpUntil([&] { return e.store.findMessage(c, ts)->text == "v2"; }));
     CHECK(e.store.findMessage(c, ts)->edited);
+    CHECK(e.store.findMessage(c, ts)->files().empty());
+    CHECK(e.store.findMessage(c, ts)->attachments().empty());
+    CHECK(!e.store.findMessage(c, ts)->extra || e.store.findMessage(c, ts)->extra->buttons.empty());
+    CHECK(e.store.findMessage(c, ts)->reactions.empty());
     REQUIRE(push(envelope(
         "c",
         R"({"type":"reaction_added","user":"UMIRA","reaction":"tada","item":{"type":"message","channel":"C1","ts":"1800000000.000200"}})"

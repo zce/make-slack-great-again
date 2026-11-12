@@ -1100,13 +1100,34 @@ void MessageList::onChange(const model::Change &ch) {
     const bool mine = _root == 0 ? ch.thread == 0
                                  : ch.thread == _root || (ch.thread == 0 && ch.ts == _root) ||
                                        ch.kind == CK::Reset;
+    // A channel broadcast row draws its parent's preview: an update of that
+    // parent must re-bind the dependent row too, even when the parent itself
+    // is not in this list (a thread-only root).
+    std::vector<Ts> broadcastPreviews;
+    if (ch.kind == CK::Update && _root == 0 && _conv != model::kNoConv) {
+        if (const model::Message *parent = message(ch.ts);
+            parent && !parent->isReply() && (parent->replyCount || parent->latestReply))
+            for (const Item &it : _items)
+                if (it.kind == Kind::Message || it.kind == Kind::System)
+                    if (const model::Message *m = message(it.ts);
+                        m && m->isBroadcast() && m->threadTs == ch.ts)
+                        broadcastPreviews.push_back(m->ts);
+    }
+    const auto refreshPreviews = [&] {
+        for (Ts ts : broadcastPreviews)
+            if (const int i = itemIndex(ts); i >= 0)
+                rowsChanged(i, 1);
+    };
     // An inline thread's replies live in its root's row.
     if (!mine && _root == 0 && ch.thread && has(_inlineThreads, ch.thread)) {
         rowChanged(ch.thread);
+        refreshPreviews();
         return;
     }
-    if (!mine)
+    if (!mine) {
+        refreshPreviews();
         return;
+    }
     if (ch.kind == CK::Reset) {
         // A history-budget eviction may rebuild the model while this list is
         // visible. Preserve the same message/offset (or bottom pin) across
@@ -1152,6 +1173,7 @@ void MessageList::onChange(const model::Change &ch) {
     } else {
         rebuild(true);
     }
+    refreshPreviews();
     applyOpenTarget();
     applyJump();
     scheduleEdgeCheck();
@@ -1225,6 +1247,27 @@ bool touches(const model::Message &m, const Changed &c) {
             if (names(f.title) || names(f.value))
                 return true;
     }
+    return false;
+}
+
+// The channel broadcast row also draws its original thread root (text and
+// author, or the reference's fallback when the root isn't loaded).
+bool touchesBroadcastParent(
+    const model::Store &st, model::ConvRef conv, const model::Message &m, const Changed &c
+) {
+    if (!m.isBroadcast())
+        return false;
+    if (const model::Message *root = st.findMessage(conv, m.threadTs);
+        root && root->ts == m.threadTs)
+        return touches(*root, c);
+    if (!m.extra)
+        return false;
+    if (m.extra->threadParentUser != model::kNoUser &&
+        std::find(c.users.begin(), c.users.end(), m.extra->threadParentUser) != c.users.end())
+        return true;
+    for (std::string_view n : c.needles)
+        if (m.extra->threadParentText.find(n) != std::string::npos)
+            return true;
     return false;
 }
 
@@ -1320,7 +1363,7 @@ void MessageList::usersChanged() {
         const model::Message *m  = i >= 0 ? message(ts) : nullptr;
         if (!m)
             continue;
-        bool hit = touches(*m, c);
+        bool hit = touches(*m, c) || touchesBroadcastParent(st, _conv, *m, c);
         // An inline thread's replies draw in their root's row.
         if (!hit && _root == 0 && has(_inlineThreads, ts))
             for (const model::Message *r : st.threadTimeline(_conv, ts))

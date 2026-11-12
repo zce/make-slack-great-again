@@ -211,16 +211,14 @@ TEST("slack cache: a broadcast reply keeps its thread context across a restart")
         const ConvRef c = e.conv("C1");
         REQUIRE(c != kNoConv);
         e.be->setActiveConversation(c, 0); // tracked: its messages go to the cache
-        script("conversations.history", R"([
-          {"ok": true, "has_more": false, "messages": [
-            {"type": "message", "ts": "1700000300.000300", "thread_ts": "1700000100.000100",
-             "subtype": "thread_broadcast", "user": "UMIRA", "text": "broadcast reply",
-             "root": {"type": "message", "ts": "1700000100.000100", "user": "UME",
-                      "text": "original topic"}},
-            {"type": "message", "ts": "1700000100.000100", "thread_ts": "1700000100.000100",
-             "user": "UME", "text": "original topic", "reply_count": 1,
-             "latest_reply": "1700000300.000300"}]}
-        ])");
+        set(R"({"conversations.history": {"ok": true, "has_more": false, "messages": [
+          {"type": "message", "ts": "1700000300.000300", "thread_ts": "1700000100.000100",
+           "subtype": "thread_broadcast", "user": "UMIRA", "text": "broadcast reply",
+           "root": {"type": "message", "ts": "1700000100.000100", "user": "UME",
+                    "text": "original topic"}},
+          {"type": "message", "ts": "1700000100.000100", "thread_ts": "1700000100.000100",
+           "user": "UME", "text": "original topic", "reply_count": 1,
+           "latest_reply": "1700000300.000300"}]}})");
         bool done = false;
         e.be->loadHistory(c, 0, [&](bool, const std::string &) { done = true; });
         REQUIRE(pumpUntil([&] { return done; }));

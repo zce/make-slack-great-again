@@ -929,6 +929,221 @@ TEST("store: a broadcast from history replaces a thread copy and stays canonical
     CHECK(f.s.findMessage(f.c, 100)->replyCount == 1);
 }
 
+TEST("store: a partial broadcast reference keeps the thread reply's content") {
+    Fixture f;
+    const Ts root = 100, replyTs = 200;
+    f.s.addPage(f.c, page({root}, f.mira));
+    f.s.updateConversation(f.c, [](Conversation &c) { c.lastRead = 100; });
+
+    Message reply = msg(replyTs, f.mira, "thread v1", root);
+    File    file;
+    file.id   = "F1";
+    file.name = "report.pdf";
+    reply.extras().files.push_back(file);
+    Attachment card;
+    card.title = "deployment";
+    reply.extras().attachments.push_back(card);
+    Button button;
+    button.id    = "approve";
+    button.label = "Approve";
+    reply.extras().buttons.push_back(button);
+    reply.reactions.push_back(Reaction{"tada", 1, {f.me}});
+    std::vector<Message> thread;
+    thread.push_back(std::move(reply));
+    f.s.addPage(f.c, std::move(thread));
+    f.s.updateMessage(f.c, root, [](Message &r) {
+        r.replyCount  = 1;
+        r.latestReply = 200;
+    });
+
+    // History's thread_broadcast is a reference: it cannot carry the files,
+    // attachments, buttons or reactions the complete thread reply has.
+    Message reference          = msg(replyTs, f.mira, "thread v2", root);
+    reference.extras().subtype = "thread_broadcast";
+    reference.extras().threadParentText = "parent";
+    std::vector<Message> history;
+    history.push_back(std::move(reference));
+    f.s.addPage(f.c, std::move(history));
+
+    const Message *m = f.s.findMessage(f.c, replyTs);
+    REQUIRE(m != nullptr);
+    CHECK(m->isBroadcast());
+    CHECK_STR(m->text, "thread v2"); // what the reference does carry is newer
+    REQUIRE(m->files().size() == 1);
+    CHECK_STR(m->files()[0].name, "report.pdf");
+    REQUIRE(m->attachments().size() == 1);
+    CHECK_STR(m->attachments()[0].title, "deployment");
+    REQUIRE(m->extra->buttons.size() == 1);
+    CHECK_STR(m->extra->buttons[0].id, "approve");
+    REQUIRE(m->reactions.size() == 1);
+    CHECK_STR(m->reactions[0].name, "tada");
+    CHECK(f.s.replies(f.c, root)->empty());
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+
+    // A later partial history refresh keeps them too.
+    Message again          = msg(replyTs, f.mira, "thread v3", root);
+    again.extras().subtype = "thread_broadcast";
+    std::vector<Message> next;
+    next.push_back(std::move(again));
+    f.s.addPage(f.c, std::move(next));
+    CHECK(f.s.findMessage(f.c, replyTs)->files().size() == 1);
+    CHECK(f.s.findMessage(f.c, replyTs)->attachments().size() == 1);
+    CHECK(f.s.findMessage(f.c, replyTs)->reactions.size() == 1);
+
+    // The complete thread page is authoritative: content removed there goes.
+    Message complete = msg(replyTs, f.mira, "thread v4", root);
+    std::vector<Message> completeThread;
+    completeThread.push_back(std::move(complete));
+    f.s.addPage(f.c, std::move(completeThread), true);
+    m = f.s.findMessage(f.c, replyTs);
+    REQUIRE(m != nullptr);
+    CHECK(!m->isBroadcast());
+    CHECK(m->files().empty() && m->attachments().empty() && m->reactions.empty());
+    CHECK(f.s.indexOf(f.c, replyTs) == SIZE_MAX);
+    REQUIRE(f.s.replies(f.c, root));
+    CHECK(f.s.replies(f.c, root)->size() == 1);
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+    CHECK(f.s.conversation(f.c).unread == 0);
+}
+
+TEST("store: a thread page unbroadcasts without deleting the reply") {
+    Fixture f;
+    const Ts root = 100, replyTs = 200;
+    f.s.addPage(f.c, page({root}, f.mira));
+    f.s.updateConversation(f.c, [](Conversation &c) { c.lastRead = 100; });
+    std::vector<Message> thread;
+    thread.push_back(msg(replyTs, f.mira, "reply", root));
+    f.s.addPage(f.c, std::move(thread));
+    f.s.updateMessage(f.c, root, [](Message &r) {
+        r.replyCount  = 1;
+        r.latestReply = 200;
+    });
+
+    Message broadcast          = msg(replyTs, f.mira, "reply", root);
+    broadcast.extras().subtype = "thread_broadcast";
+    f.s.addMessage(f.c, std::move(broadcast));
+    REQUIRE(f.s.findMessage(f.c, replyTs)->isBroadcast());
+    CHECK(f.s.conversation(f.c).unread == 1);
+    CHECK(f.s.replies(f.c, root)->empty());
+
+    // "Remove reply from channel": the complete thread answer has the same
+    // reply without the broadcast subtype.
+    std::vector<Message> unbroadcast;
+    unbroadcast.push_back(msg(replyTs, f.mira, "reply v2", root));
+    f.s.addPage(f.c, std::move(unbroadcast), true);
+    const Message *m = f.s.findMessage(f.c, replyTs);
+    REQUIRE(m != nullptr);
+    CHECK(!m->isBroadcast());
+    CHECK(m->threadTs == root);
+    CHECK_STR(m->text, "reply v2");
+    CHECK(f.s.indexOf(f.c, replyTs) == SIZE_MAX);
+    REQUIRE(f.s.replies(f.c, root));
+    CHECK(f.s.replies(f.c, root)->size() == 1);
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+    CHECK(f.s.findMessage(f.c, root)->latestReply == replyTs);
+    CHECK(f.s.conversation(f.c).unread == 0);
+
+    // Broadcasting it again moves the same logical reply back to the channel.
+    Message rebroadcast          = msg(replyTs, f.mira, "reply v3", root);
+    rebroadcast.extras().subtype = "thread_broadcast";
+    std::vector<Message> broadcastPage;
+    broadcastPage.push_back(std::move(rebroadcast));
+    f.s.addPage(f.c, std::move(broadcastPage), true);
+    m = f.s.findMessage(f.c, replyTs);
+    REQUIRE(m != nullptr);
+    CHECK(m->isBroadcast());
+    CHECK(f.s.indexOf(f.c, replyTs) != SIZE_MAX);
+    CHECK(f.s.replies(f.c, root)->empty());
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+    CHECK(f.s.threadTimeline(f.c, root).size() == 1);
+
+    // Deleting the underlying reply removes the channel row with it.
+    CHECK(f.s.removeMessage(f.c, replyTs));
+    CHECK(f.s.findMessage(f.c, replyTs) == nullptr);
+    CHECK(f.s.conversation(f.c).messages.size() == 1);
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 0);
+    CHECK(f.s.findMessage(f.c, root)->latestReply == 0);
+    CHECK(f.s.threadTimeline(f.c, root).empty());
+}
+
+TEST("store: updateMessage moves a revoked broadcast back into its thread") {
+    Fixture f;
+    const Ts root = 100, replyTs = 200;
+    f.s.addPage(f.c, page({root}, f.mira));
+    f.s.updateConversation(f.c, [](Conversation &c) { c.lastRead = 100; });
+    Message broadcast          = msg(replyTs, f.mira, "broadcast", root);
+    broadcast.extras().subtype = "thread_broadcast";
+    f.s.addMessage(f.c, std::move(broadcast));
+    REQUIRE(f.s.findMessage(f.c, replyTs)->isBroadcast());
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+    Recorder r;
+    f.s.observe(f.c, r.fn());
+
+    // An authoritative update without the subtype revokes the channel copy.
+    CHECK(f.s.updateMessage(f.c, replyTs, [](Message &m) {
+        m.extras().subtype.clear();
+        m.threadTs = 100;
+    }));
+    const Message *m = f.s.findMessage(f.c, replyTs);
+    REQUIRE(m != nullptr);
+    CHECK(!m->isBroadcast());
+    CHECK(f.s.indexOf(f.c, replyTs) == SIZE_MAX);
+    REQUIRE(f.s.replies(f.c, root));
+    CHECK(f.s.replies(f.c, root)->size() == 1);
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+    CHECK(f.s.conversation(f.c).unread == 0);
+    CHECK(std::any_of(r.log.begin(), r.log.end(), [](const Change &c) {
+        return c.kind == ChangeKind::Remove && c.thread == 0 && c.ts == 200;
+    }));
+
+    // The reverse transition moves it back, makes the channel row news and
+    // tells the channel list to insert it.
+    r.log.clear();
+    CHECK(f.s.updateMessage(f.c, replyTs, [](Message &m) {
+        m.extras().subtype = "thread_broadcast";
+        m.threadTs         = 100;
+    }));
+    m = f.s.findMessage(f.c, replyTs);
+    REQUIRE(m != nullptr);
+    CHECK(m->isBroadcast());
+    CHECK(f.s.indexOf(f.c, replyTs) != SIZE_MAX);
+    CHECK(f.s.replies(f.c, root)->empty());
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+    CHECK(f.s.conversation(f.c).unread == 1);
+    CHECK(std::any_of(r.log.begin(), r.log.end(), [](const Change &c) {
+        return (c.kind == ChangeKind::Append || c.kind == ChangeKind::Insert) && c.thread == 0 &&
+               (c.ts == 200 || c.count == 1);
+    }));
+}
+
+TEST("store: a live broadcast reference keeps the reply's rich content") {
+    Fixture f;
+    const Ts root = 100, replyTs = 200;
+    f.s.addPage(f.c, page({root}, f.mira));
+    std::vector<Message> thread;
+    Message              reply = msg(replyTs, f.mira, "thread", root);
+    reply.extras().files.push_back(File{});
+    reply.extras().files.back().id = "F1";
+    thread.push_back(std::move(reply));
+    f.s.addPage(f.c, std::move(thread));
+    f.s.updateMessage(f.c, root, [](Message &r) {
+        r.replyCount  = 1;
+        r.latestReply = 200;
+    });
+
+    Message event          = msg(replyTs, f.mira, "thread edited", root);
+    event.extras().subtype = "thread_broadcast";
+    f.s.addMessage(f.c, std::move(event));
+    const Message *m = f.s.findMessage(f.c, replyTs);
+    REQUIRE(m != nullptr);
+    CHECK(m->isBroadcast());
+    CHECK_STR(m->text, "thread edited");
+    REQUIRE(m->files().size() == 1);
+    CHECK_STR(m->files()[0].id, "F1");
+    CHECK(f.s.replies(f.c, root)->empty());
+    CHECK(f.s.findMessage(f.c, root)->replyCount == 1);
+}
+
 TEST("store: reactions, updates and removal notify with the ts") {
     Fixture f;
     f.s.addPage(f.c, page({100, 200}, f.mira));
