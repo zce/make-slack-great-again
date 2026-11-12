@@ -132,7 +132,7 @@ msgstr "「%1」はすでに存在します。置き換えますか？"
 msgid "Cut"
 msgstr "切り取り"
 
-#: src/ui/textedit.cpp src/app/screens/messages/audio_card.cpp src/app/screens/messages/rich.cpp src/app/screens/messages/summary.cpp
+#: src/ui/textedit.cpp src/app/screens/messages/audio_card.cpp src/app/screens/messages/message_list.cpp src/app/screens/messages/rich.cpp src/app/screens/messages/summary.cpp
 msgid "Copy"
 msgstr "コピー"
 

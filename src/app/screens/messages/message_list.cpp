@@ -1924,6 +1924,7 @@ constexpr ui::MenuDef kItemDefs[] = {
      nullptr,
      nullptr},
     {MessageList::kCopyText, uint16_t(gfx::Icon::Copy), N_("Copy message"), nullptr, "Ctrl+C"},
+    {MessageList::kCopySelection, uint16_t(gfx::Icon::Copy), N_("Copy"), nullptr, "Ctrl+C"},
     {MessageList::kMarkUnread, uint16_t(gfx::Icon::Eye), N_("Mark unread"), nullptr, "U"},
     {MessageList::kPin, uint16_t(gfx::Icon::Pin), N_("Pin to channel"), nullptr, "P"},
     {MessageList::kUnpin, uint16_t(gfx::Icon::PinOff), N_("Unpin from channel"), nullptr, "P"},
@@ -2012,11 +2013,16 @@ int64_t remindDue(int preset, int64_t now) {
 
 } // namespace
 
-std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
+std::vector<ui::MenuItem> MessageList::menuItems(Ts ts, ui::PointF at) const {
     std::vector<ui::MenuItem> items;
     const model::Message     *m = message(ts);
     if (!m || m->pending || isSystem(*m))
         return items;
+    const bool copySelected = selectionAt(ts, at);
+    if (copySelected) {
+        addItem(items, kCopySelection);
+        ui::addMenuSeparator(items);
+    }
     if (m->delivery != model::DeliveryState::Confirmed) {
         if (m->delivery == model::DeliveryState::Failed)
             addItem(items, kRetryFailed);
@@ -2042,7 +2048,7 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     ui::addMenuSeparator(items);
 
     addItem(items, kCopyLink);
-    addItem(items, kCopyText);
+    addItem(items, kCopyText).hint = copySelected ? "" : "Ctrl+C";
     if (!firstLink(m->text).empty())
         addItem(items, kCopyLinkInText);
     // A reply only where the thread has a cursor of its own to move back
@@ -2140,7 +2146,7 @@ std::vector<Ts> MessageList::threadRoots(Ts except) const {
 void MessageList::openMenu(Ts ts, ui::PointF at) {
     if (!window())
         return;
-    std::vector<ui::MenuItem> items = menuItems(ts);
+    std::vector<ui::MenuItem> items = menuItems(ts, at);
     if (items.empty())
         return;
     std::weak_ptr<char> alive = _alive;
@@ -2227,6 +2233,9 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         break;
     case kCopyText: // shortened link labels copy as their full URLs
         copy = copyableMessageText(_ctx, *msg, *this);
+        break;
+    case kCopySelection:
+        copySelection();
         break;
     case kMarkUnread:
         markUnread(ts);
@@ -2705,6 +2714,21 @@ std::string MessageList::selectedText() const {
 void MessageList::copySelection() {
     if (hasSelection())
         _ctx.app.platform().setClipboardText(selectedText());
+}
+
+bool MessageList::selectionAt(Ts ts, ui::PointF at) const {
+    if (!hasSelection())
+        return false;
+    const int index = itemIndex(ts);
+    if (index < 0)
+        return false;
+    auto *row = static_cast<MessageRow *>(_list->viewFor(index));
+    if (!row)
+        return false;
+    for (SelectableText *label : row->selectionLabels())
+        if (label->selectionContains(label->textView().mapFromWindow(at)))
+            return true;
+    return false;
 }
 
 // ── Opening position ────────────────────────────────────────────────────────

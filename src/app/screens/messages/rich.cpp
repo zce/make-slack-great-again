@@ -319,6 +319,17 @@ const RichLabel::Target *RichLabel::targetAt(ui::PointF local) const {
     return id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
 }
 
+bool RichLabel::selectionContains(ui::PointF local) const {
+    const text::Layout *layout = textLayout();
+    if (!layout || selectionFrom() == selectionTo())
+        return false;
+    const ui::PointF origin = textOrigin();
+    for (const gfx::RectF &r : layout->selectionRects(selectionFrom(), selectionTo()))
+        if (ui::RectF{r.x + origin.x, r.y + origin.y, r.w, r.h}.contains(local))
+            return true;
+    return false;
+}
+
 bool RichLabel::onEvent(ui::Event &e) {
     switch (e.type) {
     case ui::EventType::PointerMove:
@@ -362,6 +373,9 @@ bool RichLabel::onEvent(ui::Event &e) {
         _pressedCode.clear();
         return ui::Label::onEvent(e);
     case ui::EventType::ContextMenu: {
+        // A selected link is text first: let the row offer Copy selection.
+        if (selectionContains(e.pos))
+            return false;
         // The link menu, for links only (mentions, channels: nothing), and
         // only from a right click (raw set) — no Menu key or long press.
         const Target *tg = e.raw ? targetAt(e.pos) : nullptr;

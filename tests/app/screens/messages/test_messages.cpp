@@ -3524,6 +3524,63 @@ ui::Event key(plat::Key k, uint32_t mods) {
 
 } // namespace
 
+TEST("selection: the message menu adds Copy only on highlighted text") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 3600;
+    std::vector<model::Message> ms;
+    ms.push_back(msg(0, t0, "select this text"));
+    ms.push_back(msg(1, t0 + 60, "another message"));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    const Ts a = t0 * 1000000, b = (t0 + 60) * 1000000;
+    auto *first = static_cast<RichLabel *>(findLeaf(e.row(a), "select this text"));
+    auto *second = static_cast<RichLabel *>(findLeaf(e.row(b), "another message"));
+    REQUIRE(first && second);
+    REQUIRE(first->textLayout() && second->textLayout());
+
+    const auto point = [](RichLabel &label, uint32_t from, uint32_t to) -> ui::PointF {
+        const auto rects = label.textLayout()->selectionRects(from, to);
+        if (rects.empty())
+            return {};
+        const ui::PointF origin = label.textOrigin();
+        return label.mapToWindow(
+            {origin.x + rects[0].x + rects[0].w / 2,
+             origin.y + rects[0].y + rects[0].h / 2}
+        );
+    };
+    REQUIRE(!first->textLayout()->selectionRects(0, 6).empty());
+    REQUIRE(!first->textLayout()->selectionRects(7, 11).empty());
+    REQUIRE(!second->textLayout()->selectionRects(0, 7).empty());
+    const ui::PointF selected = point(*first, 0, 6);
+    const ui::PointF plain    = point(*first, 7, 11);
+    const ui::PointF other    = point(*second, 0, 7);
+    const std::string original = menuLabels(e.list->menuItems(a));
+
+    e.list->select({a, 0}, {a, 6});
+    auto items = e.list->menuItems(a, selected);
+    CHECK(menuLabels(items).starts_with("Copy|-|Reply in thread|"));
+    CHECK(items.front().id == MessageList::kCopySelection);
+    CHECK_STR(items.front().hint, "Ctrl+C");
+    for (const ui::MenuItem &item : items)
+        if (item.id == MessageList::kCopyText)
+            CHECK_STR(item.hint, "");
+    e.list->runMenuAction(a, MessageList::kCopySelection);
+    CHECK_STR(clipboard(), "select");
+
+    CHECK_STR(menuLabels(e.list->menuItems(a, plain)), original);
+    CHECK_STR(menuLabels(e.list->menuItems(b, other)), menuLabels(e.list->menuItems(b)));
+
+    // Selecting across messages gives Copy at either highlighted part.
+    e.list->select({a, 0}, {b, 7});
+    CHECK(menuLabels(e.list->menuItems(b, other)).starts_with("Copy|-|Reply in thread|"));
+    e.list->runMenuAction(b, MessageList::kCopySelection);
+    CHECK_STR(clipboard(), "select this text\nanother");
+
+    e.list->clearSelection();
+    CHECK_STR(menuLabels(e.list->menuItems(a, selected)), original);
+}
+
 TEST("selection: drag positions, across messages, Ctrl+C copies, Escape clears") {
     Env                         e(false);
     const int64_t               t0 = base::nowSecs() - 3600;
