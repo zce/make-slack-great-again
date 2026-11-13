@@ -1957,6 +1957,16 @@ constexpr ui::MenuDef kItemDefs[] = {
     {MessageList::kReact, uint16_t(gfx::Icon::Smile), N_("Add reaction"), nullptr, "R"},
     {MessageList::kMuteThread, uint16_t(gfx::Icon::BellOff), N_("Mute thread"), nullptr, nullptr},
     {MessageList::kUnmuteThread, uint16_t(gfx::Icon::Bell), N_("Unmute thread"), nullptr, nullptr},
+    {MessageList::kFollowThread,
+     uint16_t(gfx::Icon::Bell),
+     N_("Get notified about new replies"),
+     nullptr,
+     nullptr},
+    {MessageList::kUnfollowThread,
+     uint16_t(gfx::Icon::BellOff),
+     N_("Turn off notifications for replies"),
+     nullptr,
+     nullptr},
     {MessageList::kEdit, uint16_t(gfx::Icon::Edit3), N_("Edit message"), nullptr, "E"},
     {MessageList::kRetryFailed, uint16_t(gfx::Icon::SpinUp), "Retry sending", nullptr, nullptr},
     {MessageList::kRecoverOutgoing, uint16_t(gfx::Icon::Edit3), "Edit and resend", nullptr, nullptr},
@@ -2114,6 +2124,11 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts, ui::PointF at) const {
         const Ts root = m->isReply() ? m->threadTs : m->ts;
         addItem(items, st.threadMuted(_conv, root) ? kUnmuteThread : kMuteThread);
     }
+    // Follow the thread in the service (any message: one without replies yet
+    // too), or stop following it. Unlike Mute, offered in the thread panel too.
+    if (const Ts root = m->isReply() ? m->threadTs : m->ts;
+        _ctx.backend.canFollowThread(_conv, root))
+        addItem(items, _ctx.backend.threadFollowed(_conv, root) ? kUnfollowThread : kFollowThread);
 
     ui::addMenuSeparator(items);
     if (mine && onEdit)
@@ -2255,6 +2270,12 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
     case kMuteThread:
     case kUnmuteThread:
         _ctx.store().setThreadMuted(conv, msg->isReply() ? msg->threadTs : ts, id == kMuteThread);
+        break;
+    case kFollowThread:
+    case kUnfollowThread:
+        _ctx.backend.setThreadFollowed(
+            conv, msg->isReply() ? msg->threadTs : ts, id == kFollowThread
+        );
         break;
     case kEdit:
         if (onEdit)
