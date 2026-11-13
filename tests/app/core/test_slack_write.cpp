@@ -13,6 +13,7 @@
 #include "net/net.h"
 #include "plat/plat.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -269,6 +270,21 @@ TEST("slack write: following flip-flops coalesce; a refusal puts it back") {
     e.be->setThreadFollowed(e.general, root, false);
     REQUIRE(pumpUntil([&] { return e.be->threadFollowed(e.general, root); }));
     CHECK_FALSE(e.be->canFollowThread(e.general, root));
+}
+
+TEST("slack write: following controls the thread Mark unread gate") {
+    if (!haveServer())
+        return;
+    Env e;
+    // My own thread is followed, so its reply cursor can move back.
+    CHECK(e.be->canMarkThreadUnread(e.general, e.old));
+    e.be->setThreadFollowed(e.general, e.old, false);
+    CHECK_FALSE(e.be->threadFollowed(e.general, e.old));
+    CHECK_FALSE(e.be->canMarkThreadUnread(e.general, e.old));
+    e.be->setThreadFollowed(e.general, e.old, true);
+    CHECK(e.be->threadFollowed(e.general, e.old));
+    CHECK(e.be->canMarkThreadUnread(e.general, e.old));
+    REQUIRE(pumpUntil([&] { return Log().count("subscriptions.thread.add") == 1; }));
 }
 
 TEST("slack write: a lost answer to a delivered post reconciles, never posts twice") {

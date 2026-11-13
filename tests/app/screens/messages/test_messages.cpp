@@ -1729,6 +1729,64 @@ TEST("broadcast: channel rows keep their thread context and view the parent thre
     CHECK(e.store.replies(c, liveTs) == nullptr);
 }
 
+TEST("actions: follow/unfollow with a broadcast keeps Mark unread thread-scoped") {
+    Env e(false);
+    const Ts root  = model::parseTs("1700000100.000000");
+    const Ts reply = model::parseTs("1700000300.000000");
+
+    model::Message rootMsg = msgAt(2, root, "original topic");
+    rootMsg.replyCount     = 1;
+    rootMsg.latestReply    = reply;
+    model::Message broadcast = msgAt(1, reply, "broadcast reply");
+    broadcast.threadTs       = root;
+    broadcast.extras().subtype          = "thread_broadcast";
+    broadcast.extras().threadParentText = "original topic";
+    broadcast.extras().threadParentUser = 2;
+    std::vector<model::Message> msgs;
+    msgs.push_back(std::move(rootMsg));
+    msgs.push_back(std::move(broadcast));
+    const ConvRef c = addConv(e.store, std::move(msgs));
+    e.list->showConversation(c);
+    pump(10);
+    REQUIRE(e.row(reply));
+
+    // The channel row is a broadcast, and can be followed by hand.
+    CHECK(menuLabels(e.list->menuItems(reply)).starts_with("View thread|"));
+    CHECK(
+        menuLabels(e.list->menuItems(reply)).find("Get notified about new replies") !=
+        std::string::npos
+    );
+    e.list->runMenuAction(reply, MessageList::kFollowThread);
+    CHECK(e.backend.threadFollowed(c, root));
+    CHECK(e.store.indexOf(c, reply) != SIZE_MAX);
+    CHECK(e.store.findMessage(c, reply)->isBroadcast());
+    // In the channel row Mark unread stays the conversation's.
+    CHECK(menuLabels(e.list->menuItems(reply)).find("Mark unread") != std::string::npos);
+
+    // In the thread panel the followed reply gets the thread's own Mark unread.
+    e.list->showThread(c, root);
+    pump(20);
+    CHECK(menuLabels(e.list->menuItems(reply)).find("Mark unread") != std::string::npos);
+    CHECK(
+        menuLabels(e.list->menuItems(reply)).find("Turn off notifications for replies") !=
+        std::string::npos
+    );
+    e.list->runMenuAction(reply, MessageList::kMarkUnread);
+    CHECK(e.store.unreadThreads() == 1);
+
+    // Unfollowing clears the thread unread and hides its Mark unread, while
+    // the broadcast channel row and its thread context stay.
+    e.list->runMenuAction(reply, MessageList::kUnfollowThread);
+    CHECK_FALSE(e.backend.threadFollowed(c, root));
+    CHECK(e.store.unreadThreads() == 0);
+    CHECK(menuLabels(e.list->menuItems(reply)).find("Mark unread") == std::string::npos);
+    e.list->showConversation(c);
+    pump(10);
+    REQUIRE(e.row(reply));
+    CHECK(e.store.findMessage(c, reply)->isBroadcast());
+    CHECK(e.store.findMessage(c, reply)->threadTs == root);
+}
+
 TEST("broadcast: parent edits and profile changes refresh the preview") {
     Env      e(false);
     const Ts root  = model::parseTs("1700000100.000000");
