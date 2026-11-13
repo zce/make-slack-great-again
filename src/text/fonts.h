@@ -16,8 +16,8 @@ struct hb_font_t;
 
 namespace text::fonts {
 
-// A resolved font: face index | variation weight | synthetic styles, packed
-// so runs and cache keys carry one integer.
+// A resolved font: face index | variation weight | synthetic styles | optical
+// size, packed so runs and cache keys carry one integer.
 using FontKey             = uint32_t;
 constexpr FontKey kNoFont = 0xFFFFFFFFu;
 inline uint32_t   faceOf(FontKey k) {
@@ -33,6 +33,11 @@ inline bool synthBold(FontKey k) {
 inline bool synthOblique(FontKey k) {
     return k & (1u << 27);
 }
+// Optical size: a slot (1..15) in fonts.cpp's table of opsz values; 0 = the
+// face's default instance. Only set on macOS (automatic optical sizing).
+inline uint32_t opszOf(FontKey k) {
+    return k >> 28;
+}
 inline FontKey makeKey(uint32_t face, uint32_t wght, bool bold, bool oblique) {
     return face | (wght << 16) | (bold ? 1u << 26 : 0) | (oblique ? 1u << 27 : 0);
 }
@@ -41,7 +46,6 @@ bool init(std::string *error);
 // Frees every loaded face and file mapping (text::shutdown).
 void shutdown();
 
-// The UI family (or mono when s.mono) in the requested weight/italic.
 // Installed non-colour families in stable alphabetical order (lowercase keys).
 std::vector<std::string> uiFamilies();
 // Empty selects the default; an unavailable family falls back and returns false.
@@ -49,6 +53,8 @@ std::vector<std::string> uiFamilies();
 bool setUiFamily(std::string_view family);
 bool setMonoFamily(std::string_view family);
 
+// The UI family (or mono when s.mono) in the requested weight/italic, at
+// the optical size for s.size.
 FontKey primary(const Style &s);
 // The colour emoji face, kNoFont when none is installed.
 FontKey emoji();
@@ -56,7 +62,10 @@ FontKey emoji();
 FontKey fallback(uint32_t cp, const Style &s);
 
 bool       hasGlyph(FontKey k, uint32_t cp);
-hb_font_t *hbFont(FontKey k); // at scale = units per em, variations applied
+// At scale = units per em, variations applied. ptem: the point size (logical
+// px), which only Apple's trak tracking reads; faces it applies to get one
+// font per size, created once, so nothing changes on a font while shaping.
+hb_font_t *hbFont(FontKey k, float ptem);
 float      upem(FontKey k);
 bool       isColor(FontKey k);
 
