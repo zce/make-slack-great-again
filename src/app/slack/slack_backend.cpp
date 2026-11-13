@@ -363,6 +363,9 @@ struct SlackBackend::Read {
     // here or on another client), key → when (a ts): a reply in one I
     // started no longer follows it, and only my own reply after that does.
     std::unordered_map<std::string, Ts>       unfollowed;
+    // Any actual follow/unfollow transition, or a reply send's optimistic
+    // follow: a refused send restores the state only if nothing newer happened.
+    uint64_t                                  followEpoch = 0;
     // Follow changes made here, key → the first feed poll whose answer may
     // overrule them (kHeld while the write is out): a poll sent before
     // Slack took the change still shows the old state.
@@ -3778,13 +3781,34 @@ void SlackBackend::followThread(ConvRef c, Ts root) {
         _read->follow(threadKey(c, root));
 }
 
+// A reply's optimistic follow is not the only thing that can move this
+// thread's state; a refusal restores it only when nothing newer happened.
+uint64_t SlackBackend::followEpoch() const { return _read->followEpoch; }
+
+void SlackBackend::noteFollowActivity() { ++_read->followEpoch; }
+
+// Undo a reply send's optimistic follow locally. Slack never took the reply,
+// so no subscriptions.thread.remove is sent.
+void SlackBackend::restoreThreadFollowed(ConvRef c, Ts root, bool on) {
+    if (!root)
+        return;
+    const std::string key = threadKey(c, root);
+    if (on)
+        _read->follow(key);
+    else
+        _read->unfollow(key);
+}
+
 bool SlackBackend::Read::follow(const std::string &key) {
     const bool wasOff = unfollowed.erase(key) > 0;
     if (!followed.insert(key).second) {
-        if (wasOff)
+        if (wasOff) {
+            ++followEpoch;
             extrasChanged();
+        }
         return false;
     }
+    ++followEpoch;
     extrasChanged();
     return true;
 }
@@ -3792,8 +3816,11 @@ bool SlackBackend::Read::follow(const std::string &key) {
 // Not followed any more, even one I started: its replies stop notifying
 // and badging, and the Threads entry lets go of it.
 void SlackBackend::Read::unfollow(const std::string &key) {
-    followed.erase(key);
-    unfollowed[key] = base::nowMicros();
+    const bool wasFollowed = followed.erase(key) > 0;
+    const bool wasOff      = unfollowed.count(key) != 0;
+    unfollowed[key]        = base::nowMicros();
+    if (wasFollowed || !wasOff)
+        ++followEpoch;
     if (unreadThreads.erase(key))
         publishUnreadThreads();
     extrasChanged();

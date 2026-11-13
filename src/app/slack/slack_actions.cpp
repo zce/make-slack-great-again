@@ -168,8 +168,10 @@ struct SlackBackend::Write {
         bool                     broadcast  = false;
         bool                     withFiles  = false; // an upload (msga: "Upload failed")
         bool                     undone     = false; // taken back while in flight (undo send)
-        int                      attempts   = 0;
-        Ts                       server     = 0; // the confirmed message's ts
+        bool                     followedBefore = false; // was the thread followed?
+        uint64_t                 followEpoch   = 0; // after begin's optimistic follow
+        int                      attempts     = 0;
+        Ts                       server       = 0; // the confirmed message's ts
         Done                     done;
         void                     finish(bool ok, const std::string &err) {
             if (auto cb = std::exchange(done, nullptr))
@@ -445,8 +447,14 @@ struct SlackBackend::Write {
             post([st] { st->finish(false, "channel_not_found"); });
             return nullptr;
         }
-        if (thread)
-            b.followThread(conv, thread); // replying follows the thread
+        if (thread) {
+            // Replying follows the thread optimistically; remember what it was
+            // so a refused send can put it back.
+            st->followedBefore = b.threadFollowed(conv, thread);
+            b.followThread(conv, thread);
+            b.noteFollowActivity();
+            st->followEpoch = b.followEpoch();
+        }
         // Only messages newer than the newest the server gave us can be this
         // one; a fresh conversation falls back to the clock.
         const Ts latest = store().conversation(conv).latest;
@@ -567,6 +575,10 @@ struct SlackBackend::Write {
                 deleteMessage(st->conv, m.ts, nullptr);
             return st->finish(false, "message_deleted");
         }
+        // A reply that landed follows the thread in Slack too: it outranks
+        // another send's optimistic follow being restored.
+        if (st->thread)
+            b.noteFollowActivity();
         const Ts   ts    = m.ts;
         const bool reply = m.isReply();
         st->server       = ts;
@@ -585,6 +597,13 @@ struct SlackBackend::Write {
     void fail(SendPtr st, const std::string &err, bool uncertain = false) {
         forget(st);
         LOG_WARN("slack", "send %s: %s", uncertain ? "unconfirmed" : "failed", err.c_str());
+        // Replying followed the thread optimistically. A refusal means Slack
+        // never took the reply: put the earlier state back, unless a newer
+        // follow action, feed answer or landed reply owns it now. An uncertain
+        // delivery must keep the optimistic state, like the message itself.
+        if (!uncertain && st->thread && st->followEpoch && !st->followedBefore &&
+            b.followEpoch() == st->followEpoch)
+            b.restoreThreadFollowed(st->conv, st->thread, false);
         if (!st->undone) {
             store().updateMessage(st->conv, st->local, [&](model::Message &m) {
                 m.pending   = false;
@@ -1473,7 +1492,12 @@ std::string SlackBackend::threadSubForm(ConvRef conv, Ts root) const {
 }
 
 void SlackBackend::setThreadFollowed(ConvRef conv, Ts root, bool follow) {
-    if (!canFollowThread(conv, root) || threadFollowed(conv, root) == follow)
+    if (!canFollowThread(conv, root))
+        return;
+    // Even "already so" is a user decision that outranks a reply's optimistic
+    // follow: a failed send must not undo it.
+    noteFollowActivity();
+    if (threadFollowed(conv, root) == follow)
         return;
     setFollowLocal(conv, root, follow);
     _write->follow(conv, root, follow);

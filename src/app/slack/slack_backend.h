@@ -278,6 +278,11 @@ private:
     // What the write half asks: replying in a thread follows it (on
     // every send to a thread).
     void                 followThread(model::ConvRef c, model::Ts root);
+    // Follow activity since a reply's optimistic follow: a newer user action,
+    // feed answer or landed reply outranks restoring that send's state.
+    uint64_t             followEpoch() const;
+    void                 noteFollowActivity();
+    void                 restoreThreadFollowed(model::ConvRef c, model::Ts root, bool on);
     // Merges a conversation the server just described (channel_created,
     // conversations.info) keeping what only this client knows.
     model::ConvRef       mergeConversation(model::Conversation fresh);

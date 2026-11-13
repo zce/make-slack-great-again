@@ -272,6 +272,56 @@ TEST("slack write: following flip-flops coalesce; a refusal puts it back") {
     CHECK_FALSE(e.be->canFollowThread(e.general, root));
 }
 
+TEST("slack write: a refused reply restores the thread's unfollowed state") {
+    if (!haveServer())
+        return;
+    Env      e;
+    const Ts root = e.old; // my message, initially followed
+    e.be->setThreadFollowed(e.general, root, false);
+    REQUIRE(!e.be->threadFollowed(e.general, root));
+    script("chat.postMessage", R"([{"ok": false, "error": "cannot_reply_to_message"}])");
+    Result r;
+    e.be->send(e.general, "nope", root, r.cb());
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    CHECK(!r.ok);
+    CHECK_FALSE(e.be->threadFollowed(e.general, root));
+    CHECK_FALSE(e.be->canMarkThreadUnread(e.general, root));
+}
+
+TEST("slack write: a user follow during a refused reply is not undone") {
+    if (!haveServer())
+        return;
+    Env      e;
+    const Ts root = e.old;
+    e.be->setThreadFollowed(e.general, root, false);
+    REQUIRE(!e.be->threadFollowed(e.general, root));
+    script(
+        "chat.postMessage",
+        R"([{"ok": false, "error": "cannot_reply_to_message", "__delay": 0.3}])"
+    );
+    Result r;
+    e.be->send(e.general, "nope", root, r.cb());
+    e.be->setThreadFollowed(e.general, root, true); // newer user decision
+    REQUIRE(pumpUntil([&] { return r.called; }, 8000));
+    CHECK(!r.ok);
+    CHECK(e.be->threadFollowed(e.general, root));
+}
+
+TEST("slack write: an uncertain reply keeps the optimistic follow") {
+    if (!haveServer())
+        return;
+    Env      e;
+    const Ts root = e.old;
+    e.be->setThreadFollowed(e.general, root, false);
+    REQUIRE(!e.be->threadFollowed(e.general, root));
+    script("chat.postMessage", R"([{"__partial":true}])");
+    Result r;
+    e.be->send(e.general, "maybe", root, r.cb());
+    REQUIRE(pumpUntil([&] { return r.called; }, 8000));
+    CHECK(!r.ok);
+    CHECK(e.be->threadFollowed(e.general, root));
+}
+
 TEST("slack write: following controls the thread Mark unread gate") {
     if (!haveServer())
         return;
