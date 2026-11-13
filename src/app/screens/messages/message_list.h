@@ -174,6 +174,8 @@ public:
         kReact,
         kMuteThread,
         kUnmuteThread,
+        kFollowThread, // "Get notified about new replies" (Backend::setThreadFollowed)
+        kUnfollowThread,
         kEdit,
         kCopyLink,
         kCopyLinkInText,

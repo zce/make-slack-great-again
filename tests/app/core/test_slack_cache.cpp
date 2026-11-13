@@ -241,6 +241,42 @@ TEST("slack cache: a broadcast reply keeps its thread context across a restart")
     CHECK_STR(broadcast.extra->threadParentText, "original topic");
 }
 
+TEST("slack cache: a thread turned off by hand stays off after a restart") {
+    if (!haveServer())
+        return;
+    coldStart();
+    const Ts          root = model::parseTs("1700000002.000000"); // my message
+    const std::string meta = file::join(cacheDir(), "meta.json");
+    {
+        Env e(false);
+        REQUIRE(e.warm);
+        REQUIRE(e.connect());
+        const ConvRef c = e.conv("C1");
+        REQUIRE(c != kNoConv);
+        if (!e.be->threadFollowed(c, root))
+            e.be->setThreadFollowed(c, root, true);
+        REQUIRE(e.be->threadFollowed(c, root));
+        script("subscriptions.thread.remove", R"([{"ok": true}])");
+        e.be->setThreadFollowed(c, root, false);
+        CHECK_FALSE(e.be->threadFollowed(c, root));
+        // The cache keeps the off state, not just the in-memory set.
+        REQUIRE(pumpUntil(
+            [&] {
+                std::string    text;
+                json::Document d;
+                return file::readAll(meta, &text) && d.parse(std::move(text), nullptr) &&
+                       d.root()["x"]["unfollowed"].size() > 0;
+            },
+            3000
+        ));
+    }
+    Env again(false);
+    REQUIRE(again.warm);
+    const ConvRef c = again.conv("C1");
+    REQUIRE(c != kNoConv);
+    CHECK_FALSE(again.be->threadFollowed(c, root));
+}
+
 TEST("slack cache: in-flight and failed outgoing copies survive restart safely") {
     if (!haveServer())
         return;
