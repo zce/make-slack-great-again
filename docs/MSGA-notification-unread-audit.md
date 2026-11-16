@@ -864,10 +864,19 @@ ctest --test-dir /build --output-on-failure
    - 修复：先读取 `unreadMarks`/epoch，区分“请求发起于 Mark 之前/确认之前”和“请求发起于确认之后”。确认之后的响应允许 `lastRead` 从上次观测值 300 回落到 250（只要仍高于本地 mark target），但仍拒绝 `latest` 回退以及确认前/确认中的旧响应。没有删除 stale 检查。
    - 测试：`slack read: a confirmed Mark unread lets another client advance past it`（修复前失败在最终 cursor 未到 250；修复后通过）。
 
-2. **RTM `*_marked` 事件在未能解除 hold 时仍覆盖 Store**
-   - 确认：`releaseUnreadMark(c, ts)` 对 `ts <= cursor` 不释放，但旧代码随后仍无条件写 `lastRead/unread/mentions`。
-   - 修复：新增 `acceptMarkedEvent()`；本地 mark 未确认，或事件 `ts <= mark.cursor` 时，事件在写 Store 前被拒绝；确认后且 `ts > mark.cursor` 的事件释放 hold 并正常应用。
-   - 测试：`slack realtime: an old marked event cannot undo a local Mark unread`（修复前失败在旧事件把 cursor 改成 100；修复后通过），同一用例覆盖合法的新事件 300。
+2. **RTM `*_marked` 事件可能用迟到的 pre-mark 事件覆盖 Store**
+   - 确认：Slack 的 marked 事件只带 `channel` + 消息 `ts`；Events API wrapper 的 `event_time` 是整数秒且没有本地/服务器时钟偏差保证，`event_id` 不是顺序号。旧实现只比较 `ts > mark.cursor`，因此 300 的迟到 pre-mark 事件会清除本地 Mark unread。
+   - 修复：`acceptMarkedEvent()` 在存在本地 hold 时拒绝所有 RTM marked 事件，不再用消息 ts 猜测因果。hold 只由以下可信路径解除：
+     - 本地显式读取（`markRead`）；
+     - 在 Mark 确认之后发起的 `client.counts` 快照；
+     - counts 不可用时，在 Mark 确认之后发起的 roster（`users.conversations` / `client.userBoot`）快照。
+     - 权威快照必须显示 `lastRead >= mark.target` 且覆盖本地已知的最新消息，才删除 RTM hold；部分读（250 而 300 仍未读）只更新 cursor，不解除 hold。
+   - 请求发起时的 `unreadMarkEpoch` / `unreadMarkConfirmedEpoch` 已传入 roster fallback；确认前启动的 roster 响应不能清除 hold。
+   - 测试：
+     - `slack realtime: a delayed pre-mark marked event cannot undo a local Mark unread`：事件 cursor 300，高于本地 199，仍被拒绝。
+     - `slack read: a confirmed Mark unread lets another client advance past it`：Test B，通过 counts 最终到 250。
+     - `slack realtime: a genuine remote read reconciles through the roster fallback`：counts 不可用时通过 roster 到 250，并验证随后迟到的 300 事件仍不能清除 300 的未读。
+   - 这是保守设计：marked 事件不再作为本地 Mark unread 期间的权威读状态，只保留其无 hold 时的即时行为。
 
 3. **关闭的 Thread 面板仍可能参与自动已读**
    - 确认：`Shell::updateReading()` 原先只要 `_thread` 存在就设置线程阅读状态，不管面板是否可见；`closeThread()` 也未清除线程列表的阅读状态。
@@ -913,12 +922,14 @@ ctest --test-dir /build --output-on-failure \
 ```sh
 ctest --test-dir /build --output-on-failure
 # 121/121 tests passed, 0 failed
-# Total Test time (real) = 266.64 sec
+# Total Test time (real) = 266.56 sec
 ```
 
 #### 剩余风险
 
-- 没有服务器 snapshot 版本号；本地 Mark unread 的 counts 保护只能以“请求发起时间 + 写入确认 epoch”建立因果顺序，不能证明所有跨客户端并发顺序。
-- RTM marked 事件没有 epoch；确认前的 marked 事件按保守策略拒绝，可能延迟一次合法的远端读取直到后续事件/counts。
+- 没有服务器 snapshot 版本号；本地 Mark unread 的 counts/roster 保护只能以“请求发起时间 + 写入确认 epoch”建立因果顺序，不能证明所有跨客户端并发顺序。
+- 存在 hold 时所有 RTM marked 事件都被忽略，合法的远端读取要等下一次合格 counts 或 roster 快照；这是为消除因果歧义接受的延迟，不是额外请求。
+- Slack marked 事件没有可靠生成时间/顺序；`event_time` 未使用（秒级且跨时钟不可证明）。
+- counts 不可用时，channel 的 roster fallback 已带请求 epoch；DM 的 `conversations.info` / `resyncUnreads` 路径尚未逐请求传播 epoch，极端重连竞态下仍可能用旧 DM snapshot 清除本地 Mark unread。该路径不在本轮 RTM 修复范围内，列为后续 P2。
 - `workspaceAttention` 仍是 `max(conversation, threads)` 的保守并集，同一会话独立 mention + 独立 thread 可能低估。
 - 本地 DND schedule/时区配置未实现；隐藏刷新只跟随 Slack 的状态，不判断本地时段。

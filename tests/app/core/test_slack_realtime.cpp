@@ -702,7 +702,7 @@ TEST("slack realtime: edits, deletions, reactions, presence, users and marks") {
     REQUIRE(pumpUntil([&] { return count("usergroups.list") > groups; }, 3000));
 }
 
-TEST("slack realtime: an old marked event cannot undo a local Mark unread") {
+TEST("slack realtime: a delayed pre-mark marked event cannot undo a local Mark unread") {
     if (!haveServer())
         return;
     Env e;
@@ -724,29 +724,66 @@ TEST("slack realtime: an old marked event cannot undo a local Mark unread") {
     REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
     pumpFor(100);
     REQUIRE(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
-    // An old marked event is not a read: it is older than the local cursor
-    // and must not overwrite the optimistic unread state.
+    // The event was generated before the Mark unread but arrives after its
+    // confirmation. Its cursor (300) is above the local mark, so cursor
+    // comparison alone cannot reject it; the hold must.
     REQUIRE(push(envelope(
-        "marked-old",
-        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000100",)"
+        "marked-delayed-pre-mark",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
         R"("unread_count_display":0,"mention_count_display":0})"
     )));
     pumpFor(150);
     CHECK(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
     CHECK(e.store.conversation(c).unread > 0);
-    // A later marked event is a legitimate read past the mark.
-    REQUIRE(push(envelope(
-        "marked-new",
-        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
-        R"("unread_count_display":0,"mention_count_display":0})"
-    )));
+}
+
+TEST("slack realtime: a genuine remote read reconciles through the roster fallback") {
+    if (!haveServer())
+        return;
+    Env e; // OAuth: client.counts is unavailable; the roster is the fallback.
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(c != kNoConv);
+    std::vector<model::Message> page;
+    for (const char *ts : {"1800000000.000100", "1800000000.000200", "1800000000.000250",
+                           "1800000000.000300"}) {
+        model::Message x;
+        x.ts   = model::parseTs(ts);
+        x.user = e.store.findUser("UMIRA");
+        x.text = "message";
+        page.push_back(std::move(x));
+    }
+    e.store.addPage(c, std::move(page));
+    e.store.markRead(c, model::parseTs("1800000000.000300"));
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
+    pumpFor(100);
+    REQUIRE(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    // Another client read through 250. The next roster snapshot (the
+    // counts-unavailable path) carries the authoritative cursor.
+    set(R"({"users.conversations": {"ok": true, "channels": [
+              {"id": "C1", "name": "general", "is_channel": true, "is_member": true,
+               "latest": "1800000000.000300", "last_read": "1800000000.000250"}
+            ], "response_metadata": {"next_cursor": ""}}})");
+    e.be->reloadConversationsForTest();
     REQUIRE(pumpUntil(
         [&] {
             const auto &x = e.store.conversation(c);
-            return x.lastRead == model::parseTs("1800000000.000300") && x.unread == 0;
+            return x.lastRead == model::parseTs("1800000000.000250") && x.unread == 1;
         },
         3000
     ));
+    // The partial read does not make a late pre-mark 300 event trustworthy:
+    // the 300 message is still unread.
+    REQUIRE(push(envelope(
+        "marked-late-after-partial",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    pumpFor(150);
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1800000000.000250"));
+    CHECK(e.store.conversation(c).unread == 1);
 }
 
 TEST("slack realtime: new channels and group DMs join the list; foreign events don't") {

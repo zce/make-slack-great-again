@@ -210,10 +210,18 @@ struct SlackBackend::Read {
     void                          connectSettled();
     void                          mergeUsers(std::vector<model::User> users);
     void                          noteOffRoster(const std::unordered_set<std::string> &inSnapshot);
-    void                          loadConversations(std::function<void(const std::string &)> done);
-    void                          loadViaWebClient(std::function<void(const std::string &)> done);
-    void                          loadChannelDirectory();
-    void                          applyRoster(std::vector<model::Conversation> convs);
+    void loadConversations(std::function<void(const std::string &)> done);
+    void loadViaWebClient(
+        std::function<void(const std::string &)> done,
+        uint64_t                                 markEpochAtStart,
+        uint64_t                                 confirmEpochAtStart
+    );
+    void loadChannelDirectory();
+    void applyRoster(
+        std::vector<model::Conversation> convs,
+        uint64_t                         markEpochAtStart,
+        uint64_t                         confirmEpochAtStart
+    );
     void                          fixGroupMembers();
     void                          enrichDmActivity();
     void                          loadEmoji();
@@ -942,8 +950,10 @@ void SlackBackend::Read::noteOffRoster(const std::unordered_set<std::string> &in
 }
 
 void SlackBackend::Read::loadConversations(std::function<void(const std::string &)> done) {
+    const uint64_t markEpochAtStart    = unreadMarkEpoch;
+    const uint64_t confirmEpochAtStart = unreadMarkConfirmedEpoch;
     if (convListRestricted) {
-        loadViaWebClient(std::move(done));
+        loadViaWebClient(std::move(done), markEpochAtStart, confirmEpochAtStart);
         return;
     }
     auto acc = std::make_shared<std::vector<model::Conversation>>();
@@ -965,7 +975,11 @@ void SlackBackend::Read::loadConversations(std::function<void(const std::string 
                     acc->push_back(std::move(m));
             }
         },
-        [this, acc, done = std::move(done)](const std::string &err) mutable {
+        [this,
+         acc,
+         done = std::move(done),
+         markEpochAtStart,
+         confirmEpochAtStart](const std::string &err) mutable {
             if (err == "enterprise_is_restricted") {
                 // Grid: the listings are never served to a session token.
                 if (!convListRestricted)
@@ -973,7 +987,7 @@ void SlackBackend::Read::loadConversations(std::function<void(const std::string 
                         "slack", "users.conversations restricted (Grid): client.userBoot + im.list"
                     );
                 convListRestricted = true;
-                loadViaWebClient(std::move(done));
+                loadViaWebClient(std::move(done), markEpochAtStart, confirmEpochAtStart);
                 return;
             }
             if (!err.empty()) {
@@ -981,7 +995,7 @@ void SlackBackend::Read::loadConversations(std::function<void(const std::string 
                 done(err);
                 return;
             }
-            applyRoster(std::move(*acc));
+            applyRoster(std::move(*acc), markEpochAtStart, confirmEpochAtStart);
             done({});
         }
     );
@@ -1034,7 +1048,11 @@ void SlackBackend::Read::loadChannelDirectory() {
 // How Slack's own client boots: client.userBoot (joined channels and MPDMs)
 // + im.list (every DM; userBoot only carries the open ones). Both halves
 // must land, or the roster would be replaced by half of itself.
-void SlackBackend::Read::loadViaWebClient(std::function<void(const std::string &)> done) {
+void SlackBackend::Read::loadViaWebClient(
+    std::function<void(const std::string &)> done,
+    uint64_t                                 markEpochAtStart,
+    uint64_t                                 confirmEpochAtStart
+) {
     struct Acc {
         std::vector<model::Conversation>         convs;
         int                                      pending = 2;
@@ -1049,13 +1067,13 @@ void SlackBackend::Read::loadViaWebClient(std::function<void(const std::string &
                 if (model::Conversation m = mapjson::toConversation(c, s); !m.id.empty())
                     acc->convs.push_back(std::move(m));
     };
-    auto finish = [this, acc](const std::string &err) {
+    auto finish = [this, acc, markEpochAtStart, confirmEpochAtStart](const std::string &err) {
         if (!err.empty())
             acc->error = err;
         if (--acc->pending > 0)
             return;
         if (acc->error.empty())
-            applyRoster(std::move(acc->convs));
+            applyRoster(std::move(acc->convs), markEpochAtStart, confirmEpochAtStart);
         acc->done(acc->error);
     };
     call(
@@ -1306,7 +1324,11 @@ void SlackBackend::rereadMutes() {
 // A roster reload: what the API cannot
 // tell (local badges, notify level, cursors, members, local name) survives a
 // reload; mute follows users.prefs.get's list once that has answered.
-void SlackBackend::Read::applyRoster(std::vector<model::Conversation> convs) {
+void SlackBackend::Read::applyRoster(
+    std::vector<model::Conversation> convs,
+    uint64_t                         markEpochAtStart,
+    uint64_t                         confirmEpochAtStart
+) {
     // The roster's own numbers are the activity source once client.counts is
     // unavailable (OAuth, or given up on) — taken before the local merge.
     std::vector<mapjson::Counts> serverActivity;
@@ -1334,7 +1356,7 @@ void SlackBackend::Read::applyRoster(std::vector<model::Conversation> convs) {
     convsLoaded = true;
     reconcileDead();
     if (!serverActivity.empty())
-        applyActivity(serverActivity, false, unreadMarkEpoch, unreadMarkConfirmedEpoch);
+        applyActivity(serverActivity, false, markEpochAtStart, confirmEpochAtStart);
     fixGroupMembers();
     fetchMissingDmUsers();
     enrichDmActivity();
@@ -3028,22 +3050,22 @@ void SlackBackend::Read::releaseUnreadMark(ConvRef c, Ts ts) {
         unreadMarks.erase(it);
 }
 
-// RTM marked events carry no snapshot epoch. An event at or before the
-// local mark cursor is an old echo, not a read: reject it before touching
-// the Store. A later cursor is a genuine read past the mark.
+// RTM marked events carry no generation time or sequence relative to our
+// Mark unread write: even a cursor above the local mark can be the pre-mark
+// cursor arriving late. While the hold exists, reject the event before it
+// can touch the Store; counts (or the roster fallback) reconciles.
 bool SlackBackend::Read::acceptMarkedEvent(ConvRef c, Ts ts) {
     if (c >= s.conversationCount())
         return false;
     const auto it = unreadMarks.find(s.conversation(c).id);
     if (it == unreadMarks.end())
         return true;
-    // Until our own mark write is confirmed, a marked event cannot be told
-    // apart from the pre-mark cursor. Keep the optimistic state; a later
-    // event or a confirmed counts answer can release it.
-    if (it->second.confirmedEpoch == 0 || ts <= it->second.cursor)
-        return false;
-    unreadMarks.erase(it);
-    return true;
+    // A marked event has no generation time or sequence relative to our
+    // write: a cursor above the local mark can still be the pre-mark cursor
+    // arriving late. While the local Mark unread is held, only a counts
+    // snapshot (or the roster fallback) taken after confirmation may decide.
+    (void)ts;
+    return false;
 }
 
 // An activity snapshot: fold the cursors in, seed the badges of
@@ -3091,11 +3113,11 @@ void SlackBackend::Read::applyActivity(
     };
     std::vector<Moved> moved;
     for (const mapjson::Counts &c : snapshot) {
-        const auto       it        = activity.find(c.id);
-        const bool       firstSeen = priming || it == activity.end();
-        const auto       markIt    = unreadMarks.find(c.id);
-        const bool       hasMark   = markIt != unreadMarks.end();
-        const UnreadMark mark      = hasMark ? markIt->second : UnreadMark{};
+        const auto       it         = activity.find(c.id);
+        const bool       firstSeen  = priming || it == activity.end();
+        const auto       markIt     = unreadMarks.find(c.id);
+        const bool       hasMark    = markIt != unreadMarks.end();
+        const UnreadMark mark       = hasMark ? markIt->second : UnreadMark{};
         const bool       beforeMark = hasMark && markEpochAtStart < mark.epoch;
         const bool       beforeConfirm =
             hasMark && (mark.confirmedEpoch == 0 || confirmEpochAtStart < mark.confirmedEpoch);
@@ -3190,8 +3212,14 @@ void SlackBackend::Read::applyActivity(
                 // A trusted answer past the mark means another client read
                 // further; its cursor wins from here. Re-find it: the Store
                 // update above ran observers synchronously.
+                // Keep the RTM guard until an authoritative snapshot has
+                // read the mark target and everything this client knows is
+                // newer. A qualified partial read (e.g. 250 with a 300
+                // message still unread) must not make a late pre-mark 300
+                // event trusted.
                 if (const auto after = unreadMarks.find(c.id);
-                    after != unreadMarks.end() && c.lastRead > after->second.cursor)
+                    after != unreadMarks.end() &&
+                    lastRead >= std::max(after->second.target, std::max(x.latest, c.latest)))
                     unreadMarks.erase(after);
             }
         }
