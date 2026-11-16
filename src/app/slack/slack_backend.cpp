@@ -383,6 +383,11 @@ struct SlackBackend::Read {
     // a member one: reload the roster soon. rosterAsked: the unknown ids
     // that already asked once (one the reload doesn't bring asks no more).
     bool                                             rosterWanted = false;
+    // A marked event rejected by a local unread hold asks for one roster
+    // reconciliation even while a healthy Socket Mode connection suppresses
+    // periodic roster polling.
+    bool                                             markedReconcileWanted = false;
+    bool                                             markedReconcileRequestPreConfirm = false;
     std::unordered_set<std::string>                  rosterAsked;
     bool        threadsUnavailable = false, threadsPrimed = false;
     std::string threadsError;           // the refusal that gave up on the feed
@@ -1365,9 +1370,19 @@ void SlackBackend::Read::applyRoster(
 void SlackBackend::Read::carryLocal(
     model::Conversation &fresh, const model::Conversation &old
 ) const {
-    fresh.unread   = std::max(fresh.unread, old.unread);
-    fresh.mentions = std::max(fresh.mentions, old.mentions);
-    fresh.starred  = fresh.starred || old.starred; // stars.list decides
+    // A local Mark unread owns its cursor until a trusted applyActivity
+    // snapshot decides. A roster/info merge must not advance it while the
+    // hold exists, even if the response is newer than the last snapshot.
+    if (unreadMarks.count(fresh.id)) {
+        fresh.unread   = old.unread;
+        fresh.mentions = old.mentions;
+        fresh.lastRead = old.lastRead;
+    } else {
+        fresh.unread   = std::max(fresh.unread, old.unread);
+        fresh.mentions = std::max(fresh.mentions, old.mentions);
+        fresh.lastRead = std::max(fresh.lastRead, old.lastRead);
+    }
+    fresh.starred = fresh.starred || old.starred; // stars.list decides
     if (fresh.notify == model::NotifyLevel::Default)
         fresh.notify = old.notify; // no read API for the per-channel level
     // Once users.prefs.get's muted_channels answered, it decides (Slack can
@@ -1379,8 +1394,7 @@ void SlackBackend::Read::carryLocal(
         fresh.members = old.members;
     if (!fresh.extShared)
         fresh.extShared = old.extShared; // some roster/info responses omit this flag
-    fresh.lastRead = std::max(fresh.lastRead, old.lastRead);
-    fresh.latest   = std::max(fresh.latest, old.latest);
+    fresh.latest = std::max(fresh.latest, old.latest);
     if (fresh.canvasTitle.empty()) { // conversations.list omits properties
         fresh.canvasTitle = old.canvasTitle;
         fresh.canvasId    = old.canvasId;
@@ -2897,12 +2911,29 @@ void SlackBackend::Read::tick() {
     b.realtimeTick();
     const bool    push      = b.hasRealtimePush();
     // (0) No push: reload the roster ourselves (new DMs and channels). A
-    // push workspace hears of them (and backfills on a reconnect).
+    // push workspace hears of them (and backfills on a reconnect). A marked
+    // event rejected by a local unread hold asks for one roster
+    // reconciliation even over a healthy push socket; it does not turn on
+    // periodic roster polling.
     const int64_t rosterGap = countsDisabled ? kRosterReloadGapMs : kRosterFallbackGapMs;
-    if (!push &&
-        (t - lastRoster >= rosterGap || (rosterWanted && t - lastRoster >= kRosterSoonestGapMs))) {
-        lastRoster   = t;
-        rosterWanted = false;
+    const bool    periodicRoster =
+        !push &&
+        (t - lastRoster >= rosterGap || (rosterWanted && t - lastRoster >= kRosterSoonestGapMs));
+    const bool reconcileRoster =
+        push && markedReconcileWanted && t - lastRoster >= kRosterSoonestGapMs;
+    if (periodicRoster || reconcileRoster) {
+        lastRoster = t;
+        if (periodicRoster)
+            rosterWanted = false;
+        if (reconcileRoster) {
+            markedReconcileWanted             = false;
+            markedReconcileRequestPreConfirm = false;
+            for (const auto &entry : unreadMarks)
+                if (entry.second.confirmedEpoch == 0) {
+                    markedReconcileRequestPreConfirm = true;
+                    break;
+                }
+        }
         loadConversations([](const std::string &) {});
     }
     pruneThreadState();
@@ -3040,6 +3071,13 @@ void SlackBackend::Read::confirmUnreadMark(ConvRef c, Ts target, bool ok) {
     if (it == unreadMarks.end() || it->second.target != target)
         return;
     it->second.confirmedEpoch = ++unreadMarkConfirmedEpoch;
+    // A roster request that started before this confirmation may be in
+    // flight. It cannot speak for the mark, so ask again for a request that
+    // starts after the confirmation.
+    if (markedReconcileRequestPreConfirm) {
+        markedReconcileWanted             = true;
+        markedReconcileRequestPreConfirm = false;
+    }
 }
 
 void SlackBackend::Read::releaseUnreadMark(ConvRef c, Ts ts) {
@@ -3065,6 +3103,10 @@ bool SlackBackend::Read::acceptMarkedEvent(ConvRef c, Ts ts) {
     // arriving late. While the local Mark unread is held, only a counts
     // snapshot (or the roster fallback) taken after confirmation may decide.
     (void)ts;
+    // Healthy Socket Mode suppresses periodic roster polling. Ask for one
+    // reconciliation instead of permanently losing the remote read.
+    if (b.hasRealtimePush())
+        markedReconcileWanted = true;
     return false;
 }
 

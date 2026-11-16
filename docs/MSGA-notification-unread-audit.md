@@ -877,6 +877,13 @@ ctest --test-dir /build --output-on-failure
      - `slack read: a confirmed Mark unread lets another client advance past it`：Test B，通过 counts 最终到 250。
      - `slack realtime: a genuine remote read reconciles through the roster fallback`：counts 不可用时通过 roster 到 250，并验证随后迟到的 300 事件仍不能清除 300 的未读。
    - 这是保守设计：marked 事件不再作为本地 Mark unread 期间的权威读状态，只保留其无 hold 时的即时行为。
+   - **OAuth + Socket Mode 的 Push 协调**：OAuth 工作区 `countsDisabled=true`，健康 push 时原先不会周期拉 roster，导致被拒绝的 marked 事件没有后续协调。现在拒绝事件时置 `markedReconcileWanted`；`tick()` 允许这种显式请求在 push 下执行一次 roster，仍然受 `kRosterSoonestGapMs` 节流并合并重复事件，不打开周期 roster 轮询。
+   - **确认前请求**：发起 marked 协调 roster 时若还有未确认 hold，记录 `markedReconcileRequestPreConfirm`；确认回调随后再次置 `markedReconcileWanted`，保证确认后还会发起新请求。旧请求的 epoch 由 `loadConversations` 启动时捕获，`applyActivity` 不会接受它。
+   - **roster merge 保护**：`carryLocal()` 在 hold 存在时不把 roster 的 `lastRead/unread/mentions` 合入 Store；只由随后带正确 epoch 的 `applyActivity` 决定，避免预确认 roster 在进入 `applyActivity` 前就推进 cursor。
+   - 测试：
+     - `slack realtime: a rejected marked event requests roster reconciliation`（无手动 reload，自动请求并到 250，300 仍未读）。
+     - `slack realtime: a pre-confirmation marked event schedules a fresh reconciliation`（确认前请求被拒，确认后自动再请求并到 250）。
+     - `slack realtime: full roster reconciliation releases the hold`（250 保留 hold，300 释放；随后 marked 事件立即接受）。
 
 3. **关闭的 Thread 面板仍可能参与自动已读**
    - 确认：`Shell::updateReading()` 原先只要 `_thread` 存在就设置线程阅读状态，不管面板是否可见；`closeThread()` 也未清除线程列表的阅读状态。
@@ -922,7 +929,7 @@ ctest --test-dir /build --output-on-failure \
 ```sh
 ctest --test-dir /build --output-on-failure
 # 121/121 tests passed, 0 failed
-# Total Test time (real) = 266.56 sec
+# Total Test time (real) = 273.88 sec
 ```
 
 #### 剩余风险

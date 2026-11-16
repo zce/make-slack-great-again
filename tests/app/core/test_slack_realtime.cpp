@@ -737,14 +737,12 @@ TEST("slack realtime: a delayed pre-mark marked event cannot undo a local Mark u
     CHECK(e.store.conversation(c).unread > 0);
 }
 
-TEST("slack realtime: a genuine remote read reconciles through the roster fallback") {
-    if (!haveServer())
-        return;
-    Env e; // OAuth: client.counts is unavailable; the roster is the fallback.
-    REQUIRE(e.connect());
-    REQUIRE(e.live());
-    const ConvRef c = e.conv("C1");
-    REQUIRE(c != kNoConv);
+namespace {
+
+bool setMarkedHold(Env &e, ConvRef &c) {
+    c = e.conv("C1");
+    if (c == kNoConv)
+        return false;
     std::vector<model::Message> page;
     for (const char *ts : {"1800000000.000100", "1800000000.000200", "1800000000.000250",
                            "1800000000.000300"}) {
@@ -756,17 +754,44 @@ TEST("slack realtime: a genuine remote read reconciles through the roster fallba
     }
     e.store.addPage(c, std::move(page));
     e.store.markRead(c, model::parseTs("1800000000.000300"));
+    return true;
+}
+
+void setRosterRead(Ts lastRead) {
+    const std::string body = str::concat(
+        {R"({"users.conversations": {"ok": true, "channels": [
+              {"id": "C1", "name": "general", "is_channel": true, "is_member": true,
+               "latest": "1800000000.000300", "last_read": ")",
+         model::formatTs(lastRead),
+         R"("}
+            ], "response_metadata": {"next_cursor": ""}}})"}
+    );
+    set(body);
+}
+
+} // namespace
+
+TEST("slack realtime: a rejected marked event requests roster reconciliation") {
+    if (!haveServer())
+        return;
+    Env e; // OAuth: client.counts is unavailable; the roster is the fallback.
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    ConvRef c = kNoConv;
+    REQUIRE(setMarkedHold(e, c));
     e.be->markUnread(c, model::parseTs("1800000000.000200"));
     REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
     pumpFor(100);
-    REQUIRE(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
-    // Another client read through 250. The next roster snapshot (the
-    // counts-unavailable path) carries the authoritative cursor.
-    set(R"({"users.conversations": {"ok": true, "channels": [
-              {"id": "C1", "name": "general", "is_channel": true, "is_member": true,
-               "latest": "1800000000.000300", "last_read": "1800000000.000250"}
-            ], "response_metadata": {"next_cursor": ""}}})");
-    e.be->reloadConversationsForTest();
+    setRosterRead(model::parseTs("1800000000.000250"));
+    const int rosters = count("users.conversations");
+    // The event is rejected because of the hold, and requests one roster
+    // reconciliation without a manual reload.
+    REQUIRE(push(envelope(
+        "marked-reconcile",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil([&] { return count("users.conversations") > rosters; }, 3000));
     REQUIRE(pumpUntil(
         [&] {
             const auto &x = e.store.conversation(c);
@@ -774,16 +799,96 @@ TEST("slack realtime: a genuine remote read reconciles through the roster fallba
         },
         3000
     ));
-    // The partial read does not make a late pre-mark 300 event trustworthy:
-    // the 300 message is still unread.
+}
+
+TEST("slack realtime: a pre-confirmation marked event schedules a fresh reconciliation") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    ConvRef c = kNoConv;
+    REQUIRE(setMarkedHold(e, c));
+    // Keep the mark write pending so the first roster request is started
+    // before its confirmation.
+    script("conversations.mark", R"([{"ok": true, "__delay": 2.0}])");
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    setRosterRead(model::parseTs("1800000000.000250"));
+    const int rosters = count("users.conversations");
     REQUIRE(push(envelope(
-        "marked-late-after-partial",
+        "marked-before-confirm",
         R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
         R"("unread_count_display":0,"mention_count_display":0})"
     )));
-    pumpFor(150);
-    CHECK(e.store.conversation(c).lastRead == model::parseTs("1800000000.000250"));
-    CHECK(e.store.conversation(c).unread == 1);
+    // The pre-confirmation roster request exists, but cannot release the
+    // hold; the confirmation then asks for a fresh one.
+    REQUIRE(pumpUntil([&] { return count("users.conversations") > rosters; }, 1500));
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    pumpFor(2300);
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000250") && x.unread == 1;
+        },
+        5000
+    ));
+}
+
+TEST("slack realtime: full roster reconciliation releases the hold") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    ConvRef c = kNoConv;
+    REQUIRE(setMarkedHold(e, c));
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
+    pumpFor(100);
+    // Partial read: the cursor advances, the 300 message and the hold stay.
+    setRosterRead(model::parseTs("1800000000.000250"));
+    REQUIRE(push(envelope(
+        "marked-partial",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000250") && x.unread == 1;
+        },
+        3000
+    ));
+    // The partial snapshot is one-shot: it must not keep polling the roster
+    // merely because the hold is still there.
+    const int afterPartial = count("users.conversations");
+    pumpFor(400);
+    CHECK(count("users.conversations") == afterPartial);
+    // A full read releases the hold.
+    setRosterRead(model::parseTs("1800000000.000300"));
+    REQUIRE(push(envelope(
+        "marked-full",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000300") && x.unread == 0;
+        },
+        3000
+    ));
+    // With no hold, a subsequent marked event applies immediately.
+    REQUIRE(push(envelope(
+        "marked-after-release",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000350",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] { return e.store.conversation(c).lastRead == model::parseTs("1800000000.000350"); },
+        3000
+    ));
 }
 
 TEST("slack realtime: new channels and group DMs join the list; foreign events don't") {
