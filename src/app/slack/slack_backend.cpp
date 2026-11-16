@@ -347,8 +347,28 @@ struct SlackBackend::Read {
     Ts                   &baselineOf(ConvRef c);
     size_t                bgIdx             = 0;
     bool                  countsUnavailable = false, countsDisabled = false, activityPrimed = false;
+    bool                  countsInFlight = false; // one snapshot at a time: no older answer wins
     int                   countsFailures = 0;
     std::unordered_map<std::string, mapjson::Counts> activity;
+    // A local "Mark unread" holds its cursor until the write is confirmed
+    // and a counts answer taken after that confirmation arrives. Without it
+    // an old snapshot (the cursor from before the mark) would read the chat
+    // again. Thread marks have the same guard in threadUnreadPending.
+    struct UnreadMark {
+        Ts       cursor = 0, target = 0;
+        uint64_t epoch = 0, confirmedEpoch = 0;
+    };
+    std::unordered_map<std::string, UnreadMark> unreadMarks;
+    uint64_t                                    unreadMarkEpoch = 0, unreadMarkConfirmedEpoch = 0;
+    void                                        noteUnreadMark(ConvRef c, Ts target);
+    void                                        confirmUnreadMark(ConvRef c, Ts target, bool ok);
+    void                                        releaseUnreadMark(ConvRef c, Ts ts);
+    void                                        applyActivity(
+        const std::vector<mapjson::Counts> &snapshot,
+        bool                                fromCounts,
+        uint64_t                            markEpochAtStart,
+        uint64_t                            confirmEpochAtStart
+    );
     // A counts snapshot named a conversation the roster lacks, or dropped
     // a member one: reload the roster soon. rosterAsked: the unknown ids
     // that already asked once (one the reload doesn't bring asks no more).
@@ -408,8 +428,6 @@ struct SlackBackend::Read {
 
     void tick();
     void pollUnreadCounts();
-    // fromCounts: a client.counts snapshot (else the roster's own numbers).
-    void applyActivity(const std::vector<mapjson::Counts> &snapshot, bool fromCounts);
     void pollConversation(ConvRef c, bool foreground, Ts hint = 0);
     void pollThreadReplies();
     void pollThreadSubs();
@@ -1314,7 +1332,7 @@ void SlackBackend::Read::applyRoster(std::vector<model::Conversation> convs) {
     convsLoaded = true;
     reconcileDead();
     if (!serverActivity.empty())
-        applyActivity(serverActivity, false);
+        applyActivity(serverActivity, false, unreadMarkEpoch, unreadMarkConfirmedEpoch);
     fixGroupMembers();
     fetchMissingDmUsers();
     enrichDmActivity();
@@ -2937,38 +2955,81 @@ ConvRef SlackBackend::Read::nextBackgroundTarget() {
 }
 
 void SlackBackend::Read::pollUnreadCounts() {
-    if (countsDisabled || countsUnavailable)
+    if (countsDisabled || countsUnavailable || countsInFlight)
         return;
-    call("client.counts", {}, [this](const json::Document &doc, const std::string &err) {
-        if (err.empty()) {
-            countsFailures = 0;
-            applyActivity(mapjson::toCounts(doc.root()), true);
-            // The Activity entry: the feed's unread items (activity_v2).
-            if (session)
-                s.setUnreadActivity(mapjson::activityUnread(doc.root()));
-            return;
+    const uint64_t markEpochAtStart    = unreadMarkEpoch;
+    const uint64_t confirmEpochAtStart = unreadMarkConfirmedEpoch;
+    countsInFlight                     = true;
+    call(
+        "client.counts",
+        {},
+        [this, markEpochAtStart, confirmEpochAtStart](
+            const json::Document &doc, const std::string &err
+        ) {
+            countsInFlight = false;
+            if (err.empty()) {
+                countsFailures = 0;
+                applyActivity(
+                    mapjson::toCounts(doc.root()), true, markEpochAtStart, confirmEpochAtStart
+                );
+                // The Activity entry: the feed's unread items (activity_v2).
+                if (session)
+                    s.setUnreadActivity(mapjson::activityUnread(doc.root()));
+                return;
+            }
+            if (isMethodUnavailable(err))
+                countsUnavailable = true;
+            // A blip must not cost the mechanism; a few failures in a row do.
+            if (countsUnavailable || ++countsFailures >= kCountsFailureLimit) {
+                LOG_WARN(
+                    "slack",
+                    "client.counts unavailable (%s): falling back to the roster diff",
+                    err.c_str()
+                );
+                countsDisabled = true;
+                activity.clear();
+                activityPrimed = false;
+            }
         }
-        if (isMethodUnavailable(err))
-            countsUnavailable = true;
-        // A blip must not cost the mechanism; a few failures in a row do.
-        if (countsUnavailable || ++countsFailures >= kCountsFailureLimit) {
-            LOG_WARN(
-                "slack",
-                "client.counts unavailable (%s): falling back to the roster diff",
-                err.c_str()
-            );
-            countsDisabled = true;
-            activity.clear();
-            activityPrimed = false;
-        }
-    });
+    );
 }
 
-// An activity snapshot: fold the cursors in (upward only), seed the
-// badges of conversations seen for the first time, and poll the ones that
-// moved since the previous snapshot.
+void SlackBackend::Read::noteUnreadMark(ConvRef c, Ts target) {
+    if (c >= s.conversationCount() || target <= 0)
+        return;
+    unreadMarks[s.conversation(c).id] =
+        UnreadMark{target - 1, target, ++unreadMarkEpoch, 0};
+}
+
+void SlackBackend::Read::confirmUnreadMark(ConvRef c, Ts target, bool ok) {
+    if (!ok || c >= s.conversationCount())
+        return;
+    const auto it = unreadMarks.find(s.conversation(c).id);
+    if (it == unreadMarks.end() || it->second.target != target)
+        return;
+    it->second.confirmedEpoch = ++unreadMarkConfirmedEpoch;
+}
+
+void SlackBackend::Read::releaseUnreadMark(ConvRef c, Ts ts) {
+    if (c >= s.conversationCount())
+        return;
+    const auto it = unreadMarks.find(s.conversation(c).id);
+    if (it != unreadMarks.end() && ts > it->second.cursor)
+        unreadMarks.erase(it);
+}
+
+// An activity snapshot: fold the cursors in, seed the badges of
+// conversations seen for the first time, and poll the ones that moved since
+// the previous snapshot. The channel's has_unreads is a boolean hint while
+// mention_count (and an IM's dm_count) are exact; a snapshot's counts only
+// cover messages up to its `latest`, so live messages past that stay added.
+// A local Mark unread owns its cursor until a counts answer taken after the
+// write was confirmed can speak for it.
 void SlackBackend::Read::applyActivity(
-    const std::vector<mapjson::Counts> &snapshot, bool fromCounts
+    const std::vector<mapjson::Counts> &snapshot,
+    bool                                fromCounts,
+    uint64_t                            markEpochAtStart,
+    uint64_t                            confirmEpochAtStart
 ) {
     if (snapshot.empty())
         return;
@@ -3002,37 +3063,111 @@ void SlackBackend::Read::applyActivity(
     };
     std::vector<Moved> moved;
     for (const mapjson::Counts &c : snapshot) {
-        const auto    it        = activity.find(c.id);
-        const bool    firstSeen = priming || it == activity.end();
-        const ConvRef r         = s.findConversation(c.id);
-        if (r != kNoConv) {
-            const model::Conversation &x      = s.conversation(r);
-            uint32_t                   unread = x.unread, mentions = x.mentions;
-            if (firstSeen && x.member && r != openConv) {
-                // Every DM unread is a red-badge "mention"; a muted
-                // conversation badges only explicit mentions.
-                const bool     muted = x.muted || x.notify == model::NotifyLevel::Nothing;
-                const uint32_t m     = x.isDirect() ? std::max(c.unread, c.mentions) : c.mentions;
-                unread               = std::max(unread, muted ? m : std::max(c.unread, m));
-                mentions             = std::max(mentions, m);
+        const auto it        = activity.find(c.id);
+        const bool firstSeen = priming || it == activity.end();
+        // A late answer from before the previous one: its cursor and latest
+        // are older, so it cannot describe the present. Keep the newer state.
+        const bool stale =
+            !firstSeen && (c.lastRead < it->second.lastRead || c.latest < it->second.latest);
+        const ConvRef r = s.findConversation(c.id);
+        if (r != kNoConv && !stale) {
+            const model::Conversation &x     = s.conversation(r);
+            const auto                 markIt = unreadMarks.find(c.id);
+            const bool                 hasMark = markIt != unreadMarks.end();
+            const UnreadMark           mark = hasMark ? markIt->second : UnreadMark{};
+            bool                       held = false;
+            if (hasMark) {
+                const bool beforeMark    = markEpochAtStart < mark.epoch;
+                const bool beforeConfirm =
+                    mark.confirmedEpoch == 0 || confirmEpochAtStart < mark.confirmedEpoch;
+                // The mark's own echo (or an older cursor) repeats local
+                // state; anything newer needs a request taken after the
+                // write landed, or it may be the pre-mark snapshot.
+                held = beforeMark || beforeConfirm || c.lastRead <= mark.cursor;
             }
-            // Read up on the server (another client; or a badge cached from
-            // before) with nothing newer here: no badge either.
-            if (fromCounts && c.unread == 0 && c.lastRead >= c.latest && x.latest <= c.latest)
-                unread = mentions = 0;
-            if (c.latest > x.latest || c.lastRead > x.lastRead || unread != x.unread ||
-                mentions != x.mentions)
-                s.updateConversation(r, [&](model::Conversation &y) {
-                    y.latest   = std::max(y.latest, c.latest);
-                    y.lastRead = std::max(y.lastRead, c.lastRead);
-                    y.unread   = unread;
-                    y.mentions = mentions;
-                });
+            if (held) {
+                // Keep the manual unread; only a newer server latest moves so
+                // the next poll/arrival is not mistaken for old history.
+                if (c.latest > x.latest)
+                    s.updateConversation(r, [&](model::Conversation &y) {
+                        y.latest = std::max(y.latest, c.latest);
+                    });
+            } else if (!(firstSeen && r == openConv)) {
+                const bool     direct      = x.isDirect();
+                const Ts       readThrough = std::max(x.lastRead, c.lastRead);
+                const Ts       covered     = c.latest;
+                uint32_t       baseUnread = 0, baseMentions = 0;
+                uint32_t       withinUnread = 0, withinMentions = 0;
+                uint32_t       removedUnread = 0, removedMentions = 0;
+                uint32_t       addedUnread = 0, addedMentions = 0;
+                if (readThrough < covered) {
+                    if (direct) // an IM's dm_count is exact
+                        baseUnread = c.unread;
+                    else // a channel's has_unreads says only "at least one"
+                        baseUnread = c.unread ? 1 : 0;
+                    baseMentions = c.mentions;
+                }
+                for (const model::Message &m : x.messages) {
+                    if (m.pending || (s.me != kNoUser && m.user == s.me) ||
+                        (m.isReply() && !m.isBroadcast()))
+                        continue;
+                    const bool mention = s.mentionsMe(m.text);
+                    if (m.ts <= covered) {
+                        if (m.ts > readThrough) {
+                            ++withinUnread;
+                            if (mention)
+                                ++withinMentions;
+                        } else if (m.ts > c.lastRead && c.lastRead < readThrough) {
+                            // The server counted it as unread; this client
+                            // has already read it (auto-read, a jump).
+                            ++removedUnread;
+                            if (mention)
+                                ++removedMentions;
+                        }
+                    } else if (m.ts > readThrough) {
+                        // Arrived after the snapshot was taken: the server
+                        // counts do not cover it.
+                        ++addedUnread;
+                        if (mention)
+                            ++addedMentions;
+                    }
+                }
+                baseUnread  = baseUnread > removedUnread ? baseUnread - removedUnread : 0;
+                baseMentions =
+                    baseMentions > removedMentions ? baseMentions - removedMentions : 0;
+                // A channel's has_unreads says there is something past the
+                // server cursor; knowing some loaded ones were read does not
+                // prove the rest are (they may not be loaded).
+                if (!direct && readThrough < covered && c.unread)
+                    baseUnread = std::max(baseUnread, 1u);
+                const uint32_t unread =
+                    std::max(baseUnread, withinUnread) + addedUnread;
+                // A DM's unread messages are all red-badge items.
+                const uint32_t mentions =
+                    direct ? unread : std::max(baseMentions, withinMentions) + addedMentions;
+                const Ts lastRead = std::max(x.lastRead, c.lastRead);
+                if (c.latest > x.latest || lastRead > x.lastRead || unread != x.unread ||
+                    mentions != x.mentions)
+                    s.updateConversation(r, [&](model::Conversation &y) {
+                        y.latest   = std::max(y.latest, c.latest);
+                        y.lastRead = std::max(y.lastRead, lastRead);
+                        y.unread   = unread;
+                        y.mentions = mentions;
+                    });
+                // A trusted answer past the mark means another client read
+                // further; its cursor wins from here. Re-find it: the Store
+                // update above ran observers synchronously.
+                if (const auto after = unreadMarks.find(c.id);
+                    after != unreadMarks.end() && c.lastRead > after->second.cursor)
+                    unreadMarks.erase(after);
+            }
         }
         if (firstSeen) {
             activity[c.id] = c;
             continue;
         }
+        if (stale)
+            continue; // keep the previous answer as the baseline
         const mapjson::Counts prev = it->second;
         if (c.latest > prev.latest || c.unread > prev.unread || c.mentions > prev.mentions)
             moved.push_back({r, prev, c});
@@ -3476,10 +3611,19 @@ void SlackBackend::Read::threadUnread(ConvRef c, Ts root, Ts to) {
 }
 
 void SlackBackend::Read::publishUnreadThreads() {
-    int n = 0;
-    for (const auto &[k, ts] : unreadThreads)
-        n += !s.threadMuted(keyConv(k), keyTs(k));
-    s.setUnreadThreads(n);
+    // Keep the per-conversation split: the Workspace/App badge compares a
+    // conversation's thread attention with its DM/mention count, rather
+    // than adding the same reply twice. A conversation mute does not clear
+    // this; a thread mute does.
+    std::unordered_map<ConvRef, int> counts;
+    for (const auto &[k, ts] : unreadThreads) {
+        const ConvRef c = keyConv(k);
+        if (s.threadMuted(c, keyTs(k)))
+            continue;
+        ++counts[c];
+    }
+    std::vector<std::pair<ConvRef, int>> list(counts.begin(), counts.end());
+    s.setUnreadThreadCounts(std::move(list));
 }
 
 // Cache one item from the Threads feed in the Store's thread-only structures.
@@ -3820,7 +3964,8 @@ bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
     uint32_t                   unread0 = cv.unread, mentions0 = cv.mentions;
     const Ts                   lastRead = cv.lastRead;
     bool                       counted  = !own && cv.member && ts > lastRead;
-    const bool                 isDm = cv.isDirect(), muted = cv.muted;
+    const bool                 isDm  = cv.isDirect();
+    const bool                 muted = cv.muted || cv.notify == model::NotifyLevel::Nothing;
 
     if (root && !channelVisible && !s.replies(c, root)) {
         // The thread isn't loaded: count the reply on its root only (the
@@ -3854,13 +3999,23 @@ bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
     uint32_t du = 0, dm = 0;
     if (counted) {
         const bool threadMuted = root && s.threadMuted(c, root);
-        const bool following = !threadMuted && root && isFollowed(key, parentIsMe);
+        const bool following   = !threadMuted && root && isFollowed(key, parentIsMe);
+        // A followed thread reply that is not broadcast is thread attention,
+        // not a channel unread/mention: the Threads entry and the per-
+        // conversation thread count carry it. An explicit mention, a DM or a
+        // broadcast still counts on the conversation too (attention takes
+        // the larger of the two, so it is not added twice).
+        const bool followingOnly = !channelVisible && root && following && !mention && !isDm;
         if (!channelVisible && root && !mention && !following && (threadMuted || !isDm)) {
             // lives in the thread, not the channel
         } else if (!muted) {
-            du = 1;
-            dm = isDm || mention || following;
-        } else if (!isDm && (mention || following)) {
+            if (!followingOnly) {
+                du = 1;
+                dm = isDm || mention;
+            }
+        } else if (isDm || mention) {
+            // Muted still badges a DM or a mention; an ordinary muted channel
+            // post stays quiet. A followed thread reply has its own attention.
             du = dm = 1;
         }
     }
@@ -4095,6 +4250,18 @@ void SlackBackend::markDead(const std::string &id) {
 
 void SlackBackend::markAlive(const std::string &id) {
     _read->markAlive(id);
+}
+
+void SlackBackend::noteUnreadMark(ConvRef c, Ts target) {
+    _read->noteUnreadMark(c, target);
+}
+
+void SlackBackend::confirmUnreadMark(ConvRef c, Ts target, bool ok) {
+    _read->confirmUnreadMark(c, target, ok);
+}
+
+void SlackBackend::releaseUnreadMark(ConvRef c, Ts ts) {
+    _read->releaseUnreadMark(c, ts);
 }
 
 void SlackBackend::threadRead(ConvRef c, Ts root, Ts upTo) {

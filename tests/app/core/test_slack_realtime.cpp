@@ -186,6 +186,34 @@ TEST("slack realtime: socket mode opens with the app token, acks and delivers a 
     CHECK(e.store.conversation(c).unread == 1);
 }
 
+TEST("slack realtime: a muted DM still counts its unread badge") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef dm = e.conv("D1");
+    REQUIRE(dm != kNoConv);
+    // Let the one-time conversations.info enrichment land first: after that
+    // its old snapshot cannot resurrect the unread we clear below.
+    REQUIRE(pumpUntil([&] { return e.store.conversation(dm).unread >= 4; }, 3000));
+    e.store.markRead(dm, model::parseTs("1800000000.000050"));
+    e.store.updateConversation(dm, [](model::Conversation &c) {
+        c.muted    = true;
+        c.unread   = 0;
+        c.mentions = 0;
+    });
+    const Ts ts = model::parseTs("1800000000.000100");
+    REQUIRE(push(envelope(
+        "env-muted-dm",
+        R"({"type":"message","channel":"D1","user":"UMIRA","text":"muted but important",)"
+        R"("ts":"1800000000.000100"})"
+    )));
+    REQUIRE(pumpUntil([&] { return e.store.findMessage(dm, ts) != nullptr; }));
+    CHECK(e.store.conversation(dm).unread == 1);
+    CHECK(e.store.conversation(dm).mentions == 1); // a DM's unread is a red badge
+}
+
 TEST("slack realtime: a message read as it lands (the open, focused chat) leaves no badge") {
     if (!haveServer())
         return;

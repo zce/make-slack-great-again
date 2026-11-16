@@ -111,6 +111,13 @@ bool hasUserIdPrefix(std::string_view id) {
     return id.size() > 1 && (id[0] == 'U' || id[0] == 'W');
 }
 
+// DND / a notification schedule pauses delivery only: unread state and
+// badges keep moving underneath. The self User's dnd flag is maintained by
+// the realtime dnd_updated events and the /dnd command.
+bool notificationsPaused(const model::Store &st) {
+    return st.me != kNoUser && st.user(st.me).dnd;
+}
+
 } // namespace
 
 void Shell::loadNotified() {
@@ -332,7 +339,7 @@ void Shell::maybeNotify(
         return;
     if (model::tsSecs(m.ts) < be.nowSecs() - kMaxNotifyAgeSecs)
         return; // too old: a backfill, not news
-    if (!_settings.notifications || st.workspaceMuted)
+    if (!_settings.notifications || st.workspaceMuted || notificationsPaused(st))
         return;
     if ((st.me != kNoUser && m.user == st.me) || m.pending)
         return;
@@ -478,7 +485,7 @@ void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv
         return;
     model::Backend &be = backendFor(st);
     if (!_settings.notifications || !_settings.notifyHuddles || st.workspaceMuted ||
-        !be.capabilities().huddles)
+        notificationsPaused(st) || !be.capabilities().huddles)
         return;
     const model::NotifyLevel level = effectiveLevel(c);
     if (!c.member || c.muted || level == model::NotifyLevel::Nothing)
@@ -513,7 +520,7 @@ void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv
 // Only the master switch gates it; the click opens
 // the message itself (its thread for a reply) and flashes it.
 void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef conv, Ts ts) {
-    if (!_settings.notifications || conv >= st.conversationCount())
+    if (!_settings.notifications || notificationsPaused(st) || conv >= st.conversationCount())
         return;
     const model::Store::SavedItem *it = st.findSaved(conv, ts);
     if (!it)

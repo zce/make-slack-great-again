@@ -290,6 +290,9 @@ void SlackBackend::Live::apply(const json::Value &ev, bool ours) {
         const Ts       ts       = model::parseTs(ev["ts"].str());
         const uint32_t unread   = uint32_t(ev["unread_count_display"].integer());
         const uint32_t mentions = uint32_t(ev["mention_count_display"].integer());
+        // A cursor that really moved past a local Mark unread is another
+        // read; an older echo keeps the local hold.
+        b.releaseUnreadMark(c, ts);
         s.updateConversation(c, [&](model::Conversation &x) {
             x.lastRead = ts;
             x.unread   = unread;

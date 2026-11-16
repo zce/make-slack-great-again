@@ -327,6 +327,7 @@ void Store::clear() {
     ++_localRev;
     ++_groupRev;
     _unreadThreads     = 0;
+    _unreadThreadCounts.clear();
     _unreadActivity    = 0;
     workspaceMuted     = false;
     me                 = kNoUser;
@@ -1800,11 +1801,31 @@ void Store::announceReply(ConvRef c, const Message &m) {
     _arrived = was;
 }
 
+int Store::unreadThreads(ConvRef c) const {
+    const auto it = _unreadThreadCounts.find(c);
+    return it == _unreadThreadCounts.end() ? 0 : it->second;
+}
+
 void Store::setUnreadThreads(int n) {
     n = std::max(n, 0);
     if (n == _unreadThreads)
         return;
     _unreadThreads = n;
+    emit({ChangeKind::Meta, kNoConv});
+}
+
+void Store::setUnreadThreadCounts(std::vector<std::pair<ConvRef, int>> counts) {
+    std::unordered_map<ConvRef, int> next;
+    int                              total = 0;
+    for (auto &[c, n] : counts)
+        if (c < _convs.size() && n > 0) {
+            next[c] = n;
+            total += n;
+        }
+    if (next == _unreadThreadCounts && total == _unreadThreads)
+        return;
+    _unreadThreadCounts = std::move(next);
+    _unreadThreads      = total;
     emit({ChangeKind::Meta, kNoConv});
 }
 

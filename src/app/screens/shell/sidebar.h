@@ -19,8 +19,9 @@
 //
 // Rows are live: a Store observer restyles a row when its counts change —
 // semibold for unread, a red count for DM unreads and channel mentions, a
-// blue dot for other unread in an "All new posts" channel; muted
-// conversations and ones quiet for over 30 days show no badge.
+// blue dot for other unread in an "All new posts" channel. A muted
+// conversation keeps only the important badge (mentions, or any DM unread);
+// ones quiet for over 30 days show no badge.
 #pragma once
 
 #include "screens/common/context.h"

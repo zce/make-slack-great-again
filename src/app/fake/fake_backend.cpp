@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
+#include <unordered_map>
+#include <utility>
 
 namespace fake {
 
@@ -122,13 +124,15 @@ bool FakeBackend::follows(ConvRef conv, Ts root) const {
 
 // The Threads entry: followed threads with a reply past my cursor.
 void FakeBackend::publishUnreadThreads() {
-    int n = 0;
+    std::unordered_map<ConvRef, int> counts;
     for (const ThreadRead &r : _threadRead) {
         const auto replies = _store.threadTimeline(r.conv, r.root);
-        n += !replies.empty() && replies.back()->ts > r.read && follows(r.conv, r.root) &&
-                 !_store.threadMuted(r.conv, r.root);
+        if (!replies.empty() && replies.back()->ts > r.read && follows(r.conv, r.root) &&
+            !_store.threadMuted(r.conv, r.root))
+            ++counts[r.conv];
     }
-    _store.setUnreadThreads(n);
+    std::vector<std::pair<ConvRef, int>> list(counts.begin(), counts.end());
+    _store.setUnreadThreadCounts(std::move(list));
 }
 
 void FakeBackend::setThreadFollowed(ConvRef conv, Ts root, bool follow) {

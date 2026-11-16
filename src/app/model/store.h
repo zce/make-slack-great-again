@@ -17,6 +17,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace model {
@@ -270,7 +271,11 @@ public:
     // Followed threads with unread replies (the
     // sidebar's Threads entry is bright while > 0). Fires Meta (kNoConv).
     int            unreadThreads() const { return _unreadThreads; }
-    void           setUnreadThreads(int n);
+    // The same count per conversation: Workspace/App attention compares it
+    // with that conversation's DM/mention count instead of adding both.
+    int            unreadThreads(ConvRef c) const;
+    void           setUnreadThreads(int n); // a total only (legacy/tests)
+    void           setUnreadThreadCounts(std::vector<std::pair<ConvRef, int>> counts);
     // Unread items in the service's activity feed (the sidebar's Activity
     // entry is bright while > 0). Fires Meta (kNoConv).
     int            unreadActivity() const { return _unreadActivity; }
@@ -467,6 +472,7 @@ private:
     bool                                         _historyRetention  = false;
     std::vector<uint64_t>                        _historyAccess;
     int                                          _unreadThreads  = 0;
+    std::unordered_map<ConvRef, int>             _unreadThreadCounts;
     int                                          _unreadActivity = 0;
     bool                                         _realNames      = true;
 

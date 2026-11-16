@@ -21,6 +21,7 @@ namespace {
 using fakeslack::app;
 using fakeslack::ctl;
 using fakeslack::Log;
+using fakeslack::pumpFor;
 using fakeslack::pumpUntil;
 using fakeslack::script;
 using fakeslack::set;
@@ -685,6 +686,144 @@ TEST("slack read: a channel read elsewhere loses its badge with the next client.
         3000
     ));
     CHECK(e.store.conversation(c).lastRead == model::parseTs("1700000100.000000"));
+}
+
+TEST("slack read: a partial remote read lowers exact mentions and unread") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1"), dm = e.conv("D1");
+    REQUIRE(c != kNoConv && dm != kNoConv);
+    REQUIRE(pumpUntil([&] { return e.store.conversation(c).mentions == 1; }, 3000));
+    // A newer snapshot raises both counts: mentions are exact per channel,
+    // and a DM's dm_count is exact too.
+    set(R"({"client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000300.000000",
+                            "last_read": "1700000000.000000", "mention_count": 3,
+                            "has_unreads": true}],
+              "ims": [{"id": "D1", "latest": "1700000300.000000",
+                       "last_read": "1700000000.000000", "dm_count": 4,
+                       "mention_count": 1, "has_unreads": true}],
+              "mpims": []}})");
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            const auto &y = e.store.conversation(dm);
+            return x.mentions == 3 && x.latest == model::parseTs("1700000300.000000") &&
+                   y.unread == 4 && y.mentions == 4;
+        },
+        3000
+    ));
+    // Another client reads some of it: the cursor moves and the exact count
+    // drops. It must not stay at the old max, and the channel's boolean
+    // has_unreads is only a lower bound.
+    set(R"({"client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000300.000000",
+                            "last_read": "1700000200.000000", "mention_count": 1,
+                            "has_unreads": true}],
+              "ims": [{"id": "D1", "latest": "1700000300.000000",
+                       "last_read": "1700000200.000000", "dm_count": 1,
+                       "has_unreads": true}],
+              "mpims": []}})");
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            const auto &y = e.store.conversation(dm);
+            return x.lastRead == model::parseTs("1700000200.000000") && x.mentions == 1 &&
+                   x.unread == 1 && y.unread == 1 && y.mentions == 1;
+        },
+        3000
+    ));
+    // Fully read elsewhere clears the rest.
+    set(R"({"client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000300.000000",
+                            "last_read": "1700000300.000000", "mention_count": 0,
+                            "has_unreads": false}],
+              "ims": [{"id": "D1", "latest": "1700000300.000000",
+                       "last_read": "1700000300.000000", "dm_count": 0,
+                       "has_unreads": false}],
+              "mpims": []}})");
+    REQUIRE(pumpUntil(
+        [&] {
+            return e.store.conversation(c).unread == 0 && e.store.conversation(c).mentions == 0 &&
+                   e.store.conversation(dm).unread == 0 &&
+                   e.store.conversation(dm).mentions == 0;
+        },
+        3000
+    ));
+}
+
+TEST("slack read: an older counts answer cannot undo a newer partial read") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(pumpUntil([&] { return e.store.conversation(c).mentions == 1; }, 3000));
+    // The first answer was taken before the other client's read and arrives
+    // late; the second is the fresh state. The late one must not win.
+    script(
+        "client.counts",
+        R"([{"ok": true, "__delay": 0.5,
+             "channels": [{"id": "C1", "latest": "1700000300.000000",
+                           "last_read": "1700000000.000000", "mention_count": 3,
+                           "has_unreads": true}],
+             "ims": [], "mpims": []},
+            {"ok": true,
+             "channels": [{"id": "C1", "latest": "1700000300.000000",
+                           "last_read": "1700000200.000000", "mention_count": 1,
+                           "has_unreads": true}],
+             "ims": [], "mpims": []}])"
+    );
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1700000200.000000") && x.mentions == 1;
+        },
+        3000
+    ));
+    pumpFor(1000); // the older answer lands now
+    const auto &x = e.store.conversation(c);
+    CHECK(x.lastRead == model::parseTs("1700000200.000000"));
+    CHECK(x.mentions == 1);
+    CHECK(x.unread == 1);
+}
+
+TEST("slack read: an old counts answer cannot clear a local Mark unread") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(c != kNoConv);
+    std::vector<model::Message> page;
+    for (const char *ts : {"1700000100.000000", "1700000200.000000", "1700000300.000000"}) {
+        model::Message x;
+        x.ts   = model::parseTs(ts);
+        x.user = e.store.findUser("UMIRA");
+        x.text = "message";
+        page.push_back(std::move(x));
+    }
+    e.store.addPage(c, std::move(page));
+    e.store.markRead(c, model::parseTs("1700000300.000000"));
+    // A response taken before the local Mark unread: it says everything is
+    // read, which is exactly what the old cursor looked like.
+    script(
+        "client.counts",
+        R"([{"ok": true, "__delay": 0.6,
+             "channels": [{"id": "C1", "latest": "1700000300.000000",
+                           "last_read": "1700000300.000000", "mention_count": 0,
+                           "has_unreads": false}],
+             "ims": [], "mpims": []}])"
+    );
+    pumpFor(250); // the counts request is out, waiting on the delay
+    e.be->markUnread(c, model::parseTs("1700000200.000000"));
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1700000200.000000") - 1);
+    CHECK(e.store.conversation(c).unread > 0);
+    pumpFor(1200); // the old answer lands after the mark
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1700000200.000000") - 1);
+    CHECK(e.store.conversation(c).unread > 0);
 }
 
 TEST("slack read: seeing a read channel's newest message clears a badge left over") {

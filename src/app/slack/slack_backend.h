@@ -297,6 +297,11 @@ private:
     void                 setHuddle(
         model::ConvRef c, bool active, std::string link, std::vector<model::UserRef> participants
     );
+    // A local "Mark unread" holds the conversation cursor until the write is
+    // confirmed and a counts answer taken afterwards can replace it.
+    void        noteUnreadMark(model::ConvRef c, model::Ts target);
+    void        confirmUnreadMark(model::ConvRef c, model::Ts target, bool ok);
+    void        releaseUnreadMark(model::ConvRef c, model::Ts ts);
     // My read cursor in a followed thread moved (the Threads entry).
     void        threadRead(model::ConvRef c, model::Ts root, model::Ts upTo);
     // ...or moved back ("Mark unread" on a reply): unread past `to` again.
