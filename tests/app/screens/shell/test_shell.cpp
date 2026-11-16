@@ -301,6 +301,49 @@ TEST("thread: an unfocused thread does not read new replies; focus does") {
     CHECK(h.store.unreadThreads() == 0);
 }
 
+TEST("thread: a closed panel does not read a reply when focus returns") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN");
+    Ts            root = 0, newest = 0;
+    for (const model::Thread &t : h.store.conversation(design).threads)
+        if (t.replies.size() >= 2) {
+            root   = t.root;
+            newest = t.replies.back().ts;
+            break;
+        }
+    REQUIRE(root != 0);
+    h.backend.setThreadFollowed(design, root, true);
+    h.backend.markThreadRead(design, root, newest);
+    // Open while focused: the visible thread reads itself.
+    h.sh->openThread(design, root);
+    pump(40);
+    REQUIRE(h.store.unreadThreads() == 0);
+    h.sh->closeThread();
+    pump(10);
+    // A reply lands while the panel is closed. The feed marks the thread
+    // unread; a later focus event must not let the hidden list read it.
+    const Ts reply =
+        h.backend.postAs(design, h.store.findUser("U0MIRA"), "reply while closed", root);
+    h.backend.markThreadUnread(design, root, reply);
+    REQUIRE(h.store.unreadThreads() == 1);
+    auto focus = [&](bool in) {
+        plat::Event e;
+        e.type   = in ? plat::EventType::FocusIn : plat::EventType::FocusOut;
+        e.window = &h.win->native();
+        h.win->handle(e);
+        pump();
+    };
+    focus(false);
+    focus(true);
+    pump(40);
+    CHECK(h.store.unreadThreads() == 1);
+    // Reopening restores normal reading.
+    h.sh->openThread(design, root);
+    for (int i = 0; i < 100 && h.store.unreadThreads(); ++i)
+        app().pump(5);
+    CHECK(h.store.unreadThreads() == 0);
+}
+
 TEST("window: hidden to the tray or minimised, the backend polls as hidden; shown, as shown") {
     Harness h;
     REQUIRE(h.backend.windowVisible);
@@ -849,6 +892,23 @@ TEST("attention: thread unread joins the badge without double counting") {
     h.store.setUnreadThreadCounts({});
     CHECK(attention() == 1); // only #releases' mention
     CHECK(h.store.unreadThreads() == 0);
+}
+
+TEST("attention: a recent thread survives an old conversation age filter") {
+    Harness       h;
+    const ConvRef c   = h.conv("C0ENG");
+    const Ts      now = int64_t(h.backend.nowSecs()) * 1000000;
+    for (ConvRef x = 0; x < h.store.conversationCount(); ++x)
+        h.store.updateConversation(x, [](Conversation &cv) { cv.unread = cv.mentions = 0; });
+    h.store.updateConversation(c, [&](Conversation &cv) {
+        cv.latest   = now - int64_t(40 * 86400) * 1000000;
+        cv.lastRead = 0;
+    });
+    h.store.setUnreadThreadCounts({{c, 1}});
+    CHECK(shell::workspaceAttention(h.store, NotifyLevel::All, h.backend.nowSecs()).important == 1);
+    // An old thread timestamp still expires normally.
+    h.store.setUnreadThreadCounts({{c, 1}}, {{c, now - int64_t(40 * 86400) * 1000000}});
+    CHECK(shell::workspaceAttention(h.store, NotifyLevel::All, h.backend.nowSecs()).important == 0);
 }
 
 TEST("sections: External connections group Slack Connect channels and DMs, with manual overrides") {

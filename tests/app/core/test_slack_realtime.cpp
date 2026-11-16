@@ -702,6 +702,53 @@ TEST("slack realtime: edits, deletions, reactions, presence, users and marks") {
     REQUIRE(pumpUntil([&] { return count("usergroups.list") > groups; }, 3000));
 }
 
+TEST("slack realtime: an old marked event cannot undo a local Mark unread") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(c != kNoConv);
+    std::vector<model::Message> page;
+    for (const char *ts : {"1800000000.000100", "1800000000.000200", "1800000000.000300"}) {
+        model::Message x;
+        x.ts   = model::parseTs(ts);
+        x.user = e.store.findUser("UMIRA");
+        x.text = "message";
+        page.push_back(std::move(x));
+    }
+    e.store.addPage(c, std::move(page));
+    e.store.markRead(c, model::parseTs("1800000000.000300"));
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
+    pumpFor(100);
+    REQUIRE(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    // An old marked event is not a read: it is older than the local cursor
+    // and must not overwrite the optimistic unread state.
+    REQUIRE(push(envelope(
+        "marked-old",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000100",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    pumpFor(150);
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    CHECK(e.store.conversation(c).unread > 0);
+    // A later marked event is a legitimate read past the mark.
+    REQUIRE(push(envelope(
+        "marked-new",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000300") && x.unread == 0;
+        },
+        3000
+    ));
+}
+
 TEST("slack realtime: new channels and group DMs join the list; foreign events don't") {
     if (!haveServer())
         return;

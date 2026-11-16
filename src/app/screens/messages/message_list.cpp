@@ -1447,7 +1447,7 @@ void MessageList::checkEdges() {
         // A reply that lands in the background stays unread; regaining
         // focus schedules this check again and reads it then.
         const auto timeline = _ctx.store().threadTimeline(_conv, _root);
-        if (_reading && !_loadingThread && !timeline.empty() && !_items.empty() &&
+        if (visible() && _reading && !_loadingThread && !timeline.empty() && !_items.empty() &&
             _list->lastVisible() >= int(_items.size()) - 1 && !timeline.back()->pending &&
             timeline.back()->ts != _markedTs && !_ctx.unreadHeld(_conv, _root)) {
             _markedTs = timeline.back()->ts;

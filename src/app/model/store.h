@@ -274,8 +274,12 @@ public:
     // The same count per conversation: Workspace/App attention compares it
     // with that conversation's DM/mention count instead of adding both.
     int            unreadThreads(ConvRef c) const;
+    Ts             unreadThreadLatest(ConvRef c) const;
     void           setUnreadThreads(int n); // a total only (legacy/tests)
-    void           setUnreadThreadCounts(std::vector<std::pair<ConvRef, int>> counts);
+    void           setUnreadThreadCounts(
+                  std::vector<std::pair<ConvRef, int>> counts,
+                  std::vector<std::pair<ConvRef, Ts>>  latest = {}
+              );
     // Unread items in the service's activity feed (the sidebar's Activity
     // entry is bright while > 0). Fires Meta (kNoConv).
     int            unreadActivity() const { return _unreadActivity; }
@@ -473,6 +477,7 @@ private:
     std::vector<uint64_t>                        _historyAccess;
     int                                          _unreadThreads  = 0;
     std::unordered_map<ConvRef, int>             _unreadThreadCounts;
+    std::unordered_map<ConvRef, Ts>              _unreadThreadLatest;
     int                                          _unreadActivity = 0;
     bool                                         _realNames      = true;
 

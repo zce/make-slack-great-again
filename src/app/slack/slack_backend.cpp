@@ -337,7 +337,8 @@ struct SlackBackend::Read {
     ConvRef         openConv   = kNoConv;
     Ts              openThread = 0;
     int64_t         lastRoster = 0, lastCounts = 0, lastThreads = 0, lastFg = 0, lastBg = 0;
-    int64_t         lastPresence = 0, lastSelf = 0, lastStarred = 0, lastSaved = 0, lastUsers = 0;
+    int64_t         lastPresence = 0, lastSelf = 0, lastDnd = 0, lastStarred = 0;
+    int64_t         lastSaved = 0, lastUsers = 0;
     bool            visible = true; // the window shows (setWindowVisible)
     // By ConvRef (0: none yet): the newest ts a poll saw (baselineOf), and
     // the revision of the last poll that landed.
@@ -363,6 +364,7 @@ struct SlackBackend::Read {
     void                                        noteUnreadMark(ConvRef c, Ts target);
     void                                        confirmUnreadMark(ConvRef c, Ts target, bool ok);
     void                                        releaseUnreadMark(ConvRef c, Ts ts);
+    bool                                        acceptMarkedEvent(ConvRef c, Ts ts);
     void                                        applyActivity(
         const std::vector<mapjson::Counts> &snapshot,
         bool                                fromCounts,
@@ -1772,6 +1774,7 @@ void SlackBackend::Read::pollDmPresence() {
 void SlackBackend::Read::pollDnd(const std::vector<UserRef> &users) {
     if (dndUnavailable)
         return;
+    lastDnd = now();
     std::vector<std::string> ids;
     auto add = [&](UserRef ref) {
         if (ref == kNoUser)
@@ -2926,6 +2929,13 @@ void SlackBackend::Read::tick() {
         lastPresence = t;
         pollDmPresence();
     }
+    // Self DND is a notification gate while hidden too. Poll only me on the
+    // normal cadence: do not drag the DM presence round (or every partner)
+    // along just to notice a pause changed in another client.
+    if (!push && !visible && t - lastDnd >= kPresencePollGapMs) {
+        lastDnd = t;
+        pollDnd({});
+    }
     if (t - lastSelf >= kSelfPresenceGapMs) {
         lastSelf = t;
         refreshSelfPresence();
@@ -3018,6 +3028,24 @@ void SlackBackend::Read::releaseUnreadMark(ConvRef c, Ts ts) {
         unreadMarks.erase(it);
 }
 
+// RTM marked events carry no snapshot epoch. An event at or before the
+// local mark cursor is an old echo, not a read: reject it before touching
+// the Store. A later cursor is a genuine read past the mark.
+bool SlackBackend::Read::acceptMarkedEvent(ConvRef c, Ts ts) {
+    if (c >= s.conversationCount())
+        return false;
+    const auto it = unreadMarks.find(s.conversation(c).id);
+    if (it == unreadMarks.end())
+        return true;
+    // Until our own mark write is confirmed, a marked event cannot be told
+    // apart from the pre-mark cursor. Keep the optimistic state; a later
+    // event or a confirmed counts answer can release it.
+    if (it->second.confirmedEpoch == 0 || ts <= it->second.cursor)
+        return false;
+    unreadMarks.erase(it);
+    return true;
+}
+
 // An activity snapshot: fold the cursors in, seed the badges of
 // conversations seen for the first time, and poll the ones that moved since
 // the previous snapshot. The channel's has_unreads is a boolean hint while
@@ -3063,28 +3091,33 @@ void SlackBackend::Read::applyActivity(
     };
     std::vector<Moved> moved;
     for (const mapjson::Counts &c : snapshot) {
-        const auto it        = activity.find(c.id);
-        const bool firstSeen = priming || it == activity.end();
+        const auto       it        = activity.find(c.id);
+        const bool       firstSeen = priming || it == activity.end();
+        const auto       markIt    = unreadMarks.find(c.id);
+        const bool       hasMark   = markIt != unreadMarks.end();
+        const UnreadMark mark      = hasMark ? markIt->second : UnreadMark{};
+        const bool       beforeMark = hasMark && markEpochAtStart < mark.epoch;
+        const bool       beforeConfirm =
+            hasMark && (mark.confirmedEpoch == 0 || confirmEpochAtStart < mark.confirmedEpoch);
+        // A request started after the local Mark unread was confirmed may
+        // legitimately move the server cursor back below the previous
+        // snapshot (another client read part of the way), as long as it is
+        // still past the local mark target. A request before either point
+        // cannot speak for the mark and stays under the old stale rule.
+        const bool freshAfterMark = hasMark && !beforeMark && !beforeConfirm;
         // A late answer from before the previous one: its cursor and latest
         // are older, so it cannot describe the present. Keep the newer state.
         const bool stale =
-            !firstSeen && (c.lastRead < it->second.lastRead || c.latest < it->second.latest);
+            !firstSeen && (c.latest < it->second.latest ||
+                           (c.lastRead < it->second.lastRead && !freshAfterMark));
         const ConvRef r = s.findConversation(c.id);
         if (r != kNoConv && !stale) {
-            const model::Conversation &x     = s.conversation(r);
-            const auto                 markIt = unreadMarks.find(c.id);
-            const bool                 hasMark = markIt != unreadMarks.end();
-            const UnreadMark           mark = hasMark ? markIt->second : UnreadMark{};
-            bool                       held = false;
-            if (hasMark) {
-                const bool beforeMark    = markEpochAtStart < mark.epoch;
-                const bool beforeConfirm =
-                    mark.confirmedEpoch == 0 || confirmEpochAtStart < mark.confirmedEpoch;
-                // The mark's own echo (or an older cursor) repeats local
-                // state; anything newer needs a request taken after the
-                // write landed, or it may be the pre-mark snapshot.
-                held = beforeMark || beforeConfirm || c.lastRead <= mark.cursor;
-            }
+            const model::Conversation &x = s.conversation(r);
+            // The mark's own echo (or an older cursor) repeats local state;
+            // anything newer needs a request taken after the write landed,
+            // or it may be the pre-mark snapshot.
+            const bool held =
+                beforeMark || beforeConfirm || (hasMark && c.lastRead <= mark.cursor);
             if (held) {
                 // Keep the manual unread; only a newer server latest moves so
                 // the next poll/arrival is not mistaken for old history.
@@ -3616,14 +3649,18 @@ void SlackBackend::Read::publishUnreadThreads() {
     // than adding the same reply twice. A conversation mute does not clear
     // this; a thread mute does.
     std::unordered_map<ConvRef, int> counts;
+    std::unordered_map<ConvRef, Ts>  latest;
     for (const auto &[k, ts] : unreadThreads) {
         const ConvRef c = keyConv(k);
         if (s.threadMuted(c, keyTs(k)))
             continue;
         ++counts[c];
+        Ts &newest = latest[c];
+        newest     = std::max(newest, ts);
     }
     std::vector<std::pair<ConvRef, int>> list(counts.begin(), counts.end());
-    s.setUnreadThreadCounts(std::move(list));
+    std::vector<std::pair<ConvRef, Ts>>  newest(latest.begin(), latest.end());
+    s.setUnreadThreadCounts(std::move(list), std::move(newest));
 }
 
 // Cache one item from the Threads feed in the Store's thread-only structures.
@@ -4262,6 +4299,10 @@ void SlackBackend::confirmUnreadMark(ConvRef c, Ts target, bool ok) {
 
 void SlackBackend::releaseUnreadMark(ConvRef c, Ts ts) {
     _read->releaseUnreadMark(c, ts);
+}
+
+bool SlackBackend::acceptMarkedEvent(ConvRef c, Ts ts) {
+    return _read->acceptMarkedEvent(c, ts);
 }
 
 void SlackBackend::threadRead(ConvRef c, Ts root, Ts upTo) {

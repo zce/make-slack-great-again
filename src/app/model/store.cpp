@@ -328,6 +328,7 @@ void Store::clear() {
     ++_groupRev;
     _unreadThreads     = 0;
     _unreadThreadCounts.clear();
+    _unreadThreadLatest.clear();
     _unreadActivity    = 0;
     workspaceMuted     = false;
     me                 = kNoUser;
@@ -1806,6 +1807,11 @@ int Store::unreadThreads(ConvRef c) const {
     return it == _unreadThreadCounts.end() ? 0 : it->second;
 }
 
+Ts Store::unreadThreadLatest(ConvRef c) const {
+    const auto it = _unreadThreadLatest.find(c);
+    return it == _unreadThreadLatest.end() ? 0 : it->second;
+}
+
 void Store::setUnreadThreads(int n) {
     n = std::max(n, 0);
     if (n == _unreadThreads)
@@ -1814,17 +1820,26 @@ void Store::setUnreadThreads(int n) {
     emit({ChangeKind::Meta, kNoConv});
 }
 
-void Store::setUnreadThreadCounts(std::vector<std::pair<ConvRef, int>> counts) {
+void Store::setUnreadThreadCounts(
+    std::vector<std::pair<ConvRef, int>> counts,
+    std::vector<std::pair<ConvRef, Ts>>  latest
+) {
     std::unordered_map<ConvRef, int> next;
+    std::unordered_map<ConvRef, Ts>  nextLatest;
     int                              total = 0;
     for (auto &[c, n] : counts)
         if (c < _convs.size() && n > 0) {
             next[c] = n;
             total += n;
         }
-    if (next == _unreadThreadCounts && total == _unreadThreads)
+    for (auto &[c, ts] : latest)
+        if (next.count(c))
+            nextLatest[c] = ts;
+    if (next == _unreadThreadCounts && total == _unreadThreads &&
+        nextLatest == _unreadThreadLatest)
         return;
     _unreadThreadCounts = std::move(next);
+    _unreadThreadLatest = std::move(nextLatest);
     _unreadThreads      = total;
     emit({ChangeKind::Meta, kNoConv});
 }

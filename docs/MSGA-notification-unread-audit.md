@@ -836,9 +836,9 @@ ctest --test-dir /build --output-on-failure
 
 ### 11.7 剩余风险与 backlog（按优先级）
 
-1. **P1 远端 `Mark unread` 的 counts 回退**：纯 `client.counts` 无版本号，当前 `stale`/max 保护优先防旧响应；另一客户端把 cursor 回退且没有实时 `*_marked` 事件时，MSGA 可能继续显示已读。建议后续用 Slack 的 `channel_marked` 事件/操作世代或服务端游标快照时间解决。
+1. **P1 远端 `Mark unread` 的 counts 回退**：已在 PR #72 review follow-up 中修复：本地 Mark unread 确认后，晚于确认发起的 counts 响应允许把 cursor 从旧观测值 300 前进/回退到 250（仍高于本地 mark target），并继续保护确认前/确认中的旧响应。剩余限制见 11.9。
 2. **P1 三种 Mark as Read preference**：当前只有“从上次位置/首个未读 + 最新可见即读”。Start newest / leave unseen unread 未实现；需要设置项、打开定位和自动已读策略联动。
-3. **P2 DND schedule / 时区 / 星期**：当前只消费 Slack 事件的 `dnd`，没有本地 schedule 配置；schedule 结束依赖事件，可能滞后。需要设置模型和时区测试。
+3. **P2 DND schedule / 时区 / 星期**：窗口隐藏时自己的 `dnd` 现在通过独立的 `dnd.teamInfo` 轮询保持新鲜（不拉取 DM presence 轮询）；本地 schedule/时区/星期配置仍未实现，见 11.9。
 4. **P2 Channel keywords**：`mentionsMe` 不包含关键词；通知/高亮/Activity 均未实现。依赖关键词设置与完整词匹配规则。
 5. **P2 Follow every thread / Conversation Desktop/Mobile override / Badge every unread**：设置能力缺失，非本轮必要正确性修复。
 6. **P2 Activity 类型偏好与更多类别**：当前固定四类视图；未实现 Slack 的 Activity 类型过滤/自定义视图。
@@ -852,3 +852,73 @@ ctest --test-dir /build --output-on-failure
 - 未修改通知点击、持久化、Huddle 房间解析、workspace 切换实现。
 - 未在宿主机执行任何编译/测试；未提交、推送、合并或发布。
 - 未覆盖真实 Slack 服务端；所有行为基于 fake Slack/Store/Shell 测试和官方文档规则。
+
+### 11.9 PR #72 review follow-up（2026-11-16）
+
+本轮在既有 PR 分支 `fix/notification-unread-audit` 上做了聚焦修正，没有改变 unread/notification/attention 的分层。
+
+#### 确认并修复
+
+1. **本地 Mark unread 后，合法的服务器 cursor 前进被 stale 检查拒绝**
+   - 确认：`applyActivity()` 原先把 `lastRead < 上次快照.lastRead` 一律判为 stale。服务器 300 → 本地 Mark unread 到 199 → 另一客户端读到 250 时，250 会被拒绝。
+   - 修复：先读取 `unreadMarks`/epoch，区分“请求发起于 Mark 之前/确认之前”和“请求发起于确认之后”。确认之后的响应允许 `lastRead` 从上次观测值 300 回落到 250（只要仍高于本地 mark target），但仍拒绝 `latest` 回退以及确认前/确认中的旧响应。没有删除 stale 检查。
+   - 测试：`slack read: a confirmed Mark unread lets another client advance past it`（修复前失败在最终 cursor 未到 250；修复后通过）。
+
+2. **RTM `*_marked` 事件在未能解除 hold 时仍覆盖 Store**
+   - 确认：`releaseUnreadMark(c, ts)` 对 `ts <= cursor` 不释放，但旧代码随后仍无条件写 `lastRead/unread/mentions`。
+   - 修复：新增 `acceptMarkedEvent()`；本地 mark 未确认，或事件 `ts <= mark.cursor` 时，事件在写 Store 前被拒绝；确认后且 `ts > mark.cursor` 的事件释放 hold 并正常应用。
+   - 测试：`slack realtime: an old marked event cannot undo a local Mark unread`（修复前失败在旧事件把 cursor 改成 100；修复后通过），同一用例覆盖合法的新事件 300。
+
+3. **关闭的 Thread 面板仍可能参与自动已读**
+   - 确认：`Shell::updateReading()` 原先只要 `_thread` 存在就设置线程阅读状态，不管面板是否可见；`closeThread()` 也未清除线程列表的阅读状态。
+   - 修复：`updateReading()` 使用 `reading() && threadOpen()`；`closeThread()` 显式 `setReading(false)`；`openThread()` 在面板可见后恢复当前阅读状态；`MessageList::checkEdges()` 的 thread 分支额外要求 `visible()`。
+   - 测试：`thread: a closed panel does not read a reply when focus returns`，覆盖打开→关闭→新回复→失焦/回焦→保持未读→重开恢复。说明：该缺陷在代码路径上已确认；原测试路径受隐藏列表布局影响，未必每次都能在旧实现上稳定复现，因此测试同时作为生命周期回归保护。
+
+4. **旧 Conversation 的 30 天过滤误删近期的 Thread attention**
+   - 确认：`workspaceAttention()` 在聚合 thread 之前就跳过 `latest` 超过 30 天的 conversation。
+   - 修复：Conversation 和 Thread 分别判断新鲜度。`Store` 在 per-conversation thread 计数之外新增 `unreadThreadLatest`；Slack/Fake 发布线程未读时一并写入最新回复 ts。`attention = max(conversationAttention, threadAttention)`，conversation 旧但 thread 新时仍计入；thread 本身过期时归零；mute/membership 规则和重复计数保护保持。
+   - 测试：`attention: a recent thread survives an old conversation age filter`（修复前 attention=0；修复后=1，并把 thread latest 设为 40 天前后断言=0）。
+
+#### DND freshness while hidden
+
+- 确认：`pollDmPresence()` 只在 `visible` 时运行；它虽通过 `pollDnd()` 带上自己，但隐藏后不再刷新 self DND，另一客户端开启暂停或 schedule 进入 DND 时可滞后。
+- 决策：实现最小独立刷新，而不是新增计时器框架。
+  - `pollDnd()` 记录 `lastDnd`；
+  - `tick()` 在 `!push && !visible` 时，按现有 `kPresencePollGapMs` 调用 `pollDnd({})`；只请求自己的 DND，不触发 DM presence 轮询；
+  - 可见时仍沿用原有 `pollDmPresence()` 路径，避免重复请求。
+- 测试：`slack read: my DND refreshes while the window is hidden`（修复前隐藏后无 `dnd.teamInfo` 请求；修复后请求发生并把 self DND 更新回 true）。
+- 边界：只解决“隐藏窗口下状态刷新”，不实现本地 schedule/时区/星期配置，仍为 P2 backlog。
+
+#### 验证
+
+本轮针对性测试：
+
+```sh
+ctest --test-dir /build --output-on-failure \
+  -R "core_slack_read|core_slack_realtime|shell_tests" --parallel 3
+# 100% tests passed, 0 failed
+```
+
+相关回归：
+
+```sh
+ctest --test-dir /build --output-on-failure \
+  -R "core_slack_read|core_slack_realtime|core_slack_cache|shell_tests|shell_ui_tests|messages_thread|messages_opening|messages_actions" \
+  --parallel 4
+# 9/9 passed
+```
+
+完整测试（同一容器/构建目录，串行）：
+
+```sh
+ctest --test-dir /build --output-on-failure
+# 121/121 tests passed, 0 failed
+# Total Test time (real) = 266.64 sec
+```
+
+#### 剩余风险
+
+- 没有服务器 snapshot 版本号；本地 Mark unread 的 counts 保护只能以“请求发起时间 + 写入确认 epoch”建立因果顺序，不能证明所有跨客户端并发顺序。
+- RTM marked 事件没有 epoch；确认前的 marked 事件按保守策略拒绝，可能延迟一次合法的远端读取直到后续事件/counts。
+- `workspaceAttention` 仍是 `max(conversation, threads)` 的保守并集，同一会话独立 mention + 独立 thread 可能低估。
+- 本地 DND schedule/时区配置未实现；隐藏刷新只跟随 Slack 的状态，不判断本地时段。

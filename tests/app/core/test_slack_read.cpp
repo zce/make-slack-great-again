@@ -667,6 +667,25 @@ TEST("slack read: hidden, the open chat polls slowly, client.counts brings it fo
     ));
 }
 
+TEST("slack read: my DND refreshes while the window is hidden") {
+    if (!haveServer())
+        return;
+    Env e;
+    set(R"({"dnd.teamInfo": {"ok": true, "users": {"UME": {"dnd_enabled": true}}}})");
+    REQUIRE(e.connect());
+    const model::UserRef me = e.store.me;
+    REQUIRE(me != model::kNoUser);
+    REQUIRE(pumpUntil([&] { return e.store.user(me).dnd; }, 3000));
+    // Simulate a pause made/changed in another client while MSGA is hidden.
+    e.store.user(me).dnd = false;
+    e.store.usersChanged(me);
+    e.be->setWindowVisible(false);
+    pumpFor(300); // let the visible-cadence request settle
+    const int before = Log().count("dnd.teamInfo");
+    REQUIRE(pumpUntil([&] { return Log().count("dnd.teamInfo") > before; }, 3000));
+    REQUIRE(pumpUntil([&] { return e.store.user(me).dnd; }, 1000));
+}
+
 TEST("slack read: a channel read elsewhere loses its badge with the next client.counts") {
     if (!haveServer())
         return;
@@ -824,6 +843,62 @@ TEST("slack read: an old counts answer cannot clear a local Mark unread") {
     pumpFor(1200); // the old answer lands after the mark
     CHECK(e.store.conversation(c).lastRead == model::parseTs("1700000200.000000") - 1);
     CHECK(e.store.conversation(c).unread > 0);
+}
+
+TEST("slack read: a confirmed Mark unread lets another client advance past it") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(c != kNoConv);
+    std::vector<model::Message> page;
+    for (const char *ts : {"1700000100.000000", "1700000200.000000", "1700000250.000000",
+                           "1700000300.000000"}) {
+        model::Message x;
+        x.ts   = model::parseTs(ts);
+        x.user = e.store.findUser("UMIRA");
+        x.text = "message";
+        page.push_back(std::move(x));
+    }
+    e.store.addPage(c, std::move(page));
+    // The server starts with everything read through 300.
+    set(R"({"client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000300.000000",
+                            "last_read": "1700000300.000000", "mention_count": 0,
+                            "has_unreads": false}],
+              "ims": [], "mpims": []}})");
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1700000300.000000") && x.unread == 0;
+        },
+        3000
+    ));
+    // The local Mark unread moves only to 200. Delay its confirmation so a
+    // counts answer taken during the hold is exercised too; another client
+    // then reads to 250, which is a legitimate advance past the local mark.
+    script("conversations.mark", R"([{"ok": true, "__delay": 0.5}])");
+    set(R"({"client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000300.000000",
+                            "last_read": "1700000250.000000", "mention_count": 0,
+                            "has_unreads": false}],
+              "ims": [], "mpims": []}})");
+    e.be->markUnread(c, model::parseTs("1700000200.000000"));
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1700000200.000000") - 1);
+    CHECK(e.store.conversation(c).unread > 0);
+    pumpFor(200); // a counts response during the pending mark must not clear it
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1700000200.000000") - 1);
+    CHECK(e.store.conversation(c).unread > 0);
+    // After the write is confirmed, the next counts answer may advance the
+    // cursor beyond the mark target (250), leaving only the 300 message.
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1700000250.000000") && x.unread == 1;
+        },
+        3000
+    ));
 }
 
 TEST("slack read: seeing a read channel's newest message clears a badge left over") {

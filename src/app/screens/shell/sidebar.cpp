@@ -2161,21 +2161,29 @@ Attention workspaceAttention(const model::Store &st, model::NotifyLevel fallback
     Attention a;
     for (ConvRef c = 0; c < st.conversationCount(); ++c) {
         const auto &cv = st.conversation(c);
-        if (!cv.member || (cv.latest && tsSecs(cv.latest) < nowSecs - kMaxNotifyAgeSecs))
-            continue; // left or closed; or all of it older than the notification window
+        if (!cv.member)
+            continue; // left or closed
+        const bool conversationFresh =
+            !cv.latest || tsSecs(cv.latest) >= nowSecs - kMaxNotifyAgeSecs;
+        const model::Ts threadLatest = st.unreadThreadLatest(c);
+        const bool threadFresh =
+            !threadLatest || tsSecs(threadLatest) >= nowSecs - kMaxNotifyAgeSecs;
         const model::NotifyLevel level = cv.effectiveNotify(fallback);
         // A mute (or an explicit Nothing) suppresses ordinary channel
         // unread, not the important badge: mentions and all DM messages
         // still count, as Slack's muted-conversation rule says.
-        const int conversation = cv.isDirect() ? int(cv.unread) : int(cv.mentions);
+        const int conversation =
+            conversationFresh ? (cv.isDirect() ? int(cv.unread) : int(cv.mentions)) : 0;
         // A followed thread reply can be real attention even when the
-        // channel cursor is past it. Compare the two signals for one
-        // conversation so a reply counted in both is not added twice; this
-        // is a conservative union, not an exact Slack total.
-        a.important += std::max(conversation, st.unreadThreads(c));
+        // channel cursor (or its top-level message) is old. Compare the two
+        // signals for one conversation so a reply counted in both is not
+        // added twice; this is a conservative union, not an exact Slack
+        // total.
+        const int threads = threadFresh ? st.unreadThreads(c) : 0;
+        a.important += std::max(conversation, threads);
         a.unread = a.unread ||
-                   (!cv.isDirect() && level == model::NotifyLevel::All &&
-                    cv.unread > cv.mentions);
+                   (conversationFresh && !cv.isDirect() &&
+                    level == model::NotifyLevel::All && cv.unread > cv.mentions);
     }
     return a;
 }

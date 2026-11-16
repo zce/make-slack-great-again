@@ -302,6 +302,7 @@ private:
     void        noteUnreadMark(model::ConvRef c, model::Ts target);
     void        confirmUnreadMark(model::ConvRef c, model::Ts target, bool ok);
     void        releaseUnreadMark(model::ConvRef c, model::Ts ts);
+    bool        acceptMarkedEvent(model::ConvRef c, model::Ts ts);
     // My read cursor in a followed thread moved (the Threads entry).
     void        threadRead(model::ConvRef c, model::Ts root, model::Ts upTo);
     // ...or moved back ("Mark unread" on a reply): unread past `to` again.

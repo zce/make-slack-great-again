@@ -125,14 +125,18 @@ bool FakeBackend::follows(ConvRef conv, Ts root) const {
 // The Threads entry: followed threads with a reply past my cursor.
 void FakeBackend::publishUnreadThreads() {
     std::unordered_map<ConvRef, int> counts;
+    std::unordered_map<ConvRef, Ts>  latest;
     for (const ThreadRead &r : _threadRead) {
         const auto replies = _store.threadTimeline(r.conv, r.root);
         if (!replies.empty() && replies.back()->ts > r.read && follows(r.conv, r.root) &&
-            !_store.threadMuted(r.conv, r.root))
+            !_store.threadMuted(r.conv, r.root)) {
             ++counts[r.conv];
+            latest[r.conv] = std::max(latest[r.conv], replies.back()->ts);
+        }
     }
     std::vector<std::pair<ConvRef, int>> list(counts.begin(), counts.end());
-    _store.setUnreadThreadCounts(std::move(list));
+    std::vector<std::pair<ConvRef, Ts>>  newest(latest.begin(), latest.end());
+    _store.setUnreadThreadCounts(std::move(list), std::move(newest));
 }
 
 void FakeBackend::setThreadFollowed(ConvRef conv, Ts root, bool follow) {
