@@ -886,10 +886,15 @@ model::NotifyLevel Sidebar::level(const model::Conversation &c) const {
     return c.effectiveNotify(_filters.defaultLevel);
 }
 
-// The one rule for bold rows and the unreads-only filter.
+// The one rule for bold rows and the unreads-only filter. A mute silences
+// ordinary unread, not the important badge Slack keeps for a mention or a
+// DM: a muted channel is bold only for its mentions, a muted DM for any
+// unread message.
 bool Sidebar::paintsUnread(const model::Conversation &c) const {
-    if (c.unread == 0 || muted(c))
+    if (c.unread == 0)
         return false;
+    if (muted(c))
+        return c.isDirect() || c.mentions > 0;
     return !(
         level(c) == model::NotifyLevel::Mentions && !_filters.highlightMentionsOnly &&
         !c.isDirect() && c.mentions == 0
@@ -897,10 +902,11 @@ bool Sidebar::paintsUnread(const model::Conversation &c) const {
 }
 
 int Sidebar::redCount(const model::Conversation &c) const {
-    if (muted(c) || (c.latest && tsSecs(c.latest) < _ctx.backend.nowSecs() - kMaxNotifyAgeSecs))
+    if (c.latest && tsSecs(c.latest) < _ctx.backend.nowSecs() - kMaxNotifyAgeSecs)
         return 0;
     // DMs count unread messages; channels count mentions.
     // This fork has no agent-session capability (that feature was removed).
+    // Muting suppresses the ordinary rows but not these important counts.
     return c.isDirect() ? int(c.unread) : int(c.mentions);
 }
 
@@ -2155,17 +2161,29 @@ Attention workspaceAttention(const model::Store &st, model::NotifyLevel fallback
     Attention a;
     for (ConvRef c = 0; c < st.conversationCount(); ++c) {
         const auto &cv = st.conversation(c);
-        if (!cv.member || (cv.latest && tsSecs(cv.latest) < nowSecs - kMaxNotifyAgeSecs))
-            continue; // left or closed; or all of it older than the notification window
+        if (!cv.member)
+            continue; // left or closed
+        const bool conversationFresh =
+            !cv.latest || tsSecs(cv.latest) >= nowSecs - kMaxNotifyAgeSecs;
+        const model::Ts threadLatest = st.unreadThreadLatest(c);
+        const bool threadFresh =
+            !threadLatest || tsSecs(threadLatest) >= nowSecs - kMaxNotifyAgeSecs;
         const model::NotifyLevel level = cv.effectiveNotify(fallback);
-        if (level == model::NotifyLevel::Nothing)
-            continue;
-        if (cv.isDirect())
-            a.important += int(cv.unread);
-        else {
-            a.important += int(cv.mentions);
-            a.unread = a.unread || (level == model::NotifyLevel::All && cv.unread > cv.mentions);
-        }
+        // A mute (or an explicit Nothing) suppresses ordinary channel
+        // unread, not the important badge: mentions and all DM messages
+        // still count, as Slack's muted-conversation rule says.
+        const int conversation =
+            conversationFresh ? (cv.isDirect() ? int(cv.unread) : int(cv.mentions)) : 0;
+        // A followed thread reply can be real attention even when the
+        // channel cursor (or its top-level message) is old. Compare the two
+        // signals for one conversation so a reply counted in both is not
+        // added twice; this is a conservative union, not an exact Slack
+        // total.
+        const int threads = threadFresh ? st.unreadThreads(c) : 0;
+        a.important += std::max(conversation, threads);
+        a.unread = a.unread ||
+                   (conversationFresh && !cv.isDirect() &&
+                    level == model::NotifyLevel::All && cv.unread > cv.mentions);
     }
     return a;
 }

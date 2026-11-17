@@ -469,9 +469,16 @@ struct SlackBackend::Write {
     };
     std::vector<Mark> marks;
 
-    void mark(const std::string &channel, std::string ts) {
+    void mark(
+        const std::string        &channel,
+        std::string               ts,
+        std::function<void(bool)> done = {}
+    ) {
         markCursor(
-            "conversations.mark", channel, net::formEncode({{"channel", channel}, {"ts", ts}})
+            "conversations.mark",
+            channel,
+            net::formEncode({{"channel", channel}, {"ts", ts}}),
+            std::move(done)
         );
     }
     void markThread(
@@ -1641,6 +1648,7 @@ void SlackBackend::markRead(ConvRef conv, Ts ts) {
             _store.markRead(conv, ts);
         return;
     }
+    releaseUnreadMark(conv, ts);
     _store.markRead(conv, ts);
     _write->mark(convId(conv), model::formatTs(ts));
 }
@@ -1724,8 +1732,13 @@ void SlackBackend::markUnread(ConvRef conv, Ts ts) {
     // the message (conversations.mark takes any ts).
     if (conv >= _store.conversationCount() || ts <= 0)
         return;
+    noteUnreadMark(conv, ts);
     _store.markUnread(conv, ts);
-    _write->mark(convId(conv), model::formatTs(ts - 1));
+    _write->mark(
+        convId(conv), model::formatTs(ts - 1), [this, conv, ts](bool ok) {
+            confirmUnreadMark(conv, ts, ok);
+        }
+    );
 }
 
 // ── Conversations ───────────────────────────────────────────────────────────

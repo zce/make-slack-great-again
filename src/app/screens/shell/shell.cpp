@@ -767,6 +767,15 @@ public:
 #endif
         composer->setTarget(conv, root);
     }
+    // The window's focus/hidden state: the thread list auto-reads only while
+    // the user is actually reading it.
+    void setReading(bool on) {
+#ifdef MSGA_HAVE_MESSAGES
+        panel->list().setReading(on);
+#else
+        (void)on;
+#endif
+    }
     // Over the messages: a back arrow in the header leads back to them.
     void setCovering(bool on) {
 #ifdef MSGA_HAVE_MESSAGES
@@ -2439,6 +2448,7 @@ void Shell::openThread(ConvRef conv, Ts root, Ts jumpTarget) {
     static_cast<screens::MessageList *>(_messages)->setOpenThreadRoot(root);
 #endif
     _thread->setVisible(true); // ThreadBody fits the saved width to the window
+    _thread->setReading(reading()); // the reopened panel reads like any other visible one
     _splitter->setVisible(true);
 #ifndef MSGA_HAVE_MESSAGES
     _ctx.backend.loadThread(conv, root, nullptr);
@@ -2454,6 +2464,7 @@ void Shell::closeThread() {
         onNavigation();
     _thread->composer->stashNow();
     static_cast<ThreadBody *>(_thread->parent())->setFull(false);
+    _thread->setReading(false);
     _thread->setVisible(false);
 #ifdef MSGA_HAVE_MESSAGES
     static_cast<screens::MessageList *>(_messages)->setOpenThreadRoot(0);
@@ -3002,7 +3013,11 @@ bool Shell::reading() const {
 // accrues unreads and notifies; back in front it is marked read.
 void Shell::updateReading() {
 #ifdef MSGA_HAVE_MESSAGES
-    static_cast<screens::MessageList *>(_messages)->setReading(reading());
+    const bool on = reading();
+    static_cast<screens::MessageList *>(_messages)->setReading(on);
+    // A closed panel stays hidden; it must not keep reading in the background.
+    if (_thread)
+        _thread->setReading(on && threadOpen());
 #endif
 }
 

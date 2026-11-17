@@ -290,6 +290,11 @@ void SlackBackend::Live::apply(const json::Value &ev, bool ours) {
         const Ts       ts       = model::parseTs(ev["ts"].str());
         const uint32_t unread   = uint32_t(ev["unread_count_display"].integer());
         const uint32_t mentions = uint32_t(ev["mention_count_display"].integer());
+        // A marked event cannot prove it was generated after a local Mark
+        // unread. While that hold exists it is rejected here and asks for a
+        // roster reconciliation; without a hold it applies as before.
+        if (!b.acceptMarkedEvent(c, ts))
+            return;
         s.updateConversation(c, [&](model::Conversation &x) {
             x.lastRead = ts;
             x.unread   = unread;

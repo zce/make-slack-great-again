@@ -186,6 +186,34 @@ TEST("slack realtime: socket mode opens with the app token, acks and delivers a 
     CHECK(e.store.conversation(c).unread == 1);
 }
 
+TEST("slack realtime: a muted DM still counts its unread badge") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef dm = e.conv("D1");
+    REQUIRE(dm != kNoConv);
+    // Let the one-time conversations.info enrichment land first: after that
+    // its old snapshot cannot resurrect the unread we clear below.
+    REQUIRE(pumpUntil([&] { return e.store.conversation(dm).unread >= 4; }, 3000));
+    e.store.markRead(dm, model::parseTs("1800000000.000050"));
+    e.store.updateConversation(dm, [](model::Conversation &c) {
+        c.muted    = true;
+        c.unread   = 0;
+        c.mentions = 0;
+    });
+    const Ts ts = model::parseTs("1800000000.000100");
+    REQUIRE(push(envelope(
+        "env-muted-dm",
+        R"({"type":"message","channel":"D1","user":"UMIRA","text":"muted but important",)"
+        R"("ts":"1800000000.000100"})"
+    )));
+    REQUIRE(pumpUntil([&] { return e.store.findMessage(dm, ts) != nullptr; }));
+    CHECK(e.store.conversation(dm).unread == 1);
+    CHECK(e.store.conversation(dm).mentions == 1); // a DM's unread is a red badge
+}
+
 TEST("slack realtime: a message read as it lands (the open, focused chat) leaves no badge") {
     if (!haveServer())
         return;
@@ -672,6 +700,195 @@ TEST("slack realtime: edits, deletions, reactions, presence, users and marks") {
     const int groups = count("usergroups.list");
     REQUIRE(push(envelope("j", R"({"type":"subteam_members_changed","subteam_id":"S1"})")));
     REQUIRE(pumpUntil([&] { return count("usergroups.list") > groups; }, 3000));
+}
+
+TEST("slack realtime: a delayed pre-mark marked event cannot undo a local Mark unread") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(c != kNoConv);
+    std::vector<model::Message> page;
+    for (const char *ts : {"1800000000.000100", "1800000000.000200", "1800000000.000300"}) {
+        model::Message x;
+        x.ts   = model::parseTs(ts);
+        x.user = e.store.findUser("UMIRA");
+        x.text = "message";
+        page.push_back(std::move(x));
+    }
+    e.store.addPage(c, std::move(page));
+    e.store.markRead(c, model::parseTs("1800000000.000300"));
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
+    pumpFor(100);
+    REQUIRE(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    // The event was generated before the Mark unread but arrives after its
+    // confirmation. Its cursor (300) is above the local mark, so cursor
+    // comparison alone cannot reject it; the hold must.
+    REQUIRE(push(envelope(
+        "marked-delayed-pre-mark",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    pumpFor(150);
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    CHECK(e.store.conversation(c).unread > 0);
+}
+
+namespace {
+
+bool setMarkedHold(Env &e, ConvRef &c) {
+    c = e.conv("C1");
+    if (c == kNoConv)
+        return false;
+    std::vector<model::Message> page;
+    for (const char *ts : {"1800000000.000100", "1800000000.000200", "1800000000.000250",
+                           "1800000000.000300"}) {
+        model::Message x;
+        x.ts   = model::parseTs(ts);
+        x.user = e.store.findUser("UMIRA");
+        x.text = "message";
+        page.push_back(std::move(x));
+    }
+    e.store.addPage(c, std::move(page));
+    e.store.markRead(c, model::parseTs("1800000000.000300"));
+    return true;
+}
+
+void setRosterRead(Ts lastRead) {
+    const std::string body = str::concat(
+        {R"({"users.conversations": {"ok": true, "channels": [
+              {"id": "C1", "name": "general", "is_channel": true, "is_member": true,
+               "latest": "1800000000.000300", "last_read": ")",
+         model::formatTs(lastRead),
+         R"("}
+            ], "response_metadata": {"next_cursor": ""}}})"}
+    );
+    set(body);
+}
+
+} // namespace
+
+TEST("slack realtime: a rejected marked event requests roster reconciliation") {
+    if (!haveServer())
+        return;
+    Env e; // OAuth: client.counts is unavailable; the roster is the fallback.
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    ConvRef c = kNoConv;
+    REQUIRE(setMarkedHold(e, c));
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
+    pumpFor(100);
+    setRosterRead(model::parseTs("1800000000.000250"));
+    const int rosters = count("users.conversations");
+    // The event is rejected because of the hold, and requests one roster
+    // reconciliation without a manual reload.
+    REQUIRE(push(envelope(
+        "marked-reconcile",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil([&] { return count("users.conversations") > rosters; }, 3000));
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000250") && x.unread == 1;
+        },
+        3000
+    ));
+}
+
+TEST("slack realtime: a pre-confirmation marked event schedules a fresh reconciliation") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    ConvRef c = kNoConv;
+    REQUIRE(setMarkedHold(e, c));
+    // Keep the mark write pending so the first roster request is started
+    // before its confirmation.
+    script("conversations.mark", R"([{"ok": true, "__delay": 2.0}])");
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    setRosterRead(model::parseTs("1800000000.000250"));
+    const int rosters = count("users.conversations");
+    REQUIRE(push(envelope(
+        "marked-before-confirm",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    // The pre-confirmation roster request exists, but cannot release the
+    // hold; the confirmation then asks for a fresh one.
+    REQUIRE(pumpUntil([&] { return count("users.conversations") > rosters; }, 1500));
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1800000000.000200") - 1);
+    pumpFor(2300);
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000250") && x.unread == 1;
+        },
+        5000
+    ));
+}
+
+TEST("slack realtime: full roster reconciliation releases the hold") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    ConvRef c = kNoConv;
+    REQUIRE(setMarkedHold(e, c));
+    e.be->markUnread(c, model::parseTs("1800000000.000200"));
+    REQUIRE(pumpUntil([&] { return count("conversations.mark") >= 1; }, 3000));
+    pumpFor(100);
+    // Partial read: the cursor advances, the 300 message and the hold stay.
+    setRosterRead(model::parseTs("1800000000.000250"));
+    REQUIRE(push(envelope(
+        "marked-partial",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000250") && x.unread == 1;
+        },
+        3000
+    ));
+    // The partial snapshot is one-shot: it must not keep polling the roster
+    // merely because the hold is still there.
+    const int afterPartial = count("users.conversations");
+    pumpFor(400);
+    CHECK(count("users.conversations") == afterPartial);
+    // A full read releases the hold.
+    setRosterRead(model::parseTs("1800000000.000300"));
+    REQUIRE(push(envelope(
+        "marked-full",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000300",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] {
+            const auto &x = e.store.conversation(c);
+            return x.lastRead == model::parseTs("1800000000.000300") && x.unread == 0;
+        },
+        3000
+    ));
+    // With no hold, a subsequent marked event applies immediately.
+    REQUIRE(push(envelope(
+        "marked-after-release",
+        R"({"type":"channel_marked","channel":"C1","ts":"1800000000.000350",)"
+        R"("unread_count_display":0,"mention_count_display":0})"
+    )));
+    REQUIRE(pumpUntil(
+        [&] { return e.store.conversation(c).lastRead == model::parseTs("1800000000.000350"); },
+        3000
+    ));
 }
 
 TEST("slack realtime: new channels and group DMs join the list; foreign events don't") {

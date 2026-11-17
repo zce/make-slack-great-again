@@ -1441,11 +1441,14 @@ void MessageList::checkEdges() {
         return;
     updateVisibleRange();
     if (_root != 0) {
-        // An open thread reads itself — on load and on each new reply
-        // (markThreadRead: its cursor, the Threads entry) — unless it was
-        // marked unread here.
+        // An open thread reads itself only while the window is focused and
+        // visible, on load and on each new reply (markThreadRead: its
+        // cursor, the Threads entry) — unless it was marked unread here.
+        // A reply that lands in the background stays unread; regaining
+        // focus schedules this check again and reads it then.
         const auto timeline = _ctx.store().threadTimeline(_conv, _root);
-        if (!_loadingThread && !timeline.empty() && !timeline.back()->pending &&
+        if (visible() && _reading && !_loadingThread && !timeline.empty() && !_items.empty() &&
+            _list->lastVisible() >= int(_items.size()) - 1 && !timeline.back()->pending &&
             timeline.back()->ts != _markedTs && !_ctx.unreadHeld(_conv, _root)) {
             _markedTs = timeline.back()->ts;
             _ctx.backend.markThreadRead(_conv, _root, _markedTs);

@@ -261,6 +261,89 @@ TEST("sidebar: the open chat isn't read while the window is in the background") 
     CHECK(h.store.conversation(mira).unread == 0);
 }
 
+TEST("thread: an unfocused thread does not read new replies; focus does") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN");
+    Ts            root = 0, newest = 0;
+    for (const model::Thread &t : h.store.conversation(design).threads)
+        if (t.replies.size() >= 2) {
+            root   = t.root;
+            newest = t.replies.back().ts;
+            break;
+        }
+    REQUIRE(root != 0);
+    h.backend.setThreadFollowed(design, root, true);
+    h.backend.markThreadRead(design, root, newest);
+    h.backend.markThreadUnread(design, root, newest);
+    REQUIRE(h.store.unreadThreads() == 1);
+    auto focus = [&](bool in) {
+        plat::Event e;
+        e.type   = in ? plat::EventType::FocusIn : plat::EventType::FocusOut;
+        e.window = &h.win->native();
+        h.win->handle(e);
+        pump();
+    };
+    // Opening the panel while the window is in the background must not read
+    // the thread, and the Threads entry keeps its unread state.
+    focus(false);
+    h.sh->openThread(design, root);
+    pump(40);
+    CHECK(h.store.unreadThreads() == 1);
+    // A reply that lands while the open panel is in the background stays
+    // unread too; opening the panel is not continuous reading.
+    h.backend.postAs(design, h.store.findUser("U0MIRA"), "background reply", root);
+    pump(40);
+    CHECK(h.store.unreadThreads() == 1);
+    // Back in front, the open thread reads up to its newest reply.
+    focus(true);
+    for (int i = 0; i < 100 && h.store.unreadThreads(); ++i)
+        app().pump(5);
+    CHECK(h.store.unreadThreads() == 0);
+}
+
+TEST("thread: a closed panel does not read a reply when focus returns") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN");
+    Ts            root = 0, newest = 0;
+    for (const model::Thread &t : h.store.conversation(design).threads)
+        if (t.replies.size() >= 2) {
+            root   = t.root;
+            newest = t.replies.back().ts;
+            break;
+        }
+    REQUIRE(root != 0);
+    h.backend.setThreadFollowed(design, root, true);
+    h.backend.markThreadRead(design, root, newest);
+    // Open while focused: the visible thread reads itself.
+    h.sh->openThread(design, root);
+    pump(40);
+    REQUIRE(h.store.unreadThreads() == 0);
+    h.sh->closeThread();
+    pump(10);
+    // A reply lands while the panel is closed. The feed marks the thread
+    // unread; a later focus event must not let the hidden list read it.
+    const Ts reply =
+        h.backend.postAs(design, h.store.findUser("U0MIRA"), "reply while closed", root);
+    h.backend.markThreadUnread(design, root, reply);
+    REQUIRE(h.store.unreadThreads() == 1);
+    auto focus = [&](bool in) {
+        plat::Event e;
+        e.type   = in ? plat::EventType::FocusIn : plat::EventType::FocusOut;
+        e.window = &h.win->native();
+        h.win->handle(e);
+        pump();
+    };
+    focus(false);
+    focus(true);
+    pump(40);
+    CHECK(h.store.unreadThreads() == 1);
+    // Reopening restores normal reading.
+    h.sh->openThread(design, root);
+    for (int i = 0; i < 100 && h.store.unreadThreads(); ++i)
+        app().pump(5);
+    CHECK(h.store.unreadThreads() == 0);
+}
+
 TEST("window: hidden to the tray or minimised, the backend polls as hidden; shown, as shown") {
     Harness h;
     REQUIRE(h.backend.windowVisible);
@@ -659,7 +742,7 @@ namespace {
 std::vector<ConvRef> channelRows(Harness &h);
 } // namespace
 
-TEST("sort: mentions on top lifts mentions and unread DMs, not muted ones") {
+TEST("sort: mentions on top lifts mentions and unread DMs, muted mentions included") {
     Harness         h;
     shell::Sidebar &sb = h.sh->sidebar();
     sb.showAllChannels();
@@ -677,29 +760,32 @@ TEST("sort: mentions on top lifts mentions and unread DMs, not muted ones") {
         });
     pump();
     REQUIRE(sb.rowState(mention).badge > 0);
-    CHECK(sb.rowState(muted).badge == 0);
+    // Slack keeps the numbered badge for a muted channel's mention.
+    CHECK(sb.rowState(muted).badge == 1);
+    CHECK(sb.rowState(muted).bold);
 
-    // Alone: the mention first, the rest as listed.
+    // Alone: both mentions first, the rest as listed.
     sb.setSort("#channels", {shell::SectionSort::By::Default, false, true});
     pump();
-    std::vector<ConvRef> want = {mention};
+    std::vector<ConvRef> want = {muted, mention};
     for (ConvRef c : listed)
-        if (c != mention)
+        if (c != muted && c != mention)
             want.push_back(c);
     CHECK(channelRows(h) == want);
     CHECK_STR(h.settings.sidebarSorts.at(0).sort, "mentions");
 
-    // With unreads on top: mentions, then the other bold rows, then the rest.
+    // With unreads on top: both mentions, then the other bold rows, then the rest.
     sb.setSort("#channels", {shell::SectionSort::By::Default, true, true});
     pump();
-    want = {mention, unread};
+    want = {muted, mention, unread};
     for (ConvRef c : listed)
-        if (c != mention && c != unread)
+        if (c != muted && c != mention && c != unread)
             want.push_back(c);
     CHECK(channelRows(h) == want);
 
-    // Read, it drops back to its place.
-    h.store.updateConversation(mention, [](Conversation &cv) { cv.unread = cv.mentions = 0; });
+    // Read both mentions: the plain unread row leads, the mentions drop back.
+    for (ConvRef c : {muted, mention})
+        h.store.updateConversation(c, [](Conversation &cv) { cv.unread = cv.mentions = 0; });
     pump();
     CHECK(channelRows(h).front() == unread);
     CHECK(channelRows(h).back() == mention);
@@ -725,6 +811,104 @@ TEST("sort: mentions on top lifts mentions and unread DMs, not muted ones") {
             after.push_back(c);
     REQUIRE(after.size() == dms.size());
     CHECK(after.front() == dms.back());
+}
+
+TEST("sidebar: muted rows keep important badges; plain muted unread stays quiet") {
+    Harness         h;
+    shell::Sidebar &sb = h.sh->sidebar();
+    const ConvRef   eng = h.conv("C0ENG"), mira = h.conv("D0MIRA");
+    // Start from nothing so the fixture's own badges cannot mask a result.
+    for (ConvRef c = 0; c < h.store.conversationCount(); ++c)
+        h.store.updateConversation(c, [](Conversation &cv) { cv.unread = cv.mentions = 0; });
+    // A muted channel's mention and a muted DM's messages are still badges.
+    h.store.updateConversation(eng, [](Conversation &cv) {
+        cv.muted    = true;
+        cv.unread   = 2;
+        cv.mentions = 1;
+    });
+    h.store.updateConversation(mira, [](Conversation &cv) {
+        cv.muted    = true;
+        cv.unread   = 3;
+        cv.mentions = 0;
+    });
+    pump();
+    auto s = sb.rowState(eng);
+    CHECK(s.bold);
+    CHECK(s.badge == 1);
+    s = sb.rowState(mira);
+    CHECK(s.bold);
+    CHECK(s.badge == 3); // DMs count every unread message
+    CHECK(shell::workspaceAttention(h.store, NotifyLevel::All, h.backend.nowSecs()).important == 4);
+    // A muted channel's ordinary unread has no badge and is not bold.
+    h.store.updateConversation(eng, [](Conversation &cv) { cv.mentions = 0; });
+    pump();
+    s = sb.rowState(eng);
+    CHECK_FALSE(s.bold);
+    CHECK(s.badge == 0);
+    CHECK(shell::workspaceAttention(h.store, NotifyLevel::All, h.backend.nowSecs()).important == 3);
+    // An explicit Nothing level behaves as a mute for badges too, without
+    // changing the underlying unread state.
+    h.store.updateConversation(eng, [](Conversation &cv) {
+        cv.muted    = false;
+        cv.notify   = NotifyLevel::Nothing;
+        cv.mentions = 1;
+    });
+    pump();
+    CHECK(sb.rowState(eng).badge == 1);
+    CHECK(h.store.conversation(eng).unread == 2);
+}
+
+TEST("attention: thread unread joins the badge without double counting") {
+    Harness       h;
+    const ConvRef eng = h.conv("C0ENG"), rel = h.conv("C0RELEASES");
+    for (ConvRef c = 0; c < h.store.conversationCount(); ++c)
+        h.store.updateConversation(c, [](Conversation &cv) { cv.unread = cv.mentions = 0; });
+    auto attention = [&] {
+        return shell::workspaceAttention(h.store, NotifyLevel::All, h.backend.nowSecs()).important;
+    };
+    // A thread-only unread is attention even when the channel cursor moved
+    // past its reply and no conversation count names it.
+    h.store.setUnreadThreadCounts({{eng, 1}});
+    CHECK(attention() == 1);
+    CHECK(h.store.unreadThreads() == 1);
+    // The same reply also counted as a channel mention is one item, not two.
+    h.store.updateConversation(eng, [](Conversation &cv) { cv.mentions = 1; });
+    CHECK(attention() == 1);
+    // An independent mention in another conversation still adds up.
+    h.store.updateConversation(rel, [](Conversation &cv) { cv.mentions = 1; });
+    CHECK(attention() == 2);
+    // Several unread threads in one conversation are that many items; the
+    // larger side of the union wins.
+    h.store.setUnreadThreadCounts({{eng, 2}});
+    CHECK(attention() == 3);
+    // A muted channel's ordinary unread stays out, but its thread attention
+    // remains (Slack keeps Threads and the app badge alive under a mute).
+    h.store.updateConversation(eng, [](Conversation &cv) {
+        cv.muted    = true;
+        cv.unread   = 9;
+        cv.mentions = 0;
+    });
+    CHECK(attention() == 3);
+    h.store.setUnreadThreadCounts({});
+    CHECK(attention() == 1); // only #releases' mention
+    CHECK(h.store.unreadThreads() == 0);
+}
+
+TEST("attention: a recent thread survives an old conversation age filter") {
+    Harness       h;
+    const ConvRef c   = h.conv("C0ENG");
+    const Ts      now = int64_t(h.backend.nowSecs()) * 1000000;
+    for (ConvRef x = 0; x < h.store.conversationCount(); ++x)
+        h.store.updateConversation(x, [](Conversation &cv) { cv.unread = cv.mentions = 0; });
+    h.store.updateConversation(c, [&](Conversation &cv) {
+        cv.latest   = now - int64_t(40 * 86400) * 1000000;
+        cv.lastRead = 0;
+    });
+    h.store.setUnreadThreadCounts({{c, 1}});
+    CHECK(shell::workspaceAttention(h.store, NotifyLevel::All, h.backend.nowSecs()).important == 1);
+    // An old thread timestamp still expires normally.
+    h.store.setUnreadThreadCounts({{c, 1}}, {{c, now - int64_t(40 * 86400) * 1000000}});
+    CHECK(shell::workspaceAttention(h.store, NotifyLevel::All, h.backend.nowSecs()).important == 0);
 }
 
 TEST("sections: External connections group Slack Connect channels and DMs, with manual overrides") {
@@ -5038,6 +5222,29 @@ TEST("notifications: the titles and gates — level, mutes, replies to unloaded 
     (void)dm;
 }
 
+TEST("notifications: DND pauses delivery but not unread state") {
+    TwoWorkspaces w;
+    Store        &b        = w.b;
+    const ConvRef general  = b.findConversation("C0GENERAL");
+    const Ts      beforeTs = b.conversation(general).latest;
+    b.user(b.me).dnd = true;
+    b.usersChanged(b.me);
+    const uint64_t quiet = lastNotification(nullptr);
+    w.post(b, "C0GENERAL", "news while paused");
+    w.post(b, "C0GENERAL", ("mention while paused <@" + b.user(b.me).id + ">").c_str());
+    pump();
+    CHECK(lastNotification(nullptr) == quiet); // neither banner nor sound
+    CHECK(b.conversation(general).latest > beforeTs);
+    CHECK(b.conversation(general).unread > 0); // the data state still moves
+    CHECK(b.conversation(general).mentions > 0);
+    // Resuming restores delivery without replaying what was paused.
+    b.user(b.me).dnd = false;
+    b.usersChanged(b.me);
+    w.post(b, "C0GENERAL", "after resume");
+    pump();
+    REQUIRE(until([&] { return lastNotification(nullptr) > quiet; }));
+}
+
 // Issue #151: reading a conversation (here or on another client: a Meta
 // with the cursor moved) or a thread takes its notifications back from the
 // OS; other conversations' and threads' stay, and so do the unread ones.
@@ -5226,6 +5433,23 @@ TEST("huddles: the start notifies once with Join; the pill and the banner follow
     });
     pump();
     CHECK(lastNotification(nullptr) == quiet);
+    // DND pauses huddle delivery like any other notification.
+    w.settings.notifyHuddles = true;
+    a.user(a.me).dnd         = true;
+    a.usersChanged(a.me);
+    const ConvRef releases = a.findConversation("C0RELEASES");
+    a.updateConversation(releases, [&](Conversation &c) {
+        c.huddleActive       = true;
+        c.huddleParticipants = {mira};
+    });
+    pump();
+    CHECK(lastNotification(nullptr) == quiet);
+    // Resuming delivers the huddle that was paused (it was never consumed).
+    a.user(a.me).dnd = false;
+    a.usersChanged(a.me);
+    a.updateConversation(releases, [](Conversation &c) { c.topic = "x"; });
+    pump();
+    CHECK(lastNotification(nullptr) > quiet);
 }
 
 TEST("reminders: the due notification names the place; its click opens the message") {
