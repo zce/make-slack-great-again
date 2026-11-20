@@ -906,7 +906,7 @@ void QuickSwitcher::queueSearch() {
 void QuickSwitcher::requestPage(size_t origin, std::string cursor, uint32_t generation,
                                 const std::string &query) {
     model::Backend *backend = _tabs[origin].backend;
-    if (!backend && _tabs[origin].store == &_ctx.store()) backend = &_ctx.backend;
+    if (!backend && _tabs[origin].store == &_ctx.store()) backend = &_ctx.backend();
     if (!backend) return;
     std::weak_ptr<int> alive = _alive;
     // Copy the retry cursor: moving it into the callback in this call can

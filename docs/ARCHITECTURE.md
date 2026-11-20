@@ -35,7 +35,7 @@ wires workspace actions and starts saved workspaces.
 | Conversations, users, messages, unread counts, drafts and loaded thread replies | `model::Store` | One per workspace; mutations and observers run on UI thread. |
 | Thread baselines, followed threads and per-thread read floors | `slack::SlackBackend` (`Read`) | Store keeps only the aggregate unread-thread count and the replies it has loaded. |
 | Slack API and live events | `slack::SlackBackend` | Read, write and live parts mutate Store; no parallel UI copy. |
-| Active workspace routing | `BackendProxy` + `StoreSlot` | Proxy targets active backend; slot targets active Store. |
+| Active workspace routing | `BackendSlot` + `StoreSlot` | Each slot targets the active backend or Store. |
 | Cross-workspace attention and notifications | `Shell` | Accounts attaches all running Stores, including background workspaces. |
 | Pages, selection, threads, navigation and notification policy | `Shell` | Owns view state, not message data. |
 | Back/forward history | `NavHistory` | Bounded locations, validated on replay and purged on workspace removal. |
@@ -51,7 +51,7 @@ wires workspace actions and starts saved workspaces.
 1. Accounts reads WorkspaceStore and chooses a Slack workspace.
 2. `Accounts::ensure` creates a Running record with its own Store and
    SlackBackend, attaches Store to Shell, opens its cache and connects.
-3. Switching changes BackendProxy and StoreSlot targets before screens rebuild.
+3. Switching changes BackendSlot and StoreSlot targets before screens rebuild.
    The previous workspace remains connected in the background; it is not copied
    into the active Store.
 4. Sign-out detaches Store before destroying backend. Cache removal is explicit.
@@ -200,7 +200,7 @@ Regression coverage lives in `tests/app/core/test_slack*`,
 ## Audit decisions
 
 - No broad Store rewrite was justified: Store is already the single workspace
-  data owner, and BackendProxy is an explicit routing boundary.
+  data owner, and BackendSlot is an explicit routing boundary.
 - Shell is a large UI orchestrator, but major responsibilities already have
   separate translation units and Accounts owns workspace lifecycle. Extracting
   classes without moving a coherent lifecycle would add indirection.

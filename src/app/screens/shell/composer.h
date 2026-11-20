@@ -3,10 +3,13 @@
 // attachment chips, the editor and the bottom bar (attach, emoji, GIF,
 // mention … send + schedule).
 //
-// The editor is plain text: the toolbar and the format keys
-// type Slack's markers ("*bold*", "> quote", "```"), and a link is typed as
-// <url|label>. Mentions, channels and GIFs picked from the popups are pills
-// that show "@Name" / "#name" / "GIF · title" and send their raw token.
+// The editor is plain text: the toolbar and the format keys type Slack's
+// markers ("*bold*", "> quote", "```"). Mentions, channels and GIFs picked
+// from the popups are pills that show "@Name" / "#name" / "GIF · title" and
+// send their raw token. A link is a link in the editor too: a typed or pasted
+// URL and a selection the Link button is given both make one (blue,
+// underlined, "<url|label>" on the way out, never a token in the text), and a
+// chip on hover edits or unlinks it.
 //
 // Draft invariant (the composer draft stash): whatever is typed — text and
 // attached files — is stashed per (conversation, thread) on EVERY path that
@@ -22,6 +25,7 @@
 // size on plates; remove); sending hands them to Backend::sendWithFiles.
 #pragma once
 
+#include "app/mrkdwn/smileys.h"
 #include "screens/common/context.h"
 #include "screens/shell/composer_popups.h"
 #include "screens/shell/shortcuts.h"
@@ -49,7 +53,7 @@ std::string toMrkdwn(std::string_view text, const std::vector<ui::TextEdit::Run>
 // At most 8.
 struct EmojiCompletion {
     std::string name;
-    bool        custom = false; // inserted as :name: (no Unicode form)
+    bool        custom = false; // a workspace emoji: :name:, or an alias's character
 };
 std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::string_view query);
 // The other way, for editing a sent message: the
@@ -169,7 +173,8 @@ public:
     void      openGif();
     void      openLinkPopup();
     void      openSchedule();
-    PickList *pickList() const { return _pick; } // the open @ / # / : list
+    PickList *pickList() const { return _pick; }     // the open @ / # / : list
+    LinkChip *linkChip() const { return _linkChip; } // the hovered link's chip
     // Re-reads the trigger before the caret: opens, filters or closes the pick list.
     void      updatePickList();
     // Tests: user labels folded into the @ filter's cache so far (each one
@@ -242,8 +247,25 @@ private:
     void wrapCodeBlock();
     void wrapInline(std::string_view marker);
     void insertPill(uint32_t from, uint32_t to, const std::string &display, const std::string &raw);
+    // Puts a link over [from, to): `label` (the URL's own text when it is
+    // empty or the URL) made into a link to `url` — what the Link popup and
+    // the link chip's Edit do. The raw "<url|label>" token never reaches the
+    // editor: it is an outgoing form only.
+    void placeLink(uint32_t from, uint32_t to, const std::string &url, const std::string &label);
+    // Links the bare URLs typed or pasted into the editor, so one reads as a
+    // link before the message is sent (as Slack's does). Skipped while a link
+    // change of the owner's is in flight.
+    void linkify();
+    void linkHovered(const ui::TextEdit::LinkHover &h);
+    void editLink(uint32_t from, uint32_t to);
+    void unlinkLink(uint32_t from, uint32_t to);
+    void openLinkChip(const ui::TextEdit::LinkHover &h);
+    void closeLinkChip();
+    void armLinkChipClose();
     void pick(const PickList::Item &it);
     void typing();
+    void finishSmiley();
+    void finishSmileyAt(uint32_t stop);
     void compositionChanged();
     void offerUndo(const std::string &html, const std::vector<std::string> &files);
     void withdrawUndo();
@@ -252,8 +274,13 @@ private:
     DraftStash              &_drafts;
     Avatars                 *_avatars = nullptr;
     DraftStash::Key          _key;
-    ui::TextEdit            *_edit      = nullptr;
-    GlyphButton             *_tools[10] = {};
+    ui::TextEdit               *_edit            = nullptr;
+    bool                        _finishingSmiley = false;
+    bool                        _smileysParsed   = false;
+    size_t                      _smileyTextLen   = 0;
+    std::string                 _smileyMapParsed;
+    std::vector<mrkdwn::Smiley> _smileys;
+    GlyphButton                *_tools[10] = {};
     GlyphButton             *_bottom[4] = {}; // attach, emoji, GIF, mention
     GlyphButton             *_gifBtn = nullptr, *_mentionBtn = nullptr, *_emojiBtn = nullptr;
     GlyphButton             *_sendBtn = nullptr, *_dropBtn = nullptr;
@@ -294,7 +321,12 @@ private:
     struct FoldedName {
         std::string name, folded;
     };
-    std::vector<FoldedName>              _foldedConvs;
+    std::vector<FoldedName> _foldedConvs;
+    struct FoldedGroup {
+        std::string handle, name, folded;
+        uint32_t    handleEnd = 0;
+    };
+    std::vector<FoldedGroup> _foldedGroups;
     // The / list: the conversation's commands as last fetched, and the same
     // sorted by name with their names folded (redone when the list changes).
     model::ConvRef                       _cmdConv = model::kNoConv;
@@ -328,6 +360,12 @@ private:
     bool                     _active        = false; // something to send
     bool                     _inPick        = false; // updatePickList probing the caret
     plat::TimerId            _spellTimer    = 0;
+    LinkChip                *_linkChip      = nullptr;
+    plat::TimerId            _linkChipTimer = 0;
+    std::string              _linkChipUrl;
+    std::vector<std::string> _unlinked;
+    uint32_t                 _linkChipFrom = 0, _linkChipTo = 0;
+    bool                     _linkifying    = false;
     uint32_t                 _spellSeq      = 0; // the newest check; older answers are dropped
     uint32_t                 _spellObserver = 0;
 };

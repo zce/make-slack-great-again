@@ -225,9 +225,14 @@ std::unique_ptr<text::Layout> TextEdit::buildPara(const Para &p, float w) const 
             st.background = color(C::CodeBg);
         }
         if (f & kLinkMask) {
-            st.color = color(C::Link);
-            if (_linkBg != C::None) // pills: mentions in the composer
-                st.background = color(_linkBg);
+            st.color       = color(C::Link);
+            const size_t i = f >> 8;
+            if (i && i <= _links.size() && pillLink(_links[i - 1])) {
+                if (_linkBg != C::None) // pills: mentions in the composer
+                    st.background = color(_linkBg);
+            } else {
+                st.underline = true; // a URL reads as one: blue and underlined
+            }
         }
         return st;
     };
@@ -711,6 +716,27 @@ void TextEdit::insertText(std::string_view s) {
     replace(std::min(_caret, _anchor), std::max(_caret, _anchor), s, nullptr, f, EditKind::Other);
 }
 
+void TextEdit::replaceTyped(uint32_t from, uint32_t to, std::string_view s) {
+    // The caret stays where it was in the text around the range (after the
+    // space that finished a smiley), not after what went in.
+    const uint32_t caret = _caret, anchor = _anchor;
+    const auto     moved = [&](uint32_t o) {
+        return o >= to ? o - (to - from) + uint32_t(s.size()) : std::min(o, from);
+    };
+    // Not Typing: what is typed next must not join this edit's undo step.
+    replace(from, to, s, nullptr, typingFormat(), EditKind::Other);
+    _caret  = std::min(moved(caret), uint32_t(_text.size()));
+    _anchor = std::min(moved(anchor), uint32_t(_text.size()));
+    if (!_undo.empty()) { // redo puts the caret back here too
+        _undo.back().caretAfter  = _caret;
+        _undo.back().anchorAfter = _anchor;
+    }
+    update();
+    ensureCaretVisible();
+    updateIme();
+    selectionChanged();
+}
+
 void TextEdit::insertHtml(std::string_view html) {
     std::string              t;
     std::vector<uint16_t>    f;
@@ -815,6 +841,92 @@ void TextEdit::setLink(std::string url) {
         x = uint16_t((x & 0xff) | (idx << 8));
     const std::string same = _text.substr(a, b - a);
     replace(a, b, same, nf.data(), 0, EditKind::Format);
+}
+
+// ── Links the pointer is on ────────────────────────────────────────────────
+
+void TextEdit::updateLinkHover(PointF local) {
+    if (_links.empty() && !_hoverLink) // no link to be on: skip the hit test
+        return;
+    std::string_view url;
+    uint32_t         from = 0, to = 0;
+    // A pill (a mention, a channel, a GIF) is no link to open or edit.
+    const bool       link = linkAt(hitOffset(local), &url, &from, &to) && !pillLink(url);
+    if (link == _hoverLink && from == _hoverFrom && to == _hoverTo)
+        return;
+    _hoverLink = link;
+    _hoverFrom = link ? from : 0;
+    _hoverTo   = link ? to : 0;
+    if (onLinkHover) {
+        LinkHover h;
+        if (link) {
+            h.url  = std::string(url);
+            h.from = from;
+            h.to   = to;
+            h.rect = rangeRect(from, to);
+        }
+        onLinkHover(h);
+    }
+}
+
+uint8_t TextEdit::cursorAt(PointF) const {
+    return _hoverLink ? uint8_t(plat::Cursor::Hand) : uint8_t(plat::Cursor::IBeam);
+}
+
+void TextEdit::clearLinkHover() {
+    if (!_hoverLink)
+        return;
+    _hoverLink = false;
+    _hoverFrom = _hoverTo = 0;
+    if (onLinkHover)
+        onLinkHover(LinkHover{});
+}
+
+bool TextEdit::pillLink(std::string_view url) {
+    return !url.empty() && (url[0] == '<' || url[0] == '@' || url[0] == '#' || url[0] == '!');
+}
+
+bool TextEdit::linkAt(uint32_t offset, std::string_view *url, uint32_t *from, uint32_t *to) const {
+    if (_links.empty()) // the common case: no runs to walk
+        return false;
+    for (const Run &r : runs()) {
+        if (r.link.empty() || offset < r.start || offset >= r.end)
+            continue;
+        if (url)
+            *url = r.link;
+        if (from)
+            *from = r.start;
+        if (to)
+            *to = r.end;
+        return true;
+    }
+    return false;
+}
+
+RectF TextEdit::rangeRect(uint32_t from, uint32_t to) const {
+    const_cast<TextEdit *>(this)->currentLayout();
+    const Style             &s = currentStyle();
+    const std::vector<RectF> lines =
+        docSelectionRects(toDisplay(std::min(from, to)), toDisplay(std::max(from, to)));
+    RectF r;
+    if (lines.empty()) {
+        r = docCaretRect(toDisplay(std::min(from, to)));
+    } else { // the first line the range touches, all of it
+        r = lines.front();
+        for (size_t i = 1; i < lines.size() && lines[i].y == r.y; ++i) {
+            const float right = std::max(r.x + r.w, lines[i].x + lines[i].w);
+            r.x               = std::min(r.x, lines[i].x);
+            r.w               = right - r.x;
+        }
+    }
+    r.x += s.pad.l;
+    r.y += s.pad.t - _scrollY;
+    if (r.h <= 0)
+        r.h = lineHeight();
+    if (!window()) // not shown: local is all there is
+        return r;
+    const PointF o = mapToWindow({r.x, r.y});
+    return {o.x, o.y, r.w, r.h};
 }
 
 void TextEdit::setPlaceholder(std::string s) {
@@ -925,8 +1037,11 @@ void TextEdit::pasteText(bool plainText, plat::Selection sel) {
         app()->platform().requestClipboard(
             "text/plain;charset=utf-8",
             [this, alive](std::optional<std::string> t) {
-                if (!alive.expired() && t && !t->empty())
-                    insertText(*t);
+                if (alive.expired() || !t || t->empty())
+                    return;
+                _pasting = true; // the owner links a pasted URL at once
+                insertText(*t);
+                _pasting = false;
             },
             sel
         );
@@ -940,9 +1055,11 @@ void TextEdit::pasteText(bool plainText, plat::Selection sel) {
         [this, alive, pastePlain](std::optional<std::string> h) {
             if (alive.expired())
                 return;
-            if (h && !h->empty())
+            if (h && !h->empty()) {
+                _pasting = true;
                 insertHtml(*h);
-            else
+                _pasting = false;
+            } else
                 pastePlain();
         },
         sel
@@ -950,7 +1067,7 @@ void TextEdit::pasteText(bool plainText, plat::Selection sel) {
 }
 
 void TextEdit::setPrimarySelection() {
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(MSGA_FREEDESKTOP) || defined(MSGA_PORT) // a port: if it has PORT_CAP_PRIMARY_SELECTION
     if (hasSelection())
         app()->platform().setClipboardText(selectedText(), plat::Selection::Primary);
 #endif
@@ -1256,7 +1373,7 @@ bool TextEdit::onEvent(Event &e) {
     }
     case EventType::PointerDown: {
         if (e.button == plat::Button::Middle) {
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(MSGA_FREEDESKTOP) || defined(MSGA_PORT) // a port: if it has PORT_CAP_PRIMARY_SELECTION
             // The primary selection, as plain text — or, to an owner that
             // takes media (the composer: the middle click attaches like a
             // paste), its files and pictures.
@@ -1294,8 +1411,10 @@ bool TextEdit::onEvent(Event &e) {
         return true;
     }
     case EventType::PointerMove:
-        if (!_dragging)
+        if (!_dragging) {
+            updateLinkHover(e.pos);
             return false;
+        }
         {
             const uint32_t o = hitOffset(e.pos);
             if (_selMode == 0) {
@@ -1323,6 +1442,9 @@ bool TextEdit::onEvent(Event &e) {
         _dragging = false;
         setPrimarySelection();
         return true;
+    case EventType::PointerLeave:
+        clearLinkHover();
+        return false;
     case EventType::Scroll: {
         const Style &s = currentStyle();
         currentLayout();

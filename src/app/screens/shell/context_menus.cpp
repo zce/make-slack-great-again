@@ -86,7 +86,7 @@ std::string sectionLabel(const model::Store &st, const model::Store::Section &s)
 // Under the star: "Move to section" (each section, the current one ticked,
 // then "New section…") and "Remove from <section>" while in one.
 void Menus::sectionMoves(std::vector<ui::MenuItem> &items, const model::Conversation &cv) const {
-    if (!_ctx.backend.capabilities().customSections)
+    if (!_ctx.backend().capabilities().customSections)
         return;
     const model::Store          &st  = _ctx.store();
     const model::Store::Section *cur = st.sectionOf(cv.id);
@@ -163,7 +163,7 @@ std::vector<ui::MenuItem> Menus::sectionItems(
     bool                canResetOrder
 ) const {
     std::vector<ui::MenuItem> items;
-    if (_ctx.backend.capabilities().customSections) {
+    if (_ctx.backend().capabilities().customSections) {
         add(items, kCreateSection);
         const auto &all = _ctx.store().sections();
         for (size_t i = 0; i < all.size(); ++i)
@@ -235,7 +235,7 @@ void Menus::runSection(int id, const std::string &section) {
         break;
     case kSectionUp:
     case kSectionDown:
-        _ctx.backend.moveSection(section, id == kSectionUp ? -1 : 1);
+        _ctx.backend().moveSection(section, id == kSectionUp ? -1 : 1);
         break;
     }
 }
@@ -279,7 +279,7 @@ void Menus::run(int id, uint32_t target) {
     if (id >= kMoveToSection) { // ── "Move to section" → one of them ──
         const auto &all = _ctx.store().sections();
         if (target < _ctx.store().conversationCount() && size_t(id - kMoveToSection) < all.size())
-            _ctx.backend.moveToSection(target, all[size_t(id - kMoveToSection)].id);
+            _ctx.backend().moveToSection(target, all[size_t(id - kMoveToSection)].id);
         return;
     }
     if (id >= kCreateSection) // section menus use runSection()

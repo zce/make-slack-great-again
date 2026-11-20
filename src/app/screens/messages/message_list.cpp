@@ -634,9 +634,9 @@ void MessageList::toggleSaved(Ts ts) {
     if (!m || isSystem(*m))
         return;
     if (_ctx.store().reminderAt(_conv, ts))
-        _ctx.backend.setReminder(_conv, ts, 0);
+        _ctx.backend().setReminder(_conv, ts, 0);
     else
-        _ctx.backend.setSaved(_conv, ts, !m->saved);
+        _ctx.backend().setSaved(_conv, ts, !m->saved);
     placeToolbar();
 }
 
@@ -867,7 +867,7 @@ void MessageList::showThread(ConvRef conv, Ts root, Ts jumpTarget) {
     if (_threadLoadPending) {
         const uint64_t      generation = _threadLoadGeneration;
         std::weak_ptr<char> alive      = _alive;
-        _ctx.backend.loadThread(
+        _ctx.backend().loadThread(
             conv, root, [this, alive, conv, root, generation](bool ok, const std::string &err) {
                 if (alive.expired() || generation != _threadLoadGeneration || conv != _conv ||
                     root != _root)
@@ -1451,7 +1451,7 @@ void MessageList::checkEdges() {
             _list->lastVisible() >= int(_items.size()) - 1 && !timeline.back()->pending &&
             timeline.back()->ts != _markedTs && !_ctx.unreadHeld(_conv, _root)) {
             _markedTs = timeline.back()->ts;
-            _ctx.backend.markThreadRead(_conv, _root, _markedTs);
+            _ctx.backend().markThreadRead(_conv, _root, _markedTs);
         }
         return;
     }
@@ -1468,13 +1468,13 @@ void MessageList::checkEdges() {
         const Ts newest = c.messages.back().ts;
         if (newest > c.lastRead && newest != _markedTs && !c.messages.back().pending) {
             _markedTs = newest;
-            _ctx.backend.markRead(_conv, newest);
+            _ctx.backend().markRead(_conv, newest);
         } else if (newest <= c.lastRead) {
             _markedTs = newest; // seen read: a later "mark unread" must stick
             // Read, yet still badged (thread replies counted on the channel,
             // a cursor moved elsewhere): the backend recounts.
             if (c.unread || c.mentions)
-                _ctx.backend.markRead(_conv, newest);
+                _ctx.backend().markRead(_conv, newest);
         }
     }
     const int first = _list->firstVisible();
@@ -1501,7 +1501,7 @@ void MessageList::checkEdges() {
         const ConvRef       conv       = _conv;
         const uint64_t      generation = ++_historyLoadGeneration;
         std::weak_ptr<char> alive      = _alive;
-        _ctx.backend.loadHistory(
+        _ctx.backend().loadHistory(
             conv, before, [this, alive, conv, before, generation](bool ok, const std::string &err) {
                 if (alive.expired() || generation != _historyLoadGeneration || conv != _conv)
                     return;
@@ -1558,7 +1558,7 @@ void MessageList::placeToolbar() {
                          : tr("Reply in thread")
     );
     syncQuickReactions(true);
-    _tbSave->setVisible(_ctx.backend.capabilities().messageReminders);
+    _tbSave->setVisible(_ctx.backend().capabilities().messageReminders);
     const bool saved = m->saved || _ctx.store().reminderAt(_conv, m->ts) != 0;
     _tbSave->setIcon(saved ? gfx::Icon::BookmarkFilled : gfx::Icon::Bookmark);
     _tbSave->setTooltip(saved ? tr("Remove from saved") : tr("Save for later"));
@@ -1622,14 +1622,14 @@ void MessageList::toggleQuickReaction(const std::string &name) {
     const Ts ts = m->ts;
     if (mine) {
         const std::string n = mine->name; // react() may change the message
-        _ctx.backend.react(_conv, ts, n, false);
+        _ctx.backend().react(_conv, ts, n, false);
         return;
     }
     // Under the name the message already has it by, in my tone.
     std::string add = name;
     if (same && baseOf(same->name) != base)
         add = str::concat({baseOf(same->name), std::string_view(name).substr(base.size())});
-    _ctx.backend.react(_conv, ts, add, true);
+    _ctx.backend().react(_conv, ts, add, true);
 }
 
 void MessageList::hideToolbar() {
@@ -1806,13 +1806,13 @@ void MessageList::markUnread(Ts ts) {
     if (!m || m->pending || _conv == model::kNoConv)
         return;
     if (const Ts thread = unreadThreadOf(*m)) {
-        if (!_ctx.backend.canMarkThreadUnread(_conv, thread))
+        if (!_ctx.backend().canMarkThreadUnread(_conv, thread))
             return;
         _ctx.holdUnread(_conv, thread);
-        _ctx.backend.markThreadUnread(_conv, thread, ts);
+        _ctx.backend().markThreadUnread(_conv, thread, ts);
     } else {
         _ctx.holdUnread(_conv, 0);
-        _ctx.backend.markUnread(_conv, ts);
+        _ctx.backend().markUnread(_conv, ts);
     }
 }
 
@@ -1822,7 +1822,7 @@ void MessageList::openReactionPicker(Ts ts, ui::RectF anchor) {
     const ConvRef conv = _conv;
     Context      &ctx  = _ctx;
     EmojiPicker::show(*window(), anchor, _ctx, [&ctx, conv, ts](const std::string &name) {
-        ctx.backend.react(conv, ts, name, true);
+        ctx.backend().react(conv, ts, name, true);
     });
 }
 
@@ -1906,19 +1906,18 @@ void MessageList::showToast(const std::string &text, int ms, ui::PointF at) {
         showClickToast(_ctx, *w, text, ms, at);
 }
 
-void MessageList::pressButton(Ts ts, const std::string &buttonId, ui::PointF at) {
-    // A link button opens its URL instead.
-    if (const model::Message *m = message(ts); m && m->extra)
-        for (const model::Button &b : m->extra->buttons)
-            if (b.id == buttonId && !b.url.empty()) {
-                if (_ctx.openUrl)
-                    _ctx.openUrl(b.url);
-                return;
-            }
+void MessageList::pressButton(Ts ts, const model::Button &button, ui::PointF at) {
+    // A link button opens its URL instead. By the button itself, not its id:
+    // link buttons often have none (legacy ones, a call's Join).
+    if (!button.url.empty()) {
+        if (_ctx.openUrl)
+            _ctx.openUrl(button.url);
+        return;
+    }
     // The toast confirms that the app button action was accepted.
     std::weak_ptr<char> alive = _alive;
-    _ctx.backend.pressButton(
-        _conv, ts, buttonId, [this, alive, at](bool ok, const std::string &err) {
+    _ctx.backend().pressButton(
+        _conv, ts, button.id, [this, alive, at](bool ok, const std::string &err) {
             if (alive.expired())
                 return;
             if (ok)
@@ -2090,7 +2089,7 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts, ui::PointF at) const {
     const bool   mine      = m->user == st.me && m->user != model::kNoUser;
     // Delete requires ownership or workspace administration, plus backend permission.
     const bool canDelete = (mine || (st.me != model::kNoUser && st.user(st.me).admin)) &&
-                             _ctx.backend.canDeleteMessage(_conv, ts);
+                             _ctx.backend().canDeleteMessage(_conv, ts);
 
     // Frequent actions first, matching the hover toolbar and Slack's right-click
     // hierarchy. A reply in a thread opens that thread, never a nested thread.
@@ -2110,11 +2109,11 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts, ui::PointF at) const {
     // A reply only where the thread has a cursor of its own to move back
     // (a followed thread); otherwise the conversation's, where I'm in it.
     if (const Ts thread = unreadThreadOf(*m);
-        thread ? _ctx.backend.canMarkThreadUnread(_conv, thread) : st.conversation(_conv).member)
+        thread ? _ctx.backend().canMarkThreadUnread(_conv, thread) : st.conversation(_conv).member)
         addItem(items, kMarkUnread);
     ui::addMenuSeparator(items);
 
-    if (_ctx.backend.capabilities().messageReminders) {
+    if (_ctx.backend().capabilities().messageReminders) {
         const bool reminded = st.reminderAt(_conv, ts) != 0;
         if (m->saved && !reminded)
             addItem(items, kUnsave);
@@ -2130,8 +2129,8 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts, ui::PointF at) const {
     // Follow the thread in the service (any message: one without replies yet
     // too), or stop following it. Unlike Mute, offered in the thread panel too.
     if (const Ts root = m->isReply() ? m->threadTs : m->ts;
-        _ctx.backend.canFollowThread(_conv, root))
-        addItem(items, _ctx.backend.threadFollowed(_conv, root) ? kUnfollowThread : kFollowThread);
+        _ctx.backend().canFollowThread(_conv, root))
+        addItem(items, _ctx.backend().threadFollowed(_conv, root) ? kUnfollowThread : kFollowThread);
 
     ui::addMenuSeparator(items);
     if (mine && onEdit)
@@ -2252,7 +2251,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         return;
     }
     if (id >= kRemindPreset && id < kRemindPreset + 5) {
-        _ctx.backend.setReminder(conv, ts, remindDue(id - kRemindPreset, base::nowSecs()));
+        _ctx.backend().setReminder(conv, ts, remindDue(id - kRemindPreset, base::nowSecs()));
         return;
     }
     switch (id) {
@@ -2276,7 +2275,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         break;
     case kFollowThread:
     case kUnfollowThread:
-        _ctx.backend.setThreadFollowed(
+        _ctx.backend().setThreadFollowed(
             conv, msg->isReply() ? msg->threadTs : ts, id == kFollowThread
         );
         break;
@@ -2285,7 +2284,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
             onEdit(conv, ts);
         break;
     case kRetryFailed:
-        if (!_ctx.backend.retryFailedMessage(conv, ts) && _ctx.backend.onError)
+        if (!_ctx.backend().retryFailedMessage(conv, ts) && _ctx.backend.onError)
             _ctx.backend.onError("Unable to retry; an attachment may no longer exist.");
         break;
     case kRecoverOutgoing:
@@ -2309,11 +2308,11 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         break;
     case kPin:
     case kUnpin:
-        _ctx.backend.setPinned(conv, ts, id == kPin);
+        _ctx.backend().setPinned(conv, ts, id == kPin);
         break;
     case kSave:
     case kUnsave:
-        _ctx.backend.setSaved(conv, ts, id == kSave);
+        _ctx.backend().setSaved(conv, ts, id == kSave);
         break;
     case kRemind: {
         // The presets replace the menu at the same point.
@@ -2327,7 +2326,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         break;
     }
     case kRemoveReminder:
-        _ctx.backend.setReminder(conv, ts, 0);
+        _ctx.backend().setReminder(conv, ts, 0);
         break;
     case kDelete: // the delete dialog first
         if (window())
@@ -2365,7 +2364,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         break;
     case kDeleteFile:
         if (const model::File *f = fileAt(msg, path))
-            _ctx.backend.deleteFile(conv, ts, f->id);
+            _ctx.backend().deleteFile(conv, ts, f->id);
         break;
     case kCopyImage:
         if (const model::File *f = anyFileAt(msg, path))
@@ -2934,7 +2933,7 @@ void MessageList::replyBarClicked(Ts root) {
 void MessageList::loadInline(Ts root) {
     std::weak_ptr<char> alive = _alive;
     const ConvRef       conv  = _conv;
-    _ctx.backend.loadThread(conv, root, [this, alive, conv, root](bool, const std::string &) {
+    _ctx.backend().loadThread(conv, root, [this, alive, conv, root](bool, const std::string &) {
         if (!alive.expired() && conv == _conv && has(_inlineThreads, root))
             rowChanged(root);
     });
@@ -2962,7 +2961,7 @@ bool MessageList::attachmentHidden(const model::Message &m, size_t index) const 
 }
 
 bool MessageList::removesPreviewServerSide(const model::Message &m) const {
-    return !m.pending && _ctx.backend.capabilities().removePreview &&
+    return !m.pending && _ctx.backend().capabilities().removePreview &&
            _ctx.store().me != model::kNoUser && m.user == _ctx.store().me;
 }
 
@@ -2981,7 +2980,7 @@ void MessageList::dismissAttachment(Ts ts, size_t index) {
     const int                id    = a.id > 0 ? a.id : int(index) + 1; // positional
     std::weak_ptr<char>      alive = _alive;
     Context                 &ctx   = _ctx;
-    _ctx.backend.deleteAttachment(
+    _ctx.backend().deleteAttachment(
         _conv, ts, id, [this, alive, &ctx, ts](bool ok, const std::string &err) {
             if (!ok) {
                 if (ctx.backend.onError)
@@ -3042,7 +3041,7 @@ const std::string *MessageList::canvasPreview(const std::string &id, int *state)
     _canvasPreviews.push_back({id, {}, 0});
     *state                    = 0;
     std::weak_ptr<char> alive = _alive;
-    _ctx.backend.loadCanvasContent(id, [this, alive, id](std::string html, std::string error) {
+    _ctx.backend().loadCanvasContent(id, [this, alive, id](std::string html, std::string error) {
         if (alive.expired())
             return;
         for (CanvasPreview &p : _canvasPreviews)

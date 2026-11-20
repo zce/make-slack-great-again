@@ -79,7 +79,7 @@ public:
         const std::string   ws    = ctx.store().workspaceId;
         const ScheduledItem item  = _item;
         Card *card = this;
-        ctx.backend.cancelScheduled(
+        ctx.backend().cancelScheduled(
             item.id, [card, &ctx, alive, ws, item](bool ok, const std::string &error) {
                 if (alive.expired() || ctx.store().workspaceId != ws)
                     return;
@@ -87,7 +87,7 @@ public:
                     card->showFailure(error);
                     return; // Do not post if unscheduling is unconfirmed.
                 }
-                ctx.backend.send(item.conv, item.text, item.thread, nullptr);
+                ctx.backend().send(item.conv, item.text, item.thread, nullptr);
             }
         );
     }
@@ -97,7 +97,7 @@ public:
         _busy                    = true;
         std::weak_ptr<int> alive = _alive;
         Card *card = this;
-        _page._ctx.backend.cancelScheduled(
+        _page._ctx.backend().cancelScheduled(
             _item.id, [card, alive](bool ok, const std::string &error) {
                 if (!alive.expired() && !ok)
                     card->showFailure(error);
@@ -130,7 +130,7 @@ void ScheduledPage::onChange(const model::Change &ch) {
 
 void ScheduledPage::open() {
     rebuild();
-    _ctx.backend.refreshScheduled(); // ones scheduled or sent elsewhere
+    _ctx.backend().refreshScheduled(); // ones scheduled or sent elsewhere
 }
 
 void ScheduledPage::reset() {

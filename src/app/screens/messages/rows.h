@@ -43,6 +43,11 @@ class SelectableText;
 // the huddle for 1h 5m.").
 std::string huddleSummaryText(const Store &st, const model::Huddle &h);
 
+// A call card's two lines and its people's fade.
+std::string callStartedText(const model::Call &c, int64_t now);
+std::string callStatusText(const Store &st, const model::Call &c);
+float       callAvatarAlpha(const model::Call &c);
+
 // The texts a message's selection runs over (MessageRow::selectionLabels'),
 // for rows not on screen: its body, blocks and visible attachment content.
 std::vector<std::string> selectableTexts(
@@ -131,6 +136,8 @@ private:
         ui::View *col, const model::Message &m, size_t index,
         std::vector<SelectableText *> *labels
     );
+    // A call block's card (MessageExtras::call), its Join inside.
+    void      buildCallCard(ui::View *col, const model::Message &m);
     ui::RectF dismissRect() const; // local; empty while no card is hovered
     // The gutter strip from the "×" to the card, as tall as the card: the
     // pointer on its way to the "×" (the 4-px gap, a diagonal) keeps it shown.

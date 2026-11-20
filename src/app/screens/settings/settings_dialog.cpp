@@ -5,6 +5,7 @@
 #include "app/screens/common/custom_theme.h"
 
 #include "app/media/sounds.h"
+#include "app/mrkdwn/smileys.h"
 #include "app/spell/spell.h"
 #ifdef MSGA_HAVE_MESSAGES
 #include "app/screens/messages/emoji_picker.h"
@@ -29,6 +30,34 @@ using i18n::tr;
 namespace settings {
 
 namespace {
+
+// The smiley map as the settings hold it, one pair to a line. The field always
+// shows the whole list, the usual set included, so it can be edited.
+std::string_view smileyFieldText(const std::string &map) {
+    return map.empty() ? mrkdwn::defaultSmileyMap() : std::string_view(map);
+}
+
+// The field's text as the setting holds it: a pair a line, blank lines and
+// stray spaces gone, and the usual set left implicit (empty) — so a later
+// version can still improve it.
+std::string smileyMapText(std::string_view text) {
+    const auto tidy = [](std::string_view t) {
+        std::string out;
+        size_t      i = 0;
+        while (i <= t.size()) {
+            size_t j = t.find('\n', i);
+            if (j == std::string_view::npos)
+                j = t.size();
+            const std::string_view line = str::trim(t.substr(i, j - i));
+            i                           = j + 1;
+            if (!line.empty())
+                out += (out.empty() ? "" : "\n") + std::string(line);
+        }
+        return out;
+    };
+    std::string out = tidy(text);
+    return out == tidy(mrkdwn::defaultSmileyMap()) ? std::string() : out;
+}
 
 constexpr float kPanelW = 720, kPanelH = 540;
 constexpr float kListW = 175;
@@ -57,6 +86,7 @@ bool shell::Settings::*const kAppearanceBools[] = {
     &shell::Settings::ctrlEnterSends,
     &shell::Settings::spellCheck,
     &shell::Settings::markdownFormatting,
+    &shell::Settings::smileyToEmoji,
     &shell::Settings::showAgentsApps,
     &shell::Settings::externalSection,
     &shell::Settings::unreadsOnly,
@@ -485,10 +515,7 @@ void SettingsDialog::buildAppearance() {
         pct->style().width(90);
         pct->onChange = [this](int v) { _draft.fontPercent = v; };
         custom->setVisible(d.fontSize == 3);
-        sizes->onChange = [this, custom](int i) {
-            _draft.fontSize = i;
-            custom->setVisible(i == 3);
-        };
+        andThen(sizes, [custom](int i) { custom->setVisible(i == 3); });
     }
 
     heading(_content, tr("Language"));
@@ -575,10 +602,7 @@ void SettingsDialog::buildAppearance() {
             };
         }
         slots->setVisible(d.quickReactions == 2);
-        modes->onChange = [this, slots](int i) {
-            _draft.quickReactions = i;
-            slots->setVisible(i == 2);
-        };
+        andThen(modes, [slots](int i) { slots->setVisible(i == 2); });
         caption(
             _content,
             tr("Shown on a message's toolbar: a click adds the reaction, another takes it back.")
@@ -621,12 +645,11 @@ void SettingsDialog::buildAppearance() {
         sec->setVisible(d.spellCheck);
         if (d.spellCheck)
             refreshSpellLanguages();
-        spell->onChange = [this, sec](bool on) {
-            _draft.spellCheck = on;
+        andThen(spell, [this, sec](bool on) {
             if (on)
                 refreshSpellLanguages();
             sec->setVisible(on);
-        };
+        });
     }
 
     heading(_content, tr("Formatting"));
@@ -640,6 +663,30 @@ void SettingsDialog::buildAppearance() {
         tr("How the message box reads what you type.\n"
            "Messages are sent in Slack's format either way.")
     );
+
+    heading(_content, tr("Smileys"));
+    {
+        auto *sm  = check(_content, tr("Turn text smileys into emoji"), &d.smileyToEmoji, true);
+        auto *sec = group(_content);
+        sec->style().padding(24, 0, 0, 0); // indented under its checkbox
+        caption(
+            sec,
+            tr("\":)\" becomes 🙂 as you type, once a space or the end of the message closes it.")
+        );
+        _p->smileys            = sec->add<TextField>(":) :slightly_smiling_face:", true);
+        // Taller than the glossary's field: this list is read and edited, not
+        // just pasted into, and the caret at its start keeps it at the top.
+        _p->smileys->style().h = 250;
+        _p->smileys->setText(smileyFieldText(_s.smileyMap));
+        _p->smileys->edit().setSelection(0, 0);
+        caption(
+            sec,
+            tr("One to a line: the smiley, then the emoji — its shortcode or the character "
+               "itself. Empty keeps the usual set.")
+        );
+        sec->setVisible(d.smileyToEmoji);
+        andThen(sm, [sec](bool on) { sec->setVisible(on); });
+    }
 
     heading(_content, tr("Conversations"));
     {
@@ -694,10 +741,7 @@ void SettingsDialog::buildAppearance() {
             applyStarred->setEnabled(unreadsOnly);
         };
         sync(d.unreadsOnly);
-        unread->onChange = [this, sync](bool on) {
-            _draft.unreadsOnly = on;
-            sync(on);
-        };
+        andThen(unread, sync);
     }
 
     heading(_content, tr("Visual effects"));
@@ -858,6 +902,8 @@ void SettingsDialog::saveAppearance() {
     _s.language           = _draft.language;
     _s.spellLanguages     = _draft.spellLanguages;
     _s.quickReactionNames = _draft.quickReactionNames;
+    if (_p && _p->smileys)
+        _s.smileyMap = smileyMapText(_p->smileys->text());
     _ctx.app.setUserTextScale(_s.fontScale());
     changed();
     close();
@@ -1178,14 +1224,8 @@ void SettingsDialog::buildNotifications() {
         });
     };
 
-    master->onChange = [this](bool on) {
-        _draft.notifications = on;
-        syncNotifyEnabled();
-    };
-    _p->notifySound->onChange = [this](bool on) {
-        _draft.notifySound = on;
-        syncNotifyEnabled();
-    };
+    andThen(master, [this](bool) { syncNotifyEnabled(); });
+    andThen(_p->notifySound, [this](bool) { syncNotifyEnabled(); });
     syncNotifyEnabled();
     saveButton(&SettingsDialog::saveNotifications);
 }

@@ -960,7 +960,7 @@ Shell::Shell(
             return;
         }
         std::weak_ptr<int> alive = _alive;
-        _ctx.backend.joinChannel(
+        _ctx.backend().joinChannel(
             c, [this, alive, ts, thread](ConvRef joined, const std::string &err) {
                 if (alive.expired())
                     return;
@@ -1144,7 +1144,7 @@ Shell::Shell(
         if (alive.expired())
             return;
         const model::Store *store = &_ctx.store();
-        _ctx.backend.openDm(u, [this, alive, store](ConvRef c) {
+        _ctx.backend().openDm(u, [this, alive, store](ConvRef c) {
             if (!alive.expired() && store == &_ctx.store() && c != kNoConv)
                 open(c);
         });
@@ -1286,7 +1286,7 @@ void Shell::saveSettingsNow() {
 void Shell::runCommand(ConvRef conv, Ts thread, const std::string &name, const std::string &args) {
     if (conv == kNoConv)
         return;
-    const auto result = _ctx.backend.runLocalCommand(conv, thread, name, args);
+    const auto result = _ctx.backend().runLocalCommand(conv, thread, name, args);
     if (!result.error.empty())
         showError(result.error);
     if (result.open != kNoConv)
@@ -2021,7 +2021,7 @@ void Shell::noteActivity() {
     _lastActivityNote = now;
     // Every running workspace's link: presence is per workspace, the user is the same.
     if (_running.empty())
-        _ctx.backend.noteUserActivity();
+        _ctx.backend().noteUserActivity();
     for (const auto &r : _running)
         r->backend->noteUserActivity();
 }
@@ -2035,7 +2035,7 @@ void Shell::syncWindowVisible() {
         return;
     _windowVisible = visible;
     if (_running.empty())
-        _ctx.backend.setWindowVisible(visible);
+        _ctx.backend().setWindowVisible(visible);
     for (const auto &r : _running)
         r->backend->setWindowVisible(visible);
 }
@@ -2096,7 +2096,7 @@ void Shell::notifySessionExpired(const std::string &workspace) {
 // follow the open workspace. The shell is built before any workspace is
 // behind the proxy, so this runs again on every switch.
 void Shell::applyScheduleSend() {
-    const bool on = _ctx.backend.capabilities().scheduledSend;
+    const bool on = _ctx.backend().capabilities().scheduledSend;
     _composer->setScheduleVisible(on);
     _thread->composer->setScheduleVisible(on);
 }
@@ -2137,19 +2137,19 @@ void Shell::open(ConvRef conv) {
     // poll's next round.
     if (const auto &c = _ctx.store().conversation(conv);
         c.kind == model::ConvKind::Dm && c.dmUser != model::kNoUser)
-        _ctx.backend.requestPresence(c.dmUser);
+        _ctx.backend().requestPresence(c.dmUser);
     lookUpCanvas(conv);
     _ctx.store().setVisibleConversation(conv);
-    _ctx.backend.setActiveConversation(conv, 0);
+    _ctx.backend().setActiveConversation(conv, 0);
 #ifdef MSGA_HAVE_MESSAGES
     // The list loads history and marks read once the newest message shows.
     static_cast<screens::MessageList *>(_messages)->showConversation(conv);
 #else
     static_cast<MessageStandIn *>(_messages)->setTarget(conv, 0);
-    _ctx.backend.loadHistory(conv, 0, nullptr);
+    _ctx.backend().loadHistory(conv, 0, nullptr);
     const auto &c = _ctx.store().conversation(conv);
     if (c.latest && c.latest > c.lastRead)
-        _ctx.backend.markRead(conv, c.latest);
+        _ctx.backend().markRead(conv, c.latest);
 #endif
     trimHistoryBudget();
     _composer->edit().focus();
@@ -2451,9 +2451,9 @@ void Shell::openThread(ConvRef conv, Ts root, Ts jumpTarget) {
     _thread->setReading(reading()); // the reopened panel reads like any other visible one
     _splitter->setVisible(true);
 #ifndef MSGA_HAVE_MESSAGES
-    _ctx.backend.loadThread(conv, root, nullptr);
+    _ctx.backend().loadThread(conv, root, nullptr);
 #endif
-    _ctx.backend.setActiveConversation(conv, root);
+    _ctx.backend().setActiveConversation(conv, root);
     // The focus stays where it was (the reply bar that opened it).
 }
 
@@ -2470,7 +2470,7 @@ void Shell::closeThread() {
     static_cast<screens::MessageList *>(_messages)->setOpenThreadRoot(0);
 #endif
     _splitter->setVisible(false);
-    _ctx.backend.setActiveConversation(_current, 0);
+    _ctx.backend().setActiveConversation(_current, 0);
     _composer->edit().focus();
 }
 
@@ -2545,7 +2545,7 @@ bool Shell::pageOpen(Page p) const {
 }
 
 bool Shell::pageAvailable(Page p) const {
-    const auto caps = _ctx.backend.capabilities();
+    const auto caps = _ctx.backend().capabilities();
     switch (p) {
     case Page::Activity:
         return caps.activityView;
@@ -2616,7 +2616,7 @@ void Shell::leaveConversationChrome(bool keepComposer) {
     _canvas->setVisible(false);
     _typing->setTarget(kNoConv, 0);
     _typing->setVisible(false);
-    _ctx.backend.setActiveConversation(kNoConv, 0);
+    _ctx.backend().setActiveConversation(kNoConv, 0);
     _ctx.store().setVisibleConversation(kNoConv);
     trimHistoryBudget();
 }
@@ -2774,7 +2774,7 @@ void Shell::showCanvas(bool on) {
 // screen) has a live huddle, where the service has huddles.
 void Shell::updateHuddleBanner() {
     const bool on = _current != kNoConv && _header->visible() &&
-                    _ctx.backend.capabilities().huddles &&
+                    _ctx.backend().capabilities().huddles &&
                     _ctx.store().conversation(_current).huddleActive;
     if (_huddleBanner->visible() != on)
         _huddleBanner->setVisible(on);
@@ -2790,7 +2790,7 @@ void Shell::updateHeader() {
     // bots, whose canvases are app-owned), where the service has them.
     const bool app = c.kind == model::ConvKind::Dm && _ctx.store().user(c.dmUser).bot;
     _tabs->setCanvas(
-        _ctx.backend.capabilities().canvases && !app,
+        _ctx.backend().capabilities().canvases && !app,
         !c.canvasId.empty() || !c.canvasTitle.empty(),
         c.canvasTitle
     );
@@ -2802,12 +2802,12 @@ void Shell::updateHeader() {
 void Shell::lookUpCanvas(ConvRef conv) {
     const auto &c   = _ctx.store().conversation(conv);
     const bool  app = c.kind == model::ConvKind::Dm && _ctx.store().user(c.dmUser).bot;
-    if (!_ctx.backend.capabilities().canvases || app)
+    if (!_ctx.backend().capabilities().canvases || app)
         return;
-    _ctx.backend.loadChannelCanvas(conv, [this, conv](std::string fileId) {
+    _ctx.backend().loadChannelCanvas(conv, [this, conv](std::string fileId) {
         if (fileId.empty() || conv != _current)
             return;
-        _ctx.backend.loadCanvasMeta(fileId, nullptr); // the Store gets the title
+        _ctx.backend().loadCanvasMeta(fileId, nullptr); // the Store gets the title
     });
 }
 
@@ -2865,7 +2865,7 @@ void Shell::onChange(const model::Change &ch) {
         for (size_t i = list->size() - std::min<size_t>(ch.count, list->size()); i < list->size();
              ++i)
             if (const model::Message &m = (*list)[i]; m.user != st.me && !m.pending)
-                _ctx.backend.markRead(ch.conv, m.ts);
+                _ctx.backend().markRead(ch.conv, m.ts);
     if (!attached)
         messagesArrived(st, {}, ch);
 }
@@ -3182,7 +3182,7 @@ void Shell::updateAttention() {
         }
     }
     if (!attached && _signedIn) { // the demo, tests: the open Store alone
-        const Attention a = workspaceAttention(open, fallback, _ctx.backend.nowSecs());
+        const Attention a = workspaceAttention(open, fallback, _ctx.backend().nowSecs());
         if (RailTile *t = _wsStack->find(_activeKey))
             t->setDot(a.dot());
         if (!open.workspaceMuted) {
@@ -3352,11 +3352,11 @@ void Shell::openSettingsAt(uint8_t page) {
         if (r->backend->capabilities().sidebarTheme &&
             (themeKey.empty() || (r->store == &_ctx.store() && _signedIn)))
             themeKey = r->key;
-    if (!themeKey.empty() || (_running.empty() && _ctx.backend.capabilities().sidebarTheme))
+    if (!themeKey.empty() || (_running.empty() && _ctx.backend().capabilities().sidebarTheme))
         hooks.fetchSlackTheme = [this,
                                  themeKey](settings::SettingsDialog::Hooks::SlackThemeDone done) {
             const Running  *r = themeKey.empty() ? nullptr : findRunning(themeKey);
-            model::Backend *b = r ? r->backend : themeKey.empty() ? &_ctx.backend : nullptr;
+            model::Backend *b = r ? r->backend : themeKey.empty() ? &_ctx.backend() : nullptr;
             if (!b) {
                 done({}, {}, "no_workspace");
                 return;
@@ -3819,7 +3819,7 @@ void Shell::openBrowseDialog(int tab) {
                 open(c);
                 return;
             }
-            _ctx.backend.joinChannel(c, [this, alive](ConvRef joined, const std::string &err) {
+            _ctx.backend().joinChannel(c, [this, alive](ConvRef joined, const std::string &err) {
                 if (alive.expired())
                     return;
                 if (joined == kNoConv)
@@ -3830,7 +3830,7 @@ void Shell::openBrowseDialog(int tab) {
         },
         [this, alive](model::UserRef u) {
             // The DM, created by conversations.open if never messaged.
-            _ctx.backend.openDm(u, [this, alive](ConvRef c) {
+            _ctx.backend().openDm(u, [this, alive](ConvRef c) {
                 if (!alive.expired() && c != kNoConv)
                     open(c);
             });
@@ -3840,7 +3840,19 @@ void Shell::openBrowseDialog(int tab) {
                 if (!alive.expired())
                     openCreateChannel();
             });
-        }
+        },
+        // Several people: conversations.open makes (or finds) the mpdm. A
+        // backend without group DMs gets no "New group DM" button.
+        _ctx.backend().capabilities().groupDms
+            ? std::function<void(const std::vector<model::UserRef> &)>(
+                  [this, alive](const std::vector<model::UserRef> &people) {
+                      _ctx.backend().openDmGroup(people, [this, alive](ConvRef c) {
+                          if (!alive.expired() && c != kNoConv)
+                              open(c);
+                      });
+                  }
+              )
+            : nullptr
     );
 }
 
@@ -3849,7 +3861,7 @@ void Shell::openCreateChannel() {
     showCreateChannel(
         _win, _ctx.store().workspaceName, [this, alive](const std::string &name, bool priv) {
             // Created, and the list shows it; nothing opens.
-            _ctx.backend.createChannel(name, priv, [this, alive](ConvRef, const std::string &err) {
+            _ctx.backend().createChannel(name, priv, [this, alive](ConvRef, const std::string &err) {
                 if (!alive.expired() && !err.empty())
                     showError(err);
             });
@@ -3894,17 +3906,19 @@ void Shell::applySettings() {
         base::setDateLanguage(_settings.language);
     _ctx.linkPreviews   = _settings.linkPreviews;
     _ctx.threadsInline  = _settings.threadsInline;
+    _ctx.smileyToEmoji  = _settings.smileyToEmoji;
+    _ctx.smileyMap      = _settings.smileyMap;
     // Settings → General → Presence: global, applied to every running
     // workspace (Accounts hands it to every new one).
     const auto presence = model::Backend::PresenceMode(_settings.presence);
     if (_running.empty())
-        _ctx.backend.setPresenceMode(presence);
+        _ctx.backend().setPresenceMode(presence);
     for (const auto &r : _running)
         r->backend->setPresenceMode(presence);
     // Settings → Appearance → Names: the same, per workspace Store.
     const auto names = model::Backend::NamesMode(_settings.names);
     if (_running.empty())
-        _ctx.backend.setNamesMode(names);
+        _ctx.backend().setNamesMode(names);
     for (const auto &r : _running)
         r->backend->setNamesMode(names);
     // Settings → Check spelling: loads (or frees) the dictionaries; the
@@ -4115,7 +4129,7 @@ plat::HitArea Shell::hitTest(plat::Point p) const {
 // relevance window (pruned, so the store never grows).
 void Shell::storeVisited() {
     const int64_t horizon =
-        _ctx.backend.nowSecs() - int64_t(std::max(1, _settings.relevantDays)) * 86400 * 2;
+        _ctx.backend().nowSecs() - int64_t(std::max(1, _settings.relevantDays)) * 86400 * 2;
     _settings.visitedAt.clear();
     for (const auto &[id, at] : _sidebar->visited())
         if (at >= horizon)

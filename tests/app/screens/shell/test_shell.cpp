@@ -5,7 +5,7 @@
 #include "app/fake/fake_backend.h"
 #include "app/llm/service.h"
 #include "support/fake_llm_server.h"
-#include "app/model/backend_proxy.h"
+#include "app/model/backend_slot.h"
 #include "app/model/jobs.h"
 #ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
@@ -2689,6 +2689,41 @@ TEST("find a channel: an unjoined channel is joined and opens; People opens the 
     CHECK(h.sh->current() == h.conv("D0JONAS"));
 }
 
+// The People tab's "New group DM": its rows are picks, and Message starts the
+// conversation with all of them.
+TEST("group DM: two people picked make the group of exactly them") {
+    Harness    h;
+    ui::Popup *dlg  = nullptr;
+    const auto pick = [&](const char *query) {
+        typeInto(*h.win, query);
+        press(*h.win, plat::Key::Down);
+        press(*h.win, plat::Key::Enter);
+        for (size_t i = 0; i < std::string_view(query).size(); ++i)
+            press(*h.win, plat::Key::Backspace);
+    };
+    h.sh->openBrowseDialog(1);
+    pump();
+    auto *finder = h.win->topPopup();
+    REQUIRE(finder != nullptr);
+    auto *button = findNamed(finder, "New group DM");
+    REQUIRE(button != nullptr);
+    static_cast<ui::Clickable *>(button)->activate();
+    pump();
+    dlg = h.win->topPopup();
+    REQUIRE(dlg != nullptr);
+    pick("jonas");
+    CHECK(findNamed(dlg, "1 person") != nullptr);
+    pick("mira");
+    CHECK(findNamed(dlg, "2 people") != nullptr);
+    auto *msg = findNamed(dlg, "Message");
+    REQUIRE(msg != nullptr);
+    CHECK(msg->enabled());
+    static_cast<ui::Clickable *>(msg)->activate();
+    pump(30);
+    CHECK(h.win->topPopup() == nullptr);
+    CHECK(h.sh->current() == h.conv("G0TRIO"));
+}
+
 TEST("create a channel: a name, Next, Private, Create — the backend makes it") {
     Harness h;
     h.sh->openCreateChannel();
@@ -3817,7 +3852,7 @@ struct LiveFake : fake::FakeBackend {
 };
 
 // Two signed-in workspaces the way Accounts runs them: each its own Store
-// and backend, attached to the shell; the screens' slot and proxy show one.
+// and backend, attached to the shell; the screens' slot shows one.
 #ifdef MSGA_HAVE_MESSAGES
 screens::ImageCache *gNotifyImages = nullptr; // the live TwoWorkspaces' cache
 #endif
@@ -3825,14 +3860,13 @@ screens::ImageCache *gNotifyImages = nullptr; // the live TwoWorkspaces' cache
 struct TwoWorkspaces {
     Store               blank, a, b;
     LiveFake            fa{a, app().platform()}, fb{b, app().platform()};
-    model::BackendProxy proxy{blank, fa};
 #ifdef MSGA_HAVE_MESSAGES
     screens::ImageCache images{app().platform()};
-    screens::Context    ctx{app(), a, proxy, images, {}, {}, {}, {}, {}};
+    screens::Context    ctx{app(), a, fa, images, {}, {}, {}, {}, {}};
 #else
     alignas(16) char noCache[16]{};
     screens::Context ctx{
-        app(), a, proxy, *reinterpret_cast<screens::ImageCache *>(noCache), {}, {}, {}, {}, {}
+        app(), a, fa, *reinterpret_cast<screens::ImageCache *>(noCache), {}, {}, {}, {}, {}
     };
 #endif
     shell::Settings               settings;
@@ -3904,10 +3938,10 @@ struct TwoWorkspaces {
         show(kKeyA);
         pump();
     }
-    // Accounts::activate: the open one leaves, the proxy and the slot follow.
+    // Accounts::activate: the open one leaves, the backend and Store slots follow.
     void show(const std::string &key) {
         sh->leaveWorkspace();
-        proxy.setTarget(key == kKeyA ? fa : fb);
+        ctx.backend.setTarget(key == kKeyA ? fa : fb);
         ctx.store.setTarget(key == kKeyA ? a : b);
         sh->setWorkspaces(
             {{kKeyA, "T0LUMEN", "Lumen Studio", "", false},
@@ -4079,7 +4113,7 @@ TEST("workspaces: the slot leaving for the blank Store under an open chat and th
     pump();
     // Accounts' teardown: the screens let go, then the slot moves.
     w.sh->leaveWorkspace();
-    w.proxy.setTarget(w.fa);
+    w.ctx.backend.setTarget(w.fa);
     w.ctx.store.setTarget(w.blank);
     pump();
     CHECK(w.sh->current() == kNoConv);
@@ -5651,4 +5685,65 @@ TEST("title bar: controls take their presses, empty space drags the window") {
     CHECK(at(centre(hd.title())) == H::Client);
     CHECK(at({400, 11}) == H::Caption);
 #endif
+}
+
+namespace {
+
+// The URL of the link covering `offset`; empty when it is in none.
+std::string linkAt(const TextEdit &edit, uint32_t offset) {
+    for (const TextEdit::Run &r : edit.runs())
+        if (!r.link.empty() && offset >= r.start && offset < r.end)
+            return std::string(r.link);
+    return {};
+}
+
+// The text inputs under v (a popup's fields). A TextField owns one and is one
+// itself: the leaf is the TextEdit.
+void findTextEdits(ui::View *v, std::vector<TextEdit *> *out) {
+    if (v->role() == ui::Role::TextInput && v->childCount() == 0)
+        out->push_back(static_cast<TextEdit *>(v));
+    for (size_t i = 0; i < v->childCount(); ++i)
+        findTextEdits(v->child(i), out);
+}
+
+} // namespace
+
+TEST("composer: a typed URL is a link once its word ends") {
+    Harness h;
+    auto   &edit = h.sh->composer().edit();
+    pump();
+    edit.insertText("see https://x.test/p");
+    CHECK(linkAt(edit, 6).empty());
+    edit.insertText(" now");
+    CHECK_STR(linkAt(edit, 6), "https://x.test/p");
+    CHECK_STR(h.sh->composer().mrkdwn(), "see <https://x.test/p> now");
+    edit.undo();
+    CHECK(linkAt(edit, 6).empty());
+    edit.redo();
+    CHECK_STR(linkAt(edit, 6), "https://x.test/p");
+}
+
+TEST("composer: the Link button makes a link, not a token") {
+    Harness h;
+    auto   &edit = h.sh->composer().edit();
+    edit.focus();
+    edit.insertText("see the docs");
+    edit.setSelection(4, 12);
+    pump();
+    h.sh->composer().openLinkPopup();
+    pump();
+    ui::Popup              *popup = h.win->topPopup();
+    REQUIRE(popup != nullptr);
+    std::vector<TextEdit *> fields;
+    findTextEdits(popup, &fields);
+    REQUIRE(fields.size() == 2);
+    CHECK_STR(fields[1]->text(), "the docs");
+    fields[0]->setText("https://x.test/docs");
+    auto *insert = static_cast<ui::Button *>(findNamed(popup, "Insert"));
+    REQUIRE(insert != nullptr);
+    insert->onClick();
+    pump();
+    CHECK_STR(edit.text(), "see the docs");
+    CHECK_STR(linkAt(edit, 4), "https://x.test/docs");
+    CHECK_STR(h.sh->composer().mrkdwn(), "see <https://x.test/docs|the docs>");
 }

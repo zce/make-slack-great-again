@@ -25,7 +25,6 @@
 #include "app/identity.h"
 #include "app/llm/service.h"
 #include "app/media/audio_player.h"
-#include "app/model/backend_proxy.h"
 #include "app/model/null_backend.h"
 #ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
@@ -384,12 +383,12 @@ int main(int argc, char **argv) {
     app->setUserTextScale(settings.fontScale());
     settings.applyPalettes();
 
-    // The demo workspace, or the signed-in one (Accounts swaps it in behind
-    // the proxy the screens hold).
-    model::Store        store;
-    model::NullBackend  noWorkspace(store);
-    model::BackendProxy backend(store, noWorkspace);
-    net::Client         client(pa);
+    // The demo workspace, or the signed-in one (Accounts points the screens'
+    // backend at it, ctx.backend).
+    model::Store       store;
+    model::NullBackend noWorkspace(store);
+    model::Backend    *backend = &noWorkspace;
+    net::Client        client(pa);
     // Pictures and the update's download on a worker pool of their own, so
     // a screenful of avatars never holds up the workspace's API calls.
     net::Client         transfers(pa);
@@ -413,7 +412,7 @@ int main(int argc, char **argv) {
     if (!demo.empty()) {
         demoBackend.emplace(store, pa);
         demoBackend->setFixture(demo, 0);
-        backend.setTarget(*demoBackend);
+        backend = &*demoBackend;
     }
     const bool demoMode = demoBackend.has_value();
 #else
@@ -429,7 +428,7 @@ int main(int argc, char **argv) {
     alignas(16) static char noCache[16];
     screens::ImageCache    &imageRef = *reinterpret_cast<screens::ImageCache *>(noCache);
 #endif
-    screens::Context ctx{*app, store, backend, imageRef, {}, {}, {}, {}, {}};
+    screens::Context ctx{*app, store, *backend, imageRef, {}, {}, {}, {}, {}};
     ctx.remote = &remote;
     // The AI providers (Settings → AI assistance; the shell keeps them in step).
     llm::Service ai(pa);
@@ -451,7 +450,7 @@ int main(int argc, char **argv) {
     desc.title   = "MSGA";
     desc.appId   = appId;
     desc.wmClass = "MSGA"; // WM_CLASS res_class: the application name
-#ifdef __linux__
+#ifdef MSGA_FREEDESKTOP
     // The logo for the X11 _NET_WM_ICON, at 16 to 256 px.
     for (int n : {16, 20, 24, 32, 48, 64, 128, 256}) {
         gfx::Bitmap  b(n, n);
@@ -560,7 +559,6 @@ int main(int argc, char **argv) {
             win,
             settings,
             [&sh] { sh.saveSettingsSoon(); },
-            backend,
             noWorkspace,
             client,
             auth::WorkspaceStore::defaultPath(pa)

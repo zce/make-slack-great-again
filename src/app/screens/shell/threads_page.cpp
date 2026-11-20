@@ -44,7 +44,7 @@ public:
             content, avatars,
             std::string(screens::authorName(st, m)),
             screens::authorAvatar(st, m),
-            base::dateTimeLabel(model::tsSecs(m.ts), ctx.backend.nowSecs())
+            base::dateTimeLabel(model::tsSecs(m.ts), ctx.backend().nowSecs())
         );
         auto *body = col->add<View>();
         body->style().spacing(2);
@@ -89,7 +89,7 @@ public:
         auto *forward = addAction(gfx::Icon::Forward, "Forward message", Forward);
         forward->setVisible(bool(ctx.forwardMessage));
         _save = addAction(gfx::Icon::Bookmark, "Save for later", Save);
-        _save->setVisible(ctx.backend.capabilities().messageReminders);
+        _save->setVisible(ctx.backend().capabilities().messageReminders);
         refreshSave();
         addAction(gfx::Icon::MoreHorizontal, "More actions", More);
         _bar->setVisible(false);
@@ -277,7 +277,7 @@ std::vector<ui::MenuItem> ThreadsPage::Card::messageMenuItems(Ts ts) const {
     item(kCopyLink, "Copy link", gfx::Icon::Link);
     item(kCopyText, "Copy message", gfx::Icon::Copy);
     ui::addMenuSeparator(out);
-    if (_page._ctx.backend.capabilities().messageReminders)
+    if (_page._ctx.backend().capabilities().messageReminders)
         item(_page._ctx.store().findSaved(_item.conv, ts) ? kUnsave : kSave,
              _page._ctx.store().findSaved(_item.conv, ts) ? "Remove from saved" : "Save for later",
              gfx::Icon::Bookmark);
@@ -301,15 +301,15 @@ void ThreadsPage::Card::messageAction(Ts ts, int action, ui::PointF at) {
         if (window())
             screens::EmojiPicker::show(
                 *window(), {at.x, at.y, 0, 0}, ctx,
-                [&ctx, conv, ts](const std::string &name) { ctx.backend.react(conv, ts, name, true); }
+                [&ctx, conv, ts](const std::string &name) { ctx.backend().react(conv, ts, name, true); }
             );
 #endif
     } else if (action == MessageRow::Forward || action == kForward) {
         if (ctx.forwardMessage)
             ctx.forwardMessage(conv, ts, {});
     } else if (action == MessageRow::Save || action == kSave || action == kUnsave) {
-        if (ctx.backend.capabilities().messageReminders)
-            ctx.backend.setSaved(conv, ts, !ctx.store().findSaved(conv, ts));
+        if (ctx.backend().capabilities().messageReminders)
+            ctx.backend().setSaved(conv, ts, !ctx.store().findSaved(conv, ts));
     } else if (action == MessageRow::More) {
         if (!window())
             return;
@@ -331,7 +331,7 @@ void ThreadsPage::Card::messageAction(Ts ts, int action, ui::PointF at) {
     } else if (action == kCopyText) {
         ctx.app.platform().setClipboardText(screens::plainText(ctx.store(), m->text, true));
     } else if (action == kPin || action == kUnpin) {
-        ctx.backend.setPinned(conv, ts, action == kPin);
+        ctx.backend().setPinned(conv, ts, action == kPin);
     } else if (action == kMute || action == kUnmute) {
         ctx.store().setThreadMuted(conv, _item.root.ts, action == kMute);
     }
@@ -339,7 +339,7 @@ void ThreadsPage::Card::messageAction(Ts ts, int action, ui::PointF at) {
 
 void ThreadsPage::Card::markRead() {
     const Ts upTo = _latest ? _latest : _item.root.ts;
-    _page._ctx.backend.markThreadRead(_item.conv, _item.root.ts, upTo);
+    _page._ctx.backend().markThreadRead(_item.conv, _item.root.ts, upTo);
     _item.lastRead = upTo;
     _newPill->setVisible(false);
 }
@@ -492,7 +492,7 @@ void ThreadsPage::loadPage(std::string cursor) {
         setStatus(tr("Loading threads…"));
     const uint32_t     gen   = ++_generation;
     std::weak_ptr<int> alive = _alive;
-    _ctx.backend.loadThreadsView(
+    _ctx.backend().loadThreadsView(
         std::move(cursor), [this, alive, gen, first](bool ok, model::Backend::ThreadsView page) {
             if (alive.expired() || gen != _generation)
                 return;

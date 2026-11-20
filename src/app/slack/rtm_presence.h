@@ -53,9 +53,13 @@ public:
     // Reuse the existing active link, without opening a presence-changing
     // connection solely for typing.
     void sendTyping(std::string_view channel, model::Ts threadTs = 0);
+    // Who to stream presence_change for (user ids; the whole set, replacing
+    // the last). Sent at once while active, and again after each reconnect.
+    void setPresenceSubs(std::vector<std::string> ids);
 
     std::function<void(Link)> onStateChanged;
     std::function<void(std::string channel, std::string user, model::Ts thread)> onUserTyping;
+    std::function<void(const std::string &, bool active)> onPresence;
 
     // ── Test seams ──────────────────────────────────────────────────────────
     struct Timing {
@@ -81,6 +85,8 @@ private:
     void onText(const std::string &text);
     void sendPing();
     void sendTickle(bool force);
+    void sendPresenceSub();
+    void onPresenceChange(const json::Value &frame);
     void onIdle();
     void setState(Link s);
     void stopTimer(uint64_t &id);
@@ -88,6 +94,7 @@ private:
     plat::App                      &_app;
     Connect                         _connect;
     std::string                     _cookie;
+    std::vector<std::string>        _subs; // sorted, unique
     Timing                          _t;
     Mode                            _mode  = Mode::Native;
     Link                            _state = Link::Off;

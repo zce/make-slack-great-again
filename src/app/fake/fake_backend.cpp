@@ -386,15 +386,6 @@ void FakeBackend::setConvFlag(ConvRef conv, ConvFlag f, int v) {
     });
 }
 
-void FakeBackend::setMessageFlag(ConvRef conv, Ts ts, bool pinFlag, bool on) {
-    const model::UserRef me = _store.me;
-    _store.updateMessage(conv, ts, [pinFlag, on, me](model::Message &m) {
-        (pinFlag ? m.pinned : m.saved) = on;
-        if (pinFlag)
-            m.pinnedBy = on ? me : model::kNoUser;
-    });
-}
-
 void FakeBackend::setStarred(ConvRef conv, bool starred) {
     if (starred)
         leaveSection(conv);
@@ -444,6 +435,49 @@ void FakeBackend::openDm(model::UserRef user, std::function<void(ConvRef)> done)
     });
 }
 
+void FakeBackend::openDmGroup(
+    const std::vector<model::UserRef> &users, std::function<void(ConvRef)> done
+) {
+    std::vector<model::UserRef> members;
+    for (model::UserRef u : users)
+        if (u < _store.userCount() && u != _store.me &&
+            std::find(members.begin(), members.end(), u) == members.end())
+            members.push_back(u);
+    if (members.size() == 1) { // a group of two is a DM
+        openDm(members.front(), std::move(done));
+        return;
+    }
+    later(kReadLatencyMs, [this, members = std::move(members), done = std::move(done)] {
+        ConvRef found = model::kNoConv;
+        if (!members.empty())
+            for (ConvRef c = 0; c < _store.conversationCount() && found == model::kNoConv; ++c) {
+                const auto &cv = _store.conversation(c);
+                if (cv.kind != model::ConvKind::Group || cv.members.size() != members.size() + 1)
+                    continue; // a closed one too: conversations.open reopens it
+                bool all = true;
+                for (model::UserRef u : members)
+                    all = all &&
+                          std::find(cv.members.begin(), cv.members.end(), u) != cv.members.end();
+                if (all)
+                    found = c;
+            }
+        if (found == model::kNoConv && !members.empty()) { // conversations.open creates it
+            model::Conversation c;
+            c.id      = "G" + _store.user(members.front()).id + str::number(members.size());
+            c.kind    = model::ConvKind::Group;
+            c.members = members;
+            c.members.push_back(_store.me);
+            c.memberCount   = uint32_t(c.members.size());
+            c.hasMoreBefore = false;
+            found           = _store.addConversation(std::move(c));
+        } else if (found != model::kNoConv && !_store.conversation(found).member) {
+            setConvFlag(found, ConvFlag::Member, 1);
+        }
+        if (done)
+            done(found);
+    });
+}
+
 void FakeBackend::joinChannel(ConvRef conv, ConvDone done) {
     later(kReadLatencyMs, [this, conv, done = std::move(done)] {
         if (conv >= _store.conversationCount() || _store.conversation(conv).isDirect()) {
@@ -482,21 +516,20 @@ void FakeBackend::createChannel(std::string name, bool isPrivate, ConvDone done)
 }
 
 void FakeBackend::setPinned(ConvRef conv, Ts ts, bool pinned) {
-    setMessageFlag(conv, ts, true, pinned);
+    _store.updateMessage(conv, ts, [pinned, me = _store.me](model::Message &m) {
+        m.pinned   = pinned;
+        m.pinnedBy = pinned ? me : model::kNoUser;
+    });
 }
 
 void FakeBackend::setSaved(ConvRef conv, Ts ts, bool saved) {
-    setMessageFlag(conv, ts, false, saved);
-    _store.setReminderAt(conv, ts, 0);
-    _store.setSavedItem(conv, ts, saved, 0);
+    _store.setSaved(conv, ts, saved);
 }
 
 void FakeBackend::setReminder(ConvRef conv, Ts ts, int64_t due) {
     // A reminder is a saved item with a due date; removing it removes both.
     // (The fake never fires it: Slack's due time only moves it in Later.)
-    setMessageFlag(conv, ts, false, due > 0);
-    _store.setReminderAt(conv, ts, due);
-    _store.setSavedItem(conv, ts, due > 0, due);
+    _store.setSaved(conv, ts, due > 0, due);
 }
 
 void FakeBackend::deleteFile(ConvRef conv, Ts ts, const std::string &fileId) {
@@ -516,6 +549,7 @@ FakeBackend::Capabilities FakeBackend::capabilities() const {
     c.fileUpload       = true;
     c.customSections   = true; // this run only
     c.vips             = true;
+    c.groupDms         = true;
     return c;
 }
 
@@ -528,12 +562,13 @@ void FakeBackend::setPresence(bool, Done done) {
     });
 }
 
-void FakeBackend::setStatus(std::string emoji, std::string text, int64_t, Done done) {
-    later(kReadLatencyMs, [this, emoji = std::move(emoji), text = std::move(text), done] {
+void FakeBackend::setStatus(std::string emoji, std::string text, int64_t expiry, Done done) {
+    later(kReadLatencyMs, [this, emoji = std::move(emoji), text = std::move(text), expiry, done] {
         if (_store.me != model::kNoUser) {
             model::User &u = _store.user(_store.me);
             u.statusEmoji  = emoji;
             u.statusText   = text;
+            u.statusExpiry = text.empty() && emoji.empty() ? 0 : expiry;
             _store.usersChanged();
         }
         if (done)

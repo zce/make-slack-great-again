@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace settings {
@@ -15,6 +16,17 @@ namespace settings {
 std::vector<std::string> strs(std::initializer_list<const char *> l);
 // A link in a page's text: the control font, underlined, link id 1.
 text::Style              linkStyle();
+
+// Runs `then` after what a check()/radios() control already does on a
+// change (stores its field; check() also calls changed() unless a draft).
+// Not a parameter of theirs: what `then` touches is often made after them.
+template <class Control, class Fn>
+void andThen(Control *c, Fn then) {
+    c->onChange = [stored = std::move(c->onChange), then = std::move(then)](auto v) {
+        stored(v);
+        then(v);
+    };
+}
 
 struct SettingsDialog::Parts {
     // Appearance
@@ -31,6 +43,7 @@ struct SettingsDialog::Parts {
     ui::Button                  *trayChange    = nullptr;
     ui::View                    *spellGrid     = nullptr;
     ui::Label                   *spellHint     = nullptr;
+    ui::TextField               *smileys       = nullptr;
     bool                         spellFilled   = false; // the grid was filled once
     // Notifications
     ui::RadioGroup              *notifyLevel   = nullptr;
@@ -55,7 +68,6 @@ struct SettingsDialog::Parts {
     ui::Label     *modeRestart = nullptr, *credStatus = nullptr, *giphyStatus = nullptr;
     ui::View      *sessionBox = nullptr, *appKeysBox = nullptr;
     ui::TextField *credId = nullptr, *credSecret = nullptr, *credXapp = nullptr, *giphy = nullptr;
-
     // AI: the editor's "Test connection" / "Fetch models" (probeAiEditor). A
     // probe's answer counts only for the edit it was started for, and only
     // while these parts (the page) exist.

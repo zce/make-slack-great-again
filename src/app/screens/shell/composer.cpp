@@ -23,6 +23,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 
@@ -552,6 +553,13 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     _edit->setPlainPaste(true);                // pasted rich text arrives as plain
     _edit->setLinkBackground(C::AccentSubtle); // mention / channel / GIF pills
     _edit->onChange = [this] {
+        // A link change of ours is no edit: nothing below cares, and
+        // linkify() must not see itself.
+        if (_linkifying)
+            return;
+        closeLinkChip();
+        linkify();
+        finishSmiley();
         typing();
         refreshLook();
         updatePickList();
@@ -559,11 +567,24 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     };
     _edit->onContextMenu     = [this](uint32_t offset, PointF at) { return spellMenu(offset, at); };
     _spellObserver           = spell::Checker::instance().observe([this] { respell(); });
-    _edit->onSelectionChange = [this] { updatePickList(); };
+    _edit->onSelectionChange = [this] {
+        if (_linkifying)
+            return;
+        closeLinkChip();
+        linkify();
+        updatePickList();
+    };
     _edit->onPasteMedia      = [this](const std::vector<std::string> &m, plat::Selection sel) {
         return pasteMedia(m, sel);
     };
-    _edit->onFocusChange = [this](bool) { refreshLook(); };
+    _edit->onFocusChange = [this](bool on) {
+        Window *w       = window();
+        View   *focused = w ? w->focusView() : nullptr;
+        if (!on && !(_linkChip && focused && _linkChip->isAncestorOf(focused)))
+            closeLinkChip();
+        refreshLook();
+    };
+    _edit->onLinkHover = [this](const TextEdit::LinkHover &h) { linkHovered(h); };
     // Enter is the table's (SendMessage/NewLine), not TextEdit's onSubmit.
     _edit->onKey = [this](const Event &e) {
         return e.type == EventType::KeyDown && keyDown(e);
@@ -603,6 +624,7 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
 Composer::~Composer() {
     stashNow();
     withdrawUndo();
+    closeLinkChip();
     spell::Checker::instance().unobserve(_spellObserver);
     _ctx.app.cancelTimer(_spellTimer);
 }
@@ -638,7 +660,7 @@ void Composer::refreshTips() {
     // GIPHY key is set.
     _sendBtn->setTooltip(shortcuts::tip(tr("Send message"), shortcuts::Id::SendMessage));
     // Configured: a GIPHY key, or the service's own search (the demo's).
-    const bool gif = _ctx.backend.gifSearchAvailable() || (gifKey && !gifKey().empty());
+    const bool gif = _ctx.backend().gifSearchAvailable() || (gifKey && !gifKey().empty());
     _gifBtn->setTooltip(
         gif ? tr("Search GIFs") : tr("Search GIFs \xE2\x80\x94 needs a GIPHY API key")
     );
@@ -868,6 +890,7 @@ void Composer::setTarget(model::ConvRef conv, model::Ts thread) {
     stashNow();
     if (_pick)
         _pick->close();
+    closeLinkChip();
     _key = next;
     _edit->clear();
     if (const std::string html = _drafts.get(next); !html.empty())
@@ -879,8 +902,8 @@ void Composer::setTarget(model::ConvRef conv, model::Ts thread) {
                                               : std::string();
     refreshPlaceholder(); // "Message #name"
     // Asked for now, so the "/" list is there by the time "/" is typed.
-    if (conv != model::kNoConv && _ctx.backend.capabilities().slashCommands)
-        _ctx.backend.commandsRevision(conv);
+    if (conv != model::kNoConv && _ctx.backend().capabilities().slashCommands)
+        _ctx.backend().commandsRevision(conv);
     refreshLook();
     compositionChanged();
 }
@@ -912,6 +935,9 @@ void Composer::redialect(bool toMarkdown) {
 }
 
 bool Composer::send() {
+    // A smiley the end of the message closes ("thanks :)" with no space
+    // after it) becomes its emoji in the box first; typing did the rest.
+    finishSmileyAt(uint32_t(_edit->text().size()));
     if (onSendRequest) // an embedded composer (the forward dialog's)
         return onSendRequest();
     // CommonMark habits become mrkdwn, and
@@ -922,14 +948,14 @@ bool Composer::send() {
         // Files attached while editing post on their own (chat.update takes
         // none).
         if (!_files.empty()) {
-            _ctx.backend.sendWithFiles(_key.conv, {}, _key.thread, std::move(_files), nullptr);
+            _ctx.backend().sendWithFiles(_key.conv, {}, _key.thread, std::move(_files), nullptr);
             _files.clear();
             rebuildChips();
         }
         if (!text.empty() && !composed.blocks.empty())
-            _ctx.backend.editBlocks(_key.conv, _editTs, text, std::move(composed.blocks));
+            _ctx.backend().editBlocks(_key.conv, _editTs, text, std::move(composed.blocks));
         else if (!text.empty())
-            _ctx.backend.edit(_key.conv, _editTs, text);
+            _ctx.backend().edit(_key.conv, _editTs, text);
         endEdit();
         return true;
     }
@@ -938,12 +964,12 @@ bool Composer::send() {
     // "/command [args]" runs a known local command in msga. An unknown
     // slash command is sent to Slack unchanged.
     if (_files.empty() && text.size() > 1 && text[0] == '/' && onCommand &&
-        _ctx.backend.capabilities().slashCommands) {
+        _ctx.backend().capabilities().slashCommands) {
         const size_t      sp   = text.find(' ');
         const std::string name = utf8::foldCase(
             text.substr(1, sp == std::string::npos ? std::string::npos : sp - 1)
         ); // folded once, not per command
-        for (const auto &c : _ctx.backend.commands(_key.conv)) {
+        for (const auto &c : _ctx.backend().commands(_key.conv)) {
             if (!c.local || utf8::foldCase(c.name) != name)
                 continue;
             const std::string args(
@@ -961,15 +987,15 @@ bool Composer::send() {
     const std::vector<std::string> files = _files;
     const bool broadcast = _files.empty() && _key.thread && broadcastWanted && broadcastWanted();
     if (!_files.empty())
-        _ctx.backend.sendWithFiles(_key.conv, text, _key.thread, std::move(_files), nullptr);
+        _ctx.backend().sendWithFiles(_key.conv, text, _key.thread, std::move(_files), nullptr);
     else if (!composed.blocks.empty())
-        _ctx.backend.sendBlocks(
+        _ctx.backend().sendBlocks(
             _key.conv, text, std::move(composed.blocks), _key.thread, broadcast, nullptr
         );
     else if (broadcast)
-        _ctx.backend.sendBroadcast(_key.conv, text, _key.thread, nullptr);
+        _ctx.backend().sendBroadcast(_key.conv, text, _key.thread, nullptr);
     else
-        _ctx.backend.send(_key.conv, text, _key.thread, nullptr);
+        _ctx.backend().send(_key.conv, text, _key.thread, nullptr);
     offerUndo(html, files); // the pending copy is in the Store: what an undo deletes
     _files.clear();
     rebuildChips();
@@ -1047,7 +1073,7 @@ bool Composer::undoSend() {
     const std::string              html  = std::move(_undoHtml);
     const std::vector<std::string> files = std::move(_undoFiles);
     withdrawUndo();
-    _ctx.backend.remove(_key.conv, ts); // in flight or confirmed: the server copy goes
+    _ctx.backend().remove(_key.conv, ts); // in flight or confirmed: the server copy goes
     endEdit();
     // The text comes back; whatever was typed since follows it on a new line.
     const std::string typed = _edit->empty() ? std::string() : _edit->html();
@@ -1349,13 +1375,58 @@ void Composer::layout() {
     View::layout();
 }
 
+// A smiley finished — "it works :)" has just had its space — becomes its emoji
+// where it stands, as Slack's own client does, so the box shows what is sent. A
+// smiley is only finished by a space or punctuation typed after it, which is
+// what keeps ":D" from eating the start of ":Date:". Only one character typed
+// at the end counts: a paste, an undo or a caret moved back is not typing.
+void Composer::finishSmiley() {
+    if (_finishingSmiley)
+        return;
+    const std::string &text   = _edit->text();
+    const size_t       before = _smileyTextLen;
+    _smileyTextLen            = text.size();
+    if (text.size() != before + 1 || _edit->caret() != text.size())
+        return;
+    const auto typed = static_cast<unsigned char>(text.back());
+    if (typed >= 0x80 || std::isalnum(typed) || typed == '_') // not a word's end
+        return;
+    finishSmileyAt(uint32_t(text.size() - 1));
+}
+
+void Composer::finishSmileyAt(uint32_t stop) {
+    // Claude Code prompts are code and paths as often as words: left as typed.
+    if (!_ctx.smileyToEmoji || _edit->hasSelection())
+        return;
+    if (!_smileysParsed || _smileyMapParsed != _ctx.smileyMap) { // parsed once per map
+        _smileys         = mrkdwn::parseSmileys(_ctx.smileyMap);
+        _smileyMapParsed = _ctx.smileyMap;
+        _smileysParsed   = true;
+    }
+    const std::string      &text = _edit->text();
+    const mrkdwn::SmileyHit hit  = mrkdwn::smileyEndingAt(text, stop, _smileys);
+    // A pair that maps a smiley onto itself would keep going round.
+    if (!hit || std::string_view(text).substr(hit.at, hit.len) == hit.glyph)
+        return;
+    // Inside a pill (its label is the token's) or text formatted as code: as is.
+    for (const TextEdit::Run &r : _edit->runs())
+        if (r.start < hit.at + hit.len && hit.at < r.end &&
+            (!r.link.empty() || (r.format & TextEdit::Code)))
+            return;
+    _finishingSmiley = true;
+    _edit->replaceTyped(hit.at, hit.at + hit.len, hit.glyph);
+    _finishingSmiley = false;
+    _smileyTextLen   = _edit->text().size();
+}
+
+
 void Composer::typing() {
     // Slack wants a typing event at most every few seconds while typing.
     const double now = _ctx.app.nowMs();
     if (_edit->empty() || now - _lastTyping < 3000 || _key.conv == model::kNoConv)
         return;
     _lastTyping = now;
-    _ctx.backend.userTyping(_key.conv, _key.thread);
+    _ctx.backend().userTyping(_key.conv, _key.thread);
 }
 
 // Each line the selection touches gets the
@@ -1545,26 +1616,225 @@ void Composer::openLinkPopup() {
     Window *w = window();
     if (!w)
         return;
-    const uint32_t     a     = std::min(_edit->anchor(), _edit->caret());
-    const uint32_t     c     = std::max(_edit->anchor(), _edit->caret());
+    const uint32_t     a        = std::min(_edit->anchor(), _edit->caret());
+    const uint32_t     c        = std::max(_edit->anchor(), _edit->caret());
     // Below the Link button (the key opens it a quarter along the toolbar).
-    const RectF        lb    = _tools[4]->windowRect();
-    std::weak_ptr<int> alive = _alive;
+    const RectF        lb       = _tools[4]->windowRect();
+    std::weak_ptr<int> alive    = _alive;
+    // A selection that is already a URL is the URL, not the text.
+    const std::string  selected = _edit->selectedText();
+    const bool         isUrl    = !selected.empty() && mrkdwn::looksLikeUrl(selected);
     showLinkPopup(
         *w,
         lb,
-        _edit->selectedText(),
-        [this, alive, a, c](const std::string &url, const std::string &label) {
+        isUrl ? std::string() : selected,
+        [this, alive, a, c, isUrl, selected](const std::string &url, const std::string &label) {
             if (alive.expired())
                 return;
-            _edit->setSelection(a, c);
-            _edit->insertText(
-                label.empty() || label == url ? str::concat({"<", url, ">"})
-                                              : str::concat({"<", url, "|", label, ">"})
-            );
+            // A selected URL whose text was left alone shows the new one.
+            placeLink(a, c, url, isUrl && label == selected ? std::string() : label);
             _edit->focus();
+        },
+        isUrl ? selected : std::string()
+    );
+}
+
+// ── Links ───────────────────────────────────────────────────────────────────
+
+void Composer::placeLink(
+    uint32_t from, uint32_t to, const std::string &url, const std::string &label
+) {
+    const std::string display = label.empty() || label == url ? url : label;
+    _edit->setSelection(from, to);
+    _edit->insertText(display);
+    // Where the insert left the caret: a smiley label came in as its emoji.
+    const uint32_t end = std::max(from, _edit->caret());
+    // The link itself, not the text of it: the editor shows the label in blue
+    // and mrkdwn() writes "<url>" / "<url|label>" on the way out.
+    _linkifying        = true; // the text under it is a URL: linkify() would redo it
+    _edit->setSelection(from, end);
+    _edit->setLink(url);
+    _linkifying = false;
+    _edit->setSelection(end, end);
+}
+
+void Composer::linkify() {
+    if (_linkifying)
+        return;
+    // A copy: the loop moves the selection and the formats under it.
+    const std::string text = _edit->text();
+    if (text.find("://") == std::string::npos) {
+        _unlinked.clear(); // no URL left to keep plain
+        return;
+    }
+    const std::vector<mrkdwn::BareUrl> urls = mrkdwn::bareUrls(text);
+    if (urls.empty())
+        return;
+    const std::vector<TextEdit::Run> runs    = _edit->runs();
+    // A word still being typed is not a URL yet: it ends when the caret leaves
+    // it (a space, a click elsewhere). A pasted one is linked at once.
+    const bool                       pasted  = _edit->inPaste();
+    const uint32_t                   caret   = _edit->caret();
+    const uint32_t                   anchor  = _edit->anchor();
+    bool                             changed = false;
+    _linkifying                              = true;
+    for (const mrkdwn::BareUrl &u : urls) {
+        if (!pasted && caret > u.from && caret <= u.to)
+            continue; // the URL is the word the caret is in
+        const std::string url = text.substr(u.from, u.to - u.from);
+        // A '|' would split "<url>" into a URL and a label on the way out;
+        // and a URL the chip unlinked stays plain.
+        if (url.find('|') != std::string::npos ||
+            std::find(_unlinked.begin(), _unlinked.end(), url) != _unlinked.end())
+            continue;
+        bool skip = false;
+        for (const TextEdit::Run &r : runs) {
+            if (u.from >= r.end || u.to <= r.start)
+                continue;
+            // Code is no link and a pill no URL. A link over all of it is one
+            // already, unless it is over just the URL and to another one: the
+            // URL was edited, and a link over part of it was typed into.
+            if (r.format & TextEdit::Code || TextEdit::pillLink(r.link) ||
+                (!r.link.empty() && r.start <= u.from && r.end >= u.to &&
+                 (r.link == url || r.start < u.from || r.end > u.to)))
+                skip = true;
+        }
+        if (skip)
+            continue;
+        _edit->setSelection(u.from, u.to);
+        _edit->setLink(url);
+        changed = true;
+    }
+    if (changed)
+        _edit->setSelection(anchor, caret);
+    _linkifying = false;
+}
+
+void Composer::linkHovered(const TextEdit::LinkHover &h) {
+    if (h.url.empty()) { // off the link: the chip's own leave decides
+        if (_linkChip)
+            armLinkChipClose();
+        return;
+    }
+    _ctx.app.cancelTimer(_linkChipTimer); // the pointer is back on it
+    _linkChipTimer = 0;
+    if (_linkChip && _linkChipUrl == h.url && _linkChipFrom == h.from && _linkChipTo == h.to) {
+        _linkChip->setAnchor(h.rect, Popup::Place::Below);
+        return;
+    }
+    openLinkChip(h);
+}
+
+void Composer::openLinkChip(const TextEdit::LinkHover &h) {
+    Window *w = window();
+    if (!w)
+        return;
+    closeLinkChip();
+    _linkChipUrl            = h.url;
+    _linkChipFrom           = h.from;
+    _linkChipTo             = h.to;
+    const uint32_t     from = h.from, to = h.to;
+    std::weak_ptr<int> alive = _alive;
+    _linkChip                = showLinkChip(
+        *w,
+        h.rect,
+        h.url,
+        [this, alive, from, to] { // Edit
+            if (alive.expired())
+                return;
+            editLink(from, to);
+        },
+        [this, alive, from, to] { // Unlink
+            if (alive.expired())
+                return;
+            unlinkLink(from, to);
+        },
+        [this] { // the pointer came back: the close was too eager
+            _ctx.app.cancelTimer(_linkChipTimer);
+            _linkChipTimer = 0;
+        },
+        [this] { // off the chip; the link's own leave may have said so already
+            armLinkChipClose();
         }
     );
+    _linkChip->onClosed = [this] {
+        _linkChip = nullptr;
+        _ctx.app.cancelTimer(_linkChipTimer);
+        _linkChipTimer = 0;
+    };
+}
+
+void Composer::closeLinkChip() {
+    _ctx.app.cancelTimer(_linkChipTimer);
+    _linkChipTimer = 0;
+    if (_linkChip) {
+        LinkChip *c = _linkChip;
+        _linkChip   = nullptr;
+        c->onClosed = nullptr;
+        c->close();
+    }
+    _linkChipUrl.clear();
+    _linkChipFrom = _linkChipTo = 0;
+}
+
+void Composer::armLinkChipClose() {
+    _ctx.app.cancelTimer(_linkChipTimer);
+    _linkChipTimer = _ctx.app.addTimer(200, false, [this] {
+        _linkChipTimer = 0;
+        // Over the chip itself it stays; the chip says when the pointer leaves.
+        Window *w      = window();
+        if (_linkChip && w && _linkChip->windowRect().contains(w->pointerPos()))
+            return;
+        closeLinkChip();
+    });
+}
+
+void Composer::editLink(uint32_t from, uint32_t to) {
+    Window *w = window();
+    if (!w)
+        return;
+    std::string_view url;
+    uint32_t         a = from, b = to;
+    if (!_edit->linkAt(from, &url, &a, &b))
+        return;
+    const std::string target(url);
+    // The label is the text over the link; the URL its own when they match.
+    const std::string label = _edit->text().substr(a, b - a);
+    closeLinkChip();
+    std::weak_ptr<int> alive = _alive;
+    showLinkPopup(
+        *w,
+        _edit->rangeRect(a, b),
+        label == target ? std::string() : label,
+        [this, alive, a, b, target, bare = label == target](
+            const std::string &u, const std::string &l
+        ) {
+            if (alive.expired())
+                return;
+            // A bare link whose text was left alone shows its new URL.
+            placeLink(a, b, u, bare && l == target ? std::string() : l);
+            _edit->focus();
+        },
+        target
+    );
+}
+
+void Composer::unlinkLink(uint32_t from, uint32_t to) {
+    std::string_view url;
+    uint32_t         a = from, b = to;
+    if (!_edit->linkAt(from, &url, &a, &b))
+        return;
+    closeLinkChip();
+    _unlinked.push_back(_edit->text().substr(a, b - a));
+    const uint32_t caret = _edit->caret(), anchor = _edit->anchor();
+    _edit->setSelection(a, b);
+    // The link goes; the text, a bare URL again, stays as it is (linkify()
+    // would tie it right back).
+    _linkifying = true;
+    _edit->setLink({});
+    _linkifying = false;
+    _edit->setSelection(anchor, caret);
+    _edit->focus();
 }
 
 void Composer::openSchedule() {
@@ -1605,11 +1875,11 @@ void Composer::openSchedule() {
         refreshLook();
         compositionChanged();
         if (!composed.blocks.empty())
-            _ctx.backend.scheduleBlocks(
+            _ctx.backend().scheduleBlocks(
                 key.conv, text, std::move(composed.blocks), key.thread, at, std::move(done)
             );
         else
-            _ctx.backend.scheduleMessage(key.conv, text, key.thread, at, std::move(done));
+            _ctx.backend().scheduleMessage(key.conv, text, key.thread, at, std::move(done));
     });
 }
 
@@ -1618,14 +1888,18 @@ void Composer::openEmoji() {
     if (!w)
         return;
 #ifdef MSGA_HAVE_MESSAGES
-    // The messages screens' searchable picker (shared with reactions); it
-    // inserts the shortcode, which Slack renders.
+    // The messages screens' searchable picker (shared with reactions). A pick
+    // is the emoji itself; a custom emoji has only its picture, so it goes as
+    // the :code: Slack renders.
     std::weak_ptr<int> alive = _alive;
     screens::EmojiPicker::show(
         *w, _emojiBtn->windowRect(), _ctx, [this, alive](const std::string &name) {
             if (alive.expired())
                 return;
-            _edit->insertText(str::concat({":", name, ":"}));
+            std::string glyph = _ctx.store().emojiFor(name).unicode;
+            if (glyph.empty())
+                glyph = str::concat({":", name, ":"});
+            _edit->insertText(glyph);
             _edit->focus();
         }
     );
@@ -1765,6 +2039,41 @@ void Composer::computePickList() {
                         it.status = tr("Disabled in threads");
                     items.push_back(std::move(it));
                 }
+        // User groups, mentioned like a person: one whose handle starts with
+        // what was typed comes before people, the rest after them, so a bare
+        // "@" keeps people first.
+        const std::vector<model::Store::Usergroup> &groups = st.usergroups();
+        _foldedGroups.resize(groups.size());
+        std::vector<PickList::Item> laterGroups;
+        int                         addedGroups = 0;
+        for (size_t i = 0; i < groups.size() && addedGroups < 50; ++i) {
+            const model::Store::Usergroup &g = groups[i];
+            FoldedGroup                   &f = _foldedGroups[i];
+            if (f.handle != g.handle || f.name != g.name) {
+                f.handle    = g.handle;
+                f.name      = g.name;
+                f.folded    = utf8::foldCase(g.handle);
+                f.handleEnd = uint32_t(f.folded.size());
+                f.folded += '\n';
+                f.folded += utf8::foldCase(g.name);
+            }
+            if (g.handle.empty())
+                continue;
+            if (!query.empty() && !utf8::containsPrefolded(f.folded, fq))
+                continue;
+            PickList::Item it;
+            it.kind    = PickList::Item::Kind::Group;
+            it.display = str::concat({"@", g.handle});
+            it.title   = it.display;
+            it.insert  = str::concat({"<!subteam^", g.id, "|", it.display, ">"});
+            if (!g.name.empty() && g.name != g.handle)
+                it.subtitle = g.name;
+            const bool first =
+                !query.empty() &&
+                str::startsWith(std::string_view(f.folded).substr(0, f.handleEnd), fq);
+            (first ? items : laterGroups).push_back(std::move(it));
+            ++addedGroups;
+        }
         wide      = _threadMode && !dm;
         int added = 0;
         if (_foldedStore != &st) { // another workspace: its revisions are its own
@@ -1816,10 +2125,12 @@ void Composer::computePickList() {
             items.push_back(std::move(it));
             ++added;
         }
+        for (PickList::Item &it : laterGroups)
+            items.push_back(std::move(it));
     } else if (trig == '/' && start == 0) {
         // Slash commands only at the very start of the message; a bare
         // "/" lists them all, by name.
-        if (!_ctx.backend.capabilities().slashCommands || _key.conv == model::kNoConv) {
+        if (!_ctx.backend().capabilities().slashCommands || _key.conv == model::kNoConv) {
             dismiss();
             return;
         }
@@ -1877,13 +2188,14 @@ void Composer::computePickList() {
             for (const EmojiCompletion &e : emojiCompletions(_ctx.store(), query)) {
                 PickList::Item it;
                 it.kind = PickList::Item::Kind::Plain;
-                if (e.custom) { // no Unicode form: the :code: Slack renders
+                const std::string g =
+                    e.custom ? _ctx.store().emojiFor(e.name).unicode : emoji::toUnicode(e.name);
+                if (g.empty()) {
                     it.display = str::concat({":", e.name, ":"});
                     it.insert  = it.display;
                 } else {
-                    const std::string g = emoji::toUnicode(e.name);
-                    it.display          = str::concat({g, "  :", e.name, ":"});
-                    it.insert           = g;
+                    it.display = str::concat({g, "  :", e.name, ":"});
+                    it.insert  = g;
                 }
                 items.push_back(std::move(it));
             }
@@ -1930,10 +2242,10 @@ void Composer::computePickList() {
 // backend's revision moved (a session's commands come and go; without one,
 // each time), sorted and folded only when they changed.
 void Composer::refreshCommands() {
-    const uint64_t rev = _ctx.backend.commandsRevision(_key.conv);
+    const uint64_t rev = _ctx.backend().commandsRevision(_key.conv);
     if (rev && rev == _cmdRev && _cmdConv == _key.conv)
         return;
-    std::vector<model::Backend::Command> cmds = _ctx.backend.commands(_key.conv);
+    std::vector<model::Backend::Command> cmds = _ctx.backend().commands(_key.conv);
     bool same = _cmdConv == _key.conv && _cmdRev == rev && cmds.size() == _cmdNames.size();
     _cmdRev   = rev;
     for (size_t i = 0; same && i < cmds.size(); ++i)
@@ -2028,6 +2340,17 @@ void loadMrkdwnAs(TextEdit &edit, const model::Store &store, std::string_view te
                  : c != model::kNoConv ? store.conversation(c).name
                                        : std::string(head.substr(1))}
             );
+        } else if (str::startsWith(head, "!subteam^")) {
+            // <!subteam^S…|@handle>: a user group mention, shown by the group's
+            // live handle; unknown labels stay Slack's, or the id.
+            const std::string_view         id = head.substr(9);
+            const model::Store::Usergroup *g  = store.findUsergroup(id);
+            std::string_view word = g && !g->handle.empty() ? std::string_view(g->handle)
+                                    : g && !g->name.empty() ? std::string_view(g->name)
+                                    : !lab.empty()          ? lab
+                                                            : id;
+            if (!word.empty())
+                display = str::concat({word[0] == '@' ? "" : "@", word});
         } else if (head == "!here" || head == "!channel" || head == "!everyone") {
             display = str::concat({"@", head.substr(1)});
         } else if (giphy(head)) {

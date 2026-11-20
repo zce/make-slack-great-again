@@ -136,7 +136,7 @@ void ThreadPanel::setBroadcastBlocked(bool blocked) {
 void ThreadPanel::refreshBroadcast() {
     // Only a channel thread has a channel to also send the reply to.
     const ConvRef c    = conversation();
-    const bool    show = c != model::kNoConv && _ctx.backend.capabilities().replyBroadcast &&
+    const bool    show = c != model::kNoConv && _ctx.backend().capabilities().replyBroadcast &&
                          !_ctx.store().conversation(c).isDirect();
     _broadcastRow->setVisible(show);
     _broadcast->setEnabled(show && !_blocked);

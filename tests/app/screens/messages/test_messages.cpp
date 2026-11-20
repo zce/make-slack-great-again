@@ -2289,7 +2289,7 @@ TEST("actions: a shared message's files open in the viewer, never deleted or for
 TEST("actions: a remote CSV's Preview downloads it to a temporary file, removed once read") {
     Env                      e(true);
     std::vector<std::string> errors;
-    e.backend.onError     = [&](const std::string &m) { errors.push_back(m); };
+    e.ctx.backend.onError     = [&](const std::string &m) { errors.push_back(m); };
     const ConvRef general = e.conv("C0GENERAL");
     Ts            ts      = 0;
     std::string   url;
@@ -2866,7 +2866,7 @@ TEST("image: \"Copy full image\" of a Slack-hosted image copies the original, no
         fake.install(remote);
         Env                      e(true);
         std::vector<std::string> errors;
-        e.backend.onError    = [&](const std::string &m) { errors.push_back(m); };
+        e.ctx.backend.onError    = [&](const std::string &m) { errors.push_back(m); };
         e.ctx.remote         = &remote;
         const ConvRef design = e.conv("C0DESIGN");
         Ts            ts     = 0;
@@ -2930,7 +2930,7 @@ TEST("actions: the file bar's Download saves the original where asked, a job unt
     {
         Env                      e(true);
         std::vector<std::string> errors;
-        e.backend.onError     = [&](const std::string &m) { errors.push_back(m); };
+        e.ctx.backend.onError     = [&](const std::string &m) { errors.push_back(m); };
         const ConvRef general = e.conv("C0GENERAL");
         Ts            ts      = 0;
         std::string   path;
@@ -3283,7 +3283,7 @@ TEST("loading: a failed first history page stops paging and reports the error") 
     using State = MessageList::State;
     HoldEnv                  e;
     std::vector<std::string> errors;
-    e.backend.onError = [&](const std::string &m) { errors.push_back(m); };
+    e.ctx.backend.onError = [&](const std::string &m) { errors.push_back(m); };
     const ConvRef c   = e.conv("C3");
     e.list->showConversation(c);
     REQUIRE(until([&] { return !e.backend.history.empty(); }));
@@ -3302,7 +3302,7 @@ TEST("loading: a failed thread page reports the error without staying loading") 
     using State = MessageList::State;
     HoldEnv                  e;
     std::vector<std::string> errors;
-    e.backend.onError                  = [&](const std::string &m) { errors.push_back(m); };
+    e.ctx.backend.onError                  = [&](const std::string &m) { errors.push_back(m); };
     const ConvRef  c                   = e.conv("C4");
     model::Message root                = msg(e.mira, 3000, "root");
     root.replyCount                    = 1;
@@ -5184,4 +5184,48 @@ TEST(
     e.ctx.window = nullptr; // the orphan path
     link->activate();       // openTranscript -> TranscriptDialog::open -> setText -> setBody
     e.ctx.window = e.win.get();
+}
+
+TEST("blocks: a call card says when it started and who is in it") {
+    model::Store st;
+    model::User  u;
+    u.id                      = "UME";
+    u.name                    = "me";
+    st.me                     = st.addUser(u);
+    u.id                      = "UMIRA";
+    u.name                    = "mira";
+    u.displayName             = "Mira";
+    const model::UserRef mira = st.addUser(u);
+    model::Call          c;
+    c.startSec    = 1000;
+    c.peopleKnown = true;
+    CHECK_STR(screens::callStartedText(c, 1000 + 7 * 60 + 5), "Started 7 minutes ago");
+    CHECK_STR(screens::callStartedText(c, 1010), "Started just now");
+    CHECK_STR(screens::callStatusText(st, c), "Waiting for people to join");
+    c.people = {mira};
+    CHECK_STR(screens::callStatusText(st, c), "Mira is in the call");
+    c.people = {st.me, mira};
+    CHECK_STR(screens::callStatusText(st, c), "You and Mira are in the call");
+    CHECK(screens::callAvatarAlpha(c) == 1.f);
+    c.ended = true;
+    CHECK(screens::callAvatarAlpha(c) < 1.f);
+    c.endSec = 1000 + 12 * 60;
+    CHECK_STR(screens::callStartedText(c, 5000), "Ended \xC2\xB7 lasted 12m");
+    CHECK_STR(screens::callStatusText(st, c), "You and Mira were in the call");
+}
+
+TEST("image: a GIPHY .webp rendition falls back to the .gif at the same path") {
+    const char *webp = "https://media4.giphy.com/media/v1.Y2lk/abc/giphy.webp?cid=1&rid=giphy.webp";
+#ifdef MSGA_GFX_WEBP
+    CHECK_STR(screens::decodableImageUrl(webp), webp);
+#else
+    CHECK_STR(screens::decodableImageUrl(webp), "https://media4.giphy.com/media/v1.Y2lk/abc/giphy.gif");
+#endif
+    CHECK_STR(
+        screens::decodableImageUrl("https://e.com/a/pic.webp"), "https://e.com/a/pic.webp"
+    );
+    CHECK_STR(
+        screens::decodableImageUrl("https://notgiphy.com/media/a.webp"),
+        "https://notgiphy.com/media/a.webp"
+    );
 }

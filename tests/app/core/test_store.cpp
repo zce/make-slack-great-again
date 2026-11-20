@@ -1,4 +1,4 @@
-#include "app/model/backend_proxy.h"
+#include "app/model/backend_slot.h"
 #include "app/model/null_backend.h"
 #include "app/model/store.h"
 #include "app/model/store_slot.h"
@@ -1381,7 +1381,7 @@ TEST("store slot: observers move to the new Store and hear Roster then Users") {
     const Store::ObserverId id = slot.observe(Store::kAnyConv, views.fn());
     b.observe(Store::kAnyConv, pinned.fn()); // b's own (a background workspace's)
     CHECK(&slot() == &a);
-    a.updateConversation(0, [](Conversation &) {});
+    a.updateConversation(0, [](Conversation &c) { c.topic += "!"; });
     REQUIRE(views.log.size() == 1);
     CHECK(views.log[0].kind == ChangeKind::Meta);
 
@@ -1395,16 +1395,16 @@ TEST("store slot: observers move to the new Store and hear Roster then Users") {
 
     // a's changes no longer reach the views; b's do, and b's own observer too.
     views.log.clear();
-    a.updateConversation(0, [](Conversation &) {});
+    a.updateConversation(0, [](Conversation &c) { c.topic += "!"; });
     CHECK(views.log.empty());
-    b.updateConversation(0, [](Conversation &) {});
+    b.updateConversation(0, [](Conversation &c) { c.topic += "!"; });
     CHECK(views.log.size() == 1);
     CHECK(pinned.log.size() == 1);
 
     // The slot's id unobserves wherever the observer lives now.
     slot.unobserve(id);
     views.log.clear();
-    b.updateConversation(0, [](Conversation &) {});
+    b.updateConversation(0, [](Conversation &c) { c.topic += "!"; });
     CHECK(views.log.empty());
     slot.setTarget(a); // nobody left to tell
     CHECK(views.log.empty());
@@ -1432,7 +1432,7 @@ TEST("store slot: an observer may unobserve itself while hearing the switch") {
     });
     slot.setTarget(b);
     CHECK(heard == 1); // Roster, then gone before Users
-    b.updateConversation(0, [](Conversation &) {});
+    b.updateConversation(0, [](Conversation &c) { c.topic += "!"; });
     CHECK(heard == 1);
 }
 
@@ -1454,7 +1454,7 @@ TEST("backend: calls a service lacks default to nothing") {
     CHECK(s.conversationCount() == 0);
 }
 
-TEST("backend proxy: searchPage follows the active target") {
+TEST("backend slot: searchPage follows the active target") {
     struct SearchBackend : NullBackend {
         std::string identity;
         SearchBackend(Store &store, std::string identity)
@@ -1469,21 +1469,21 @@ TEST("backend proxy: searchPage follows the active target") {
     };
     Store         s;
     SearchBackend first{s, "first"}, second{s, "second"};
-    BackendProxy  proxy{s, first};
+    BackendSlot        slot{first};
     Backend::SearchPage result;
-    proxy.searchPage("q", "*", [&](Backend::SearchPage page) { result = std::move(page); });
+    slot().searchPage("q", "*", [&](Backend::SearchPage page) { result = std::move(page); });
     REQUIRE(result.hits.size() == 1);
     CHECK_STR(result.hits[0].text, "first");
     CHECK_STR(result.nextCursor, "*");
-    proxy.setTarget(second);
+    slot.setTarget(second);
     result = {};
-    proxy.searchPage("q", "next", [&](Backend::SearchPage page) { result = std::move(page); });
+    slot().searchPage("q", "next", [&](Backend::SearchPage page) { result = std::move(page); });
     REQUIRE(result.hits.size() == 1);
     CHECK_STR(result.hits[0].text, "second");
     CHECK_STR(result.nextCursor, "next");
 }
 
-TEST("backend proxy: retryFailedMessage follows the active target") {
+TEST("backend slot: retryFailedMessage follows the active target") {
     struct RetryBackend : NullBackend {
         bool    result;
         int     calls = 0;
@@ -1499,17 +1499,82 @@ TEST("backend proxy: retryFailedMessage follows the active target") {
     };
     Store        s;
     RetryBackend first{s, true}, second{s, false};
-    BackendProxy proxy{s, first};
-    CHECK(proxy.retryFailedMessage(11, 22));
+    BackendSlot slot{first};
+    CHECK(slot().retryFailedMessage(11, 22));
     CHECK(first.calls == 1);
     CHECK(first.conv == 11);
     CHECK(first.local == 22);
     CHECK(second.calls == 0);
 
-    proxy.setTarget(second);
-    CHECK(!proxy.retryFailedMessage(33, 44));
+    slot.setTarget(second);
+    CHECK(!slot().retryFailedMessage(33, 44));
     CHECK(first.calls == 1);
     CHECK(second.calls == 1);
     CHECK(second.conv == 33);
     CHECK(second.local == 44);
+}
+
+TEST("store: ended statuses are cleared, lasting and future ones stay") {
+    Store s;
+    User  ended, later, forever;
+    ended.id = "UA", later.id = "UB", forever.id = "UC";
+    for (User *u : {&ended, &later, &forever}) {
+        u->statusEmoji = "calendar";
+        u->statusText  = "In a meeting";
+    }
+    ended.statusExpiry = 1000;
+    later.statusExpiry = 2000;
+    const UserRef ra = s.addUser(ended), rb = s.addUser(later), rc = s.addUser(forever);
+    s.usersChanged();
+    int users = 0;
+    s.observe(Store::kAnyConv, [&](const Change &ch) { users += ch.kind == ChangeKind::Users; });
+    const uint64_t p0 = s.profileRevision();
+    CHECK(!s.clearEndedStatuses(999));
+    CHECK(users == 0);
+    CHECK(s.clearEndedStatuses(1000));
+    CHECK(users == 1);
+    CHECK(s.user(ra).statusText.empty() && s.user(ra).statusEmoji.empty());
+    CHECK(s.user(ra).statusExpiry == 0);
+    CHECK(s.userRevision(ra) > p0);
+    CHECK(s.user(rb).statusText == "In a meeting" && s.userRevision(rb) == p0);
+    CHECK(!s.clearEndedStatuses(1999));
+    CHECK(s.clearEndedStatuses(5000));
+    CHECK(s.user(rb).statusText.empty());
+    CHECK(s.user(rc).statusText == "In a meeting");
+}
+
+TEST("store: an edit or a read that changed nothing emits no Meta") {
+    Fixture f;
+    f.s.addMessage(f.c, msg(100, f.mira));
+    Recorder r;
+    f.s.observe(f.c, r.fn());
+    f.s.updateConversation(f.c, [](Conversation &c) { c.starred = false; });
+    f.s.markRead(f.c, 100);
+    REQUIRE(r.log.size() == 1);
+    f.s.markRead(f.c, 100);
+    f.s.markRead(f.c, 50);
+    CHECK(r.log.size() == 1);
+    f.s.updateConversation(f.c, [](Conversation &c) { c.starred = true; });
+    CHECK(r.log.size() == 2);
+    CHECK(r.log.back().kind == ChangeKind::Meta);
+}
+
+TEST("store: setSaved sets the flag, the reminder and the item with one Update") {
+    Fixture f;
+    f.s.addMessage(f.c, msg(100, f.mira));
+    Recorder r;
+    f.s.observe(f.c, r.fn());
+    f.s.setSaved(f.c, 100, true, 1900000000);
+    CHECK(f.s.findMessage(f.c, 100)->saved);
+    CHECK(f.s.reminderAt(f.c, 100) == 1900000000);
+    REQUIRE(f.s.findSaved(f.c, 100));
+    CHECK(f.s.findSaved(f.c, 100)->due == 1900000000);
+    CHECK(r.log.size() == 1);
+    f.s.setSaved(f.c, 100, true, 1900000000);
+    CHECK(r.log.size() == 1);
+    f.s.setSaved(f.c, 100, false, 1900000000);
+    CHECK_FALSE(f.s.findMessage(f.c, 100)->saved);
+    CHECK(f.s.reminderAt(f.c, 100) == 0);
+    CHECK_FALSE(f.s.findSaved(f.c, 100));
+    CHECK(r.log.size() == 2);
 }

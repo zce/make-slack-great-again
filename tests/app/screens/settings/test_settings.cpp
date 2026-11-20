@@ -129,6 +129,7 @@ struct Harness {
     SettingsDialog &open() {
         sh->openSettings();
         pump();
+        pump();
         return *sh->settingsDialog();
     }
     void click(ui::View *v) {
@@ -136,10 +137,19 @@ struct Harness {
             return;
         // Pages scroll: bring the target into view first, as a user would.
         if (SettingsDialog *d = sh->settingsDialog(); d && d->scroll().isAncestorOf(v)) {
-            d->scroll().ensureVisible(v, 8);
-            pump();
+            // A page scroll settles over a few turns; a control that has not
+            // been laid out yet has no rect, so ask again after each turn.
+            for (int i = 0; i < 20 && v->windowRect().w <= 0; ++i) {
+                d->scroll().ensureVisible(v, 8);
+                pump();
+            }
         }
-        const ui::RectF r = v->windowRect();
+        ui::RectF r = v->windowRect();
+        hooks().injectPointerMove(win->native(), {r.x + r.w / 2, r.y + r.h / 2});
+        pump(2);
+        // Moving the pointer can relayout the page (a hover state): move and
+        // click where the control is now, not where it was measured.
+        r = v->windowRect();
         hooks().injectPointerMove(win->native(), {r.x + r.w / 2, r.y + r.h / 2});
         pump(2);
         hooks().injectButton(win->native(), plat::Button::Left, true);
@@ -1502,3 +1512,30 @@ TEST("settings: Check spelling lists the dictionaries; the ticked ones are saved
     file::remove(dir);
 }
 #endif
+
+TEST("settings: smileys are on by default and their map is editable") {
+    const std::string path = testPath();
+    file::remove(path);
+    Harness         h(path);
+    SettingsDialog &d = h.open();
+    CHECK(h.settings.smileyToEmoji);
+    REQUIRE(d.find("Turn text smileys into emoji") != nullptr);
+    auto *map = static_cast<ui::TextField *>(d.find(":) :slightly_smiling_face:"));
+    REQUIRE(map != nullptr);
+    CHECK(map->text().find(":) slightly_smiling_face") != std::string::npos);
+    h.click(d.find("Save"));
+    CHECK_STR(h.settings.smileyMap, "");
+
+    SettingsDialog &d2   = h.open();
+    auto           *map2 = static_cast<ui::TextField *>(d2.find(":) :slightly_smiling_face:"));
+    REQUIRE(map2 != nullptr);
+    map2->setText("  :-) :wave:  \n\n :) \xF0\x9F\x99\x82 \n");
+    h.click(d2.find("Turn text smileys into emoji"));
+    CHECK_FALSE(d2.draft().smileyToEmoji);
+    CHECK(h.settings.smileyToEmoji);
+    h.click(d2.find("Save"));
+    CHECK_STR(h.settings.smileyMap, ":-) :wave:\n:) \xF0\x9F\x99\x82");
+    CHECK_FALSE(h.settings.smileyToEmoji);
+    CHECK_FALSE(h.ctx.smileyToEmoji);
+    CHECK_STR(h.ctx.smileyMap, ":-) :wave:\n:) \xF0\x9F\x99\x82");
+}

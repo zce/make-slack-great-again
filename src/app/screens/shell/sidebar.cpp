@@ -675,10 +675,10 @@ public:
         const auto &cv      = store.conversation(conv);
         const bool  sel     = sidebar._selected == conv;
         const bool  phantom = cv.dmUser == store.me && store.me != model::kNoUser &&
-                              sidebar._ctx.backend.selfPresence().phantomAway();
+                              sidebar._ctx.backend().selfPresence().phantomAway();
         avatar->setPresence(
             Avatar::presenceOf(
-                &store.user(cv.dmUser), sidebar._ctx.backend.capabilities().presence, phantom
+                &store.user(cv.dmUser), sidebar._ctx.backend().capabilities().presence, phantom
             ),
             sel         ? C::SidebarSelected
             : hovered() ? C::SidebarHover
@@ -691,11 +691,11 @@ public:
     void refresh() override {
         const auto &store = sidebar._ctx.store();
         const auto &cv    = store.conversation(conv);
-        const auto  caps  = sidebar._ctx.backend.capabilities();
+        const auto  caps  = sidebar._ctx.backend().capabilities();
         const bool  sel   = sidebar._selected == conv;
         const bool  quiet = sidebar.muted(cv);
         const bool  stale =
-            cv.latest && tsSecs(cv.latest) < sidebar._ctx.backend.nowSecs() - kMaxNotifyAgeSecs;
+            cv.latest && tsSecs(cv.latest) < sidebar._ctx.backend().nowSecs() - kMaxNotifyAgeSecs;
         unread = sidebar.paintsUnread(cv);
         count  = sidebar.redCount(cv);
         dot = !stale && !quiet && sidebar.level(cv) == model::NotifyLevel::All && !cv.isDirect() &&
@@ -902,7 +902,7 @@ bool Sidebar::paintsUnread(const model::Conversation &c) const {
 }
 
 int Sidebar::redCount(const model::Conversation &c) const {
-    if (c.latest && tsSecs(c.latest) < _ctx.backend.nowSecs() - kMaxNotifyAgeSecs)
+    if (c.latest && tsSecs(c.latest) < _ctx.backend().nowSecs() - kMaxNotifyAgeSecs)
         return 0;
     // DMs count unread messages; channels count mentions.
     // This fork has no agent-session capability (that feature was removed).
@@ -951,7 +951,7 @@ bool Sidebar::isVip(const model::Conversation &c) const {
 // rebuild), so the draft is never out of sight.
 Sidebar::Kind Sidebar::classify(model::ConvRef ref) const {
     const auto &c = _ctx.store().conversation(ref);
-    if (_ctx.backend.capabilities().vips && isVip(c))
+    if (_ctx.backend().capabilities().vips && isVip(c))
         return Vip;
     if (_ctx.store().draft(ref, 0) != nullptr)
         return Drafts;
@@ -996,7 +996,7 @@ bool Sidebar::relevant(ConvRef ref) const {
     if (c.unread > 0 || ref == _selected)
         return true;
     const int64_t cutoff =
-        _ctx.backend.nowSecs() - int64_t(std::max(1, _filters.relevantDays)) * 86400;
+        _ctx.backend().nowSecs() - int64_t(std::max(1, _filters.relevantDays)) * 86400;
     const auto v = _visited.find(c.id);
     if (v != _visited.end() && v->second >= cutoff)
         return true;
@@ -1030,7 +1030,7 @@ void Sidebar::rebuild() {
     _scheduledRow     = nullptr;
     _activityRow      = nullptr;
     const auto &store = _ctx.store();
-    const auto  caps  = _ctx.backend.capabilities();
+    const auto  caps  = _ctx.backend().capabilities();
 
     auto nav = [&](Icon icon, const char *text, std::function<void()> *hook) {
         auto *r    = _items->add<NavRow>(icon, text);
@@ -1073,7 +1073,7 @@ void Sidebar::rebuild() {
     };
     // The seed: a conversation with unread messages is stamped, so it stays
     // listed for the whole window once read.
-    const int64_t now    = _ctx.backend.nowSecs();
+    const int64_t now    = _ctx.backend().nowSecs();
     const int64_t cutoff = now - int64_t(std::max(1, _filters.relevantDays)) * 86400;
     bool          seeded = false;
     for (ConvRef c = 0; c < store.conversationCount(); ++c) {
@@ -1737,7 +1737,7 @@ bool Sidebar::moveSection(const std::string &key, int step) {
         };
         const auto a = find(moving->sectionId), b = find(neighbor->sectionId);
         if (a != server.end() && b != server.end() && b - a == step)
-            _ctx.backend.moveSection(moving->sectionId, step);
+            _ctx.backend().moveSection(moving->sectionId, step);
     }
     rebuildSoon(false); // the menu's clicked header may still be on the stack
     if (onSectionOrderChanged)
@@ -1849,7 +1849,7 @@ static bool accepts(const SectionHeader *to, const SectionHeader *from, bool ext
 }
 
 void Sidebar::dragRow(ConvRow *row, PointF windowPos) {
-    if (!_ctx.backend.capabilities().customSections)
+    if (!_ctx.backend().capabilities().customSections)
         return;
     _dragRow           = row;
     SectionHeader *to  = sectionAt(windowPos);
@@ -2043,7 +2043,7 @@ void Sidebar::select(ConvRef conv) {
         selectNav(Nav::None);                            // the overview page is left
     if (conv < _ctx.store().conversationCount()) { // a visit keeps it relevant for the whole window
         if (const std::string &id = _ctx.store().conversation(conv).id; !id.empty()) {
-            _visited[id] = _ctx.backend.nowSecs();
+            _visited[id] = _ctx.backend().nowSecs();
             if (onVisitedChanged)
                 onVisitedChanged();
         }
@@ -2153,7 +2153,7 @@ bool Sidebar::joinHuddle(ConvRef conv) {
 }
 
 int Sidebar::attentionCount() const {
-    return workspaceAttention(_ctx.store(), _filters.defaultLevel, _ctx.backend.nowSecs())
+    return workspaceAttention(_ctx.store(), _filters.defaultLevel, _ctx.backend().nowSecs())
         .important;
 }
 

@@ -464,6 +464,9 @@ TEST("slack write: edit, delete and react update the Store and send the right pa
     CHECK_STR(up["channel"].str(), "C1");
     CHECK(up["ts"].str() == model::formatTs(e.old));
     CHECK_STR(up["text"].str(), "second");
+    // Its text is mrkdwn, as chat.postMessage's is: chat.update's own
+    // default ("client") would escape a <url|label> into literal brackets.
+    CHECK_STR(up["parse"].str(), "none");
     json::Value ra = log.get("reactions.add")["form"];
     CHECK_STR(ra["channel"].str(), "C1");
     CHECK(ra["timestamp"].str() == model::formatTs(e.old));
@@ -1069,6 +1072,67 @@ TEST("slack write: pins, stars, leave, members, DMs") {
     e.be->onError = nullptr;
 }
 
+TEST("slack write: a group DM opens with the others' ids, or reuses an open one") {
+    if (!haveServer())
+        return;
+    Env         e;
+    model::User u;
+    u.id                        = "UJONAS";
+    u.name                      = "jonas";
+    const model::UserRef jonas  = e.store.addUser(u);
+    u.id                        = "UPRIYA";
+    u.name                      = "priya";
+    const model::UserRef priya  = e.store.addUser(u);
+    ConvRef              opened = model::kNoConv - 1;
+    // Me and a repeat are dropped; the rest go as one comma list, and the
+    // answer is a new group of exactly us.
+    script("conversations.open", R"([{"ok":true,"channel":{"id":"G0NEW"}}])");
+    e.be->openDmGroup({jonas, e.me, priya, jonas}, [&](ConvRef c) { opened = c; });
+    REQUIRE(pumpUntil([&] { return opened != model::kNoConv - 1; }));
+    REQUIRE(opened == e.store.findConversation("G0NEW"));
+    const model::Conversation &g = e.store.conversation(opened);
+    CHECK(g.kind == model::ConvKind::Group);
+    CHECK(g.member);
+    CHECK(g.members.size() == 3);
+    CHECK(std::find(g.members.begin(), g.members.end(), e.me) != g.members.end());
+    {
+        Log log;
+        CHECK(log.count("conversations.open") == 1);
+        CHECK_STR(log.get("conversations.open")["form"]["users"].str(), "UJONAS,UPRIYA");
+    }
+    // The same people again, in another order: the open group, no call.
+    opened = model::kNoConv - 1;
+    e.be->openDmGroup({priya, jonas}, [&](ConvRef c) { opened = c; });
+    REQUIRE(pumpUntil([&] { return opened != model::kNoConv - 1; }));
+    CHECK(opened == e.store.findConversation("G0NEW"));
+    CHECK(Log().count("conversations.open") == 1);
+    // A closed one is asked for, and comes back open.
+    e.store.updateConversation(opened, [](model::Conversation &c) { c.member = false; });
+    script("conversations.open", R"([{"ok":true,"channel":{"id":"G0NEW"}}])");
+    opened = model::kNoConv - 1;
+    e.be->openDmGroup({jonas, priya}, [&](ConvRef c) { opened = c; });
+    REQUIRE(pumpUntil([&] { return opened != model::kNoConv - 1; }));
+    CHECK(opened == e.store.findConversation("G0NEW"));
+    CHECK(e.store.conversation(opened).member);
+    CHECK(Log().count("conversations.open") == 2);
+    // One person is a DM; nobody but me is nothing, without a call.
+    opened = model::kNoConv - 1;
+    e.be->openDmGroup({e.me}, [&](ConvRef c) { opened = c; });
+    REQUIRE(pumpUntil([&] { return opened != model::kNoConv - 1; }));
+    CHECK(opened == model::kNoConv);
+    CHECK(Log().count("conversations.open") == 2);
+    // A refusal reaches the error banner as is.
+    std::string banner;
+    e.be->onError = [&](const std::string &m) { banner = m; };
+    script("conversations.open", R"([{"ok":false,"error":"too_many_users"}])");
+    opened = model::kNoConv - 1;
+    e.be->openDmGroup({jonas, e.mira}, [&](ConvRef c) { opened = c; });
+    REQUIRE(pumpUntil([&] { return opened != model::kNoConv - 1; }));
+    CHECK(opened == model::kNoConv);
+    CHECK_STR(banner, "too_many_users");
+    e.be->onError = nullptr;
+}
+
 TEST("slack write: status, profile and photo") {
     if (!haveServer())
         return;
@@ -1078,6 +1142,7 @@ TEST("slack write: status, profile and photo") {
     REQUIRE(pumpUntil([&] { return st.called; }));
     CHECK(st.ok);
     CHECK(e.store.user(e.me).statusEmoji == "palm_tree" && e.store.user(e.me).statusText == "Away");
+    CHECK(e.store.user(e.me).statusExpiry == 1900000000);
     model::Backend::MyProfile p;
     bool                      loaded = false;
     e.be->loadMyProfile([&](model::Backend::MyProfile x) {
