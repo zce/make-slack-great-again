@@ -17,6 +17,28 @@ namespace shell {
 namespace {
 constexpr float kRowH = BrowseList::kRowH, kAvatar = 36;
 
+// The multi-select box at a row's end: an accent square and a check when
+// picked, an empty well otherwise.
+class PickBox final : public View {
+public:
+    explicit PickBox(bool on) : _on(on) { style().size(18, 18).noShrink(); }
+    void paint(gfx::Painter &p) override {
+        const RectF r{0, 0, 18, 18};
+        if (_on) {
+            p.fillRoundRect(r, 4, color(C::Accent));
+            gfx::drawIcon(p, Icon::CheckOnAccent, {1, 1, 16, 16}, color(C::AccentText));
+        } else {
+            p.fillRoundRect(r, 4, color(C::FieldWell));
+            p.strokeRoundRect(
+                {0.75f, 0.75f, 16.5f, 16.5f}, 3.25f, 1.5f, color(C::FormDividerStrong)
+            );
+        }
+    }
+
+private:
+    bool _on;
+};
+
 // One row: the picture (or a channel's icon), the title over its subtitle,
 // the badge. Recycled: bind() refills it for another item.
 class BrowseRow final : public Clickable {
@@ -30,7 +52,8 @@ public:
         const BrowseList::Item    &it,
         const BrowseList::Options &opt,
         bool                       onContent,
-        float                      radius
+        float                      radius,
+        bool                       picked
     ) {
         // Keyboard selection reads stronger than hover; so does a press
         // where the row waits for the click.
@@ -87,6 +110,8 @@ public:
                 1
             );
         }
+        if (opt.multi)
+            add<PickBox>(picked)->style().margins(12, 0, 0, 0);
     }
     bool onEvent(Event &e) override {
         // The list activates on press (unless it waits for the click).
@@ -120,6 +145,30 @@ public:
 
 Clickable *addDialogCloseButton(View *parent) {
     return parent->add<CloseX>();
+}
+
+View *addFinderBar(View *content, float bottom, const char *placeholder, TextField *&search) {
+    auto *top = content->add<View>();
+    top->style()
+        .row()
+        .items(Align::Center)
+        .spacing(8)
+        .padding(24, 20, 24 - Dialog::kCloseInset, bottom);
+    search = top->add<TextField>(placeholder, TextField::Size::Normal, uint16_t(Icon::Search));
+    search->style().flex(1).minW = 200;
+    return top;
+}
+
+Button *addFinderButton(Dialog &dialog, View *bar, const char *label, std::function<void()> then) {
+    auto *b = bar->add<Button>(label, Button::Kind::Primary, Button::Form::Normal);
+    b->setFocusable(false);
+    b->onClick = [&dialog, then = std::move(then)] {
+        auto cb = then;
+        dialog.reject();
+        if (cb)
+            cb();
+    };
+    return b;
 }
 
 // ── BrowseList ──────────────────────────────────────────────────────────────
@@ -172,13 +221,46 @@ void BrowseList::applyFilter(std::string_view query) {
 }
 
 void BrowseList::bindRow(View &v, int index) {
-    auto &row = static_cast<BrowseRow &>(v);
-    row.bind(_avatars, items[shown[size_t(index)]], _opt, _onContent, _radius);
+    auto       &row = static_cast<BrowseRow &>(v);
+    const auto &it  = items[shown[size_t(index)]];
+    row.bind(
+        _avatars, it, _opt, _onContent, _radius,
+        std::find(_picked.begin(), _picked.end(), it.id) != _picked.end()
+    );
     row.setChecked(index == _selected);
-    row.onClick = [this, id = items[shown[size_t(index)]].id] {
-        if (onActivated)
+    const int i = index;
+    row.onClick = [this, i, id = it.id] {
+        if (_opt.multi)
+            togglePicked(i);
+        else if (onActivated)
             onActivated(id);
     };
+}
+
+void BrowseList::togglePicked(int index) {
+    if (index < 0 || index >= int(shown.size()))
+        return;
+    const std::string id = items[shown[size_t(index)]].id;
+    const auto        it = std::find(_picked.begin(), _picked.end(), id);
+    if (it == _picked.end())
+        _picked.push_back(id);
+    else
+        _picked.erase(it);
+    if (View *row = viewFor(index))
+        bindRow(*row, index);
+    if (onPickedChanged)
+        onPickedChanged();
+}
+
+void BrowseList::clearPicked() {
+    if (_picked.empty())
+        return;
+    _picked.clear();
+    for (int i = 0; i < int(shown.size()); ++i)
+        if (View *row = viewFor(i))
+            bindRow(*row, i);
+    if (onPickedChanged)
+        onPickedChanged();
 }
 
 void BrowseList::setSelectedRow(int row) {
@@ -229,9 +311,14 @@ bool BrowseList::navKey(const Event &e) {
 }
 
 void BrowseList::activateSelected() {
-    if (_selected < 0 || _selected >= int(shown.size()) || !onActivated)
+    if (_selected < 0 || _selected >= int(shown.size()))
         return;
-    onActivated(items[shown[size_t(_selected)]].id);
+    if (_opt.multi) {
+        togglePicked(_selected);
+        return;
+    }
+    if (onActivated)
+        onActivated(items[shown[size_t(_selected)]].id);
 }
 
 void BrowseList::paint(gfx::Painter &p) {

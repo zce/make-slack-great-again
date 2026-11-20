@@ -64,7 +64,7 @@ msgstr "表示"
 msgid "Hide"
 msgstr "非表示"
 
-#: src/ui/controls.cpp src/ui/filebrowser.cpp src/app/screens/messages/message_dialogs.cpp src/app/screens/settings/settings_pages.cpp src/app/screens/shell/composer.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/scheduled_page.cpp src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/signin_dialogs.cpp src/app/screens/shell/status_dialog.cpp
+#: src/ui/controls.cpp src/ui/filebrowser.cpp src/app/screens/messages/message_dialogs.cpp src/app/screens/settings/settings_pages.cpp src/app/screens/shell/channel_dialogs.cpp src/app/screens/shell/composer.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/scheduled_page.cpp src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/signin_dialogs.cpp src/app/screens/shell/status_dialog.cpp
 msgid "Cancel"
 msgstr "キャンセル"
 
@@ -757,17 +757,17 @@ msgid "You"
 msgstr "あなた"
 
 #: src/app/screens/messages/rows.cpp
+msgid "%n other"
+msgid_plural "%n others"
+msgstr[0] "他%n人"
+
+#: src/app/screens/messages/rows.cpp
 msgid "Nobody joined the huddle."
 msgstr "ハドルには誰も参加しませんでした。"
 
 #: src/app/screens/messages/rows.cpp
 msgid "The huddle is waiting for people to join."
 msgstr "ハドルの参加者を待っています。"
-
-#: src/app/screens/messages/rows.cpp
-msgid "%n other"
-msgid_plural "%n others"
-msgstr[0] "他%n人"
 
 #: src/app/screens/messages/rows.cpp
 msgid "%1 are in the huddle."
@@ -792,6 +792,38 @@ msgstr "%1がハドルに%2参加しました。"
 #: src/app/screens/messages/rows.cpp
 msgid "%1 was in the huddle for %2."
 msgstr "%1がハドルに%2参加しました。"
+
+#: src/app/screens/messages/rows.cpp
+msgid "Ended · lasted %1"
+msgstr "終了済み · %1"
+
+#: src/app/screens/messages/rows.cpp
+msgid "Ended"
+msgstr "終了済み"
+
+#: src/app/screens/messages/rows.cpp
+msgid "Started %1"
+msgstr "%1に開始"
+
+#: src/app/screens/messages/rows.cpp
+msgid "%1 were in the call"
+msgstr "%1が通話に参加していました"
+
+#: src/app/screens/messages/rows.cpp
+msgid "%1 was in the call"
+msgstr "%1が通話に参加していました"
+
+#: src/app/screens/messages/rows.cpp
+msgid "%1 are in the call"
+msgstr "%1が通話に参加しています"
+
+#: src/app/screens/messages/rows.cpp
+msgid "%1 is in the call"
+msgstr "%1が通話に参加しています"
+
+#: src/app/screens/messages/rows.cpp
+msgid "Waiting for people to join"
+msgstr "参加者を待っています"
 
 #: src/app/screens/messages/rows.cpp src/app/screens/shell/canvas_viewer.cpp
 msgid "Canvas"
@@ -856,6 +888,14 @@ msgstr "リマインダー — %1"
 #: src/app/screens/messages/rows.cpp src/app/screens/shell/saved_page.cpp
 msgid "Saved for later"
 msgstr "後で見るために保存済み"
+
+#: src/app/screens/messages/rows.cpp
+msgid "Call"
+msgstr "通話"
+
+#: src/app/screens/messages/rows.cpp
+msgid "Meeting ID: %1"
+msgstr "ミーティング ID: %1"
 
 #: src/app/screens/messages/rows.cpp
 msgid "Show less"
@@ -1213,6 +1253,22 @@ msgstr ""
 "入力した記号の読み方です。\n"
 "どちらの場合も、メッセージは Slack の書式で送信されます。"
 
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Smileys"
+msgstr "顔文字"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Turn text smileys into emoji"
+msgstr "テキストの顔文字を絵文字に変換"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "\":)\" becomes 🙂 as you type, once a space or the end of the message closes it."
+msgstr "「:)」は入力中に「🙂」になります（空白かメッセージの最後で確定します）。"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "One to a line: the smiley, then the emoji — its shortcode or the character itself. Empty keeps the usual set."
+msgstr "1行に1組：顔文字、空白、絵文字（ショートコードか文字そのもの）。空欄なら標準の一覧を使います。"
+
 #: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/quick_switcher.cpp
 msgid "Conversations"
 msgstr "会話"
@@ -1449,7 +1505,7 @@ msgstr "%1: お知らせ、デプロイは15時に行われます"
 msgid "%1 started a huddle"
 msgstr "%1さんがハドルを開始しました"
 
-#: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/huddle_banner.cpp src/app/screens/shell/shell_notify.cpp
+#: src/app/screens/settings/settings_dialog.cpp src/app/screens/shell/huddle_banner.cpp src/app/screens/shell/shell_notify.cpp src/app/slack/slack_json.cpp
 msgid "Join"
 msgstr "参加"
 
@@ -1529,7 +1585,7 @@ msgstr "母国語:"
 msgid "Connect"
 msgstr "接続"
 
-#: src/app/screens/settings/settings_pages.cpp
+#: src/app/screens/settings/settings_pages.cpp src/app/screens/shell/composer_popups.cpp
 msgid "Edit"
 msgstr "編集"
 
@@ -2068,6 +2124,23 @@ msgid "Canvas deletion failed: %1"
 msgstr "canvasの削除に失敗しました: %1"
 
 #: src/app/screens/shell/channel_dialogs.cpp
+msgid "New group DM"
+msgstr "グループDMを作成"
+
+#: src/app/screens/shell/channel_dialogs.cpp
+msgid "Search for people"
+msgstr "メンバーを検索"
+
+#: src/app/screens/shell/channel_dialogs.cpp src/app/screens/shell/profile_card.cpp src/app/screens/shell/saved_page.cpp
+msgid "Message"
+msgstr "メッセージ"
+
+#: src/app/screens/shell/channel_dialogs.cpp
+msgid "%n person"
+msgid_plural "%n people"
+msgstr[0] "%n人"
+
+#: src/app/screens/shell/channel_dialogs.cpp
 msgid "Search for channels"
 msgstr "チャンネルを検索"
 
@@ -2082,10 +2155,6 @@ msgstr "チャンネル"
 #: src/app/screens/shell/channel_dialogs.cpp src/app/screens/shell/quick_switcher.cpp
 msgid "People"
 msgstr "メンバー"
-
-#: src/app/screens/shell/channel_dialogs.cpp
-msgid "Search for people"
-msgstr "メンバーを検索"
 
 #: src/app/screens/shell/channel_dialogs.cpp src/app/screens/shell/sidebar.cpp
 msgid "Create a channel"
@@ -2298,6 +2367,10 @@ msgstr "表示テキスト"
 #: src/app/screens/shell/composer_popups.cpp
 msgid "Insert"
 msgstr "挿入"
+
+#: src/app/screens/shell/composer_popups.cpp
+msgid "Unlink"
+msgstr "リンクを解除"
 
 #: src/app/screens/shell/composer_popups.cpp
 msgid "Send at"
@@ -2578,10 +2651,6 @@ msgstr "アプリ"
 #: src/app/screens/shell/profile_card.cpp
 msgid "%1 local time"
 msgstr "現地時間 %1"
-
-#: src/app/screens/shell/profile_card.cpp src/app/screens/shell/saved_page.cpp
-msgid "Message"
-msgstr "メッセージ"
 
 #: src/app/screens/shell/quick_switcher.cpp
 msgid "Unknown channel"
@@ -3511,6 +3580,10 @@ msgstr[0] "Slackがリクエストをレート制限しています (%1) — %n 
 msgid "Couldn't change the sidebar sections: %1"
 msgstr "サイドバーのセクションを変更できませんでした: %1"
 
+#: src/app/slack/slack_json.cpp
+msgid "(A %1 block msga can't show yet)"
+msgstr "（msgaではまだ表示できない%1ブロック）"
+
 #: src/app/update/updater.cpp
 msgid "Cannot write update to %1"
 msgstr "%1にアップデートを書き込めません"
@@ -3538,6 +3611,135 @@ msgstr "バージョンマニフェストを解析できませんでした。"
 #: src/app/update/updater.cpp
 msgid "Downloaded update is corrupt (checksum mismatch)."
 msgstr "ダウンロードした更新ファイルが破損しています（チェックサム不一致）。"
+
+#~ msgid "status"
+#~ msgstr "状況"
+
+#~ msgid "Couldn't stop “%1”: its process wasn't found."
+#~ msgstr "「%1」を停止できませんでした：プロセスが見つかりません。"
+
+#~ msgid "Claude Code runs on your computer, outside msga's sandbox, and this Flatpak's access to it is turned off. Allow \"org.freedesktop.Flatpak\" and \"All system files\" for msga in Flatseal (or run `flatpak override --user --talk-name=org.freedesktop.Flatpak --filesystem=host com.nisdos.msga`), then restart msga."
+#~ msgstr "Claude Code は msga のサンドボックスの外、このコンピューター上で動作しますが、この Flatpak からのアクセスはオフになっています。Flatseal で msga に「org.freedesktop.Flatpak」と「All system files」を許可して（または `flatpak override --user --talk-name=org.freedesktop.Flatpak --filesystem=host com.nisdos.msga` を実行して）、msga を再起動してください。"
+
+#~ msgid "The connection was closed."
+#~ msgstr "接続が閉じられました。"
+
+#~ msgid "ssh isn't installed on this computer."
+#~ msgstr "このコンピューターには ssh がインストールされていません。"
+
+#~ msgid "msga on %1 is a version this one can't work with. Install the same msga version there."
+#~ msgstr "%1 の msga はこの msga と組み合わせて使えないバージョンです。同じバージョンの msga をそちらにインストールしてください。"
+
+#~ msgid "Couldn't connect to %1: %2"
+#~ msgstr "%1 に接続できませんでした: %2"
+
+#~ msgid "It stopped answering."
+#~ msgstr "応答がなくなりました。"
+
+#~ msgid "Lost the connection to %1."
+#~ msgstr "%1 との接続が切れました。"
+
+#~ msgid "Runs on"
+#~ msgstr "実行場所"
+
+#~ msgid "This computer"
+#~ msgstr "このコンピューター"
+
+#~ msgid "Another computer over SSH"
+#~ msgstr "SSH で接続する別のコンピューター"
+
+#~ msgid "SSH destination"
+#~ msgstr "SSH の接続先"
+
+#~ msgid "user@server"
+#~ msgstr "user@server"
+
+#~ msgid "msga on the server"
+#~ msgstr "サーバー上の msga"
+
+#~ msgid "Optional: its path there"
+#~ msgstr "任意: サーバー上のパス"
+
+#~ msgid "msga runs there as a relay over ssh, which must log in without a password (a key or an agent). Install the same msga version on the server."
+#~ msgstr "msga は ssh 経由でそちらでリレーとして動きます。ssh はパスワードなし (鍵またはエージェント) でログインできる必要があります。サーバーには同じバージョンの msga をインストールしてください。"
+
+#~ msgid "Apply"
+#~ msgstr "適用"
+
+#~ msgid "Enter the SSH destination first."
+#~ msgstr "先に SSH の接続先を入力してください。"
+
+#~ msgid "Background jobs"
+#~ msgstr "バックグラウンドジョブ"
+
+#~ msgid "%n running"
+#~ msgid_plural "%n running"
+#~ msgstr[0] "%n件実行中"
+
+#~ msgid "%n failed"
+#~ msgid_plural "%n failed"
+#~ msgstr[0] "%n件失敗"
+
+#~ msgid "%n done"
+#~ msgid_plural "%n done"
+#~ msgstr[0] "%n件完了"
+
+#~ msgid "Stop background job"
+#~ msgstr "バックグラウンドジョブを停止"
+
+#~ msgid ""
+#~ "Stop “%1”? The session is told that it was stopped.\n"
+#~ "A job that writes files (a build, a migration) may leave them half-done."
+#~ msgstr ""
+#~ "「%1」を停止しますか？停止したことはセッションに伝えられます。\n"
+#~ "ファイルを書き込むジョブ（ビルド、マイグレーションなど）は途中の状態のまま残ることがあります。"
+
+#~ msgid "Stop job"
+#~ msgstr "ジョブを停止"
+
+#~ msgid "done · %1"
+#~ msgstr "完了 · %1"
+
+#~ msgid "failed · exit code %1"
+#~ msgstr "失敗 · 終了コード %1"
+
+#~ msgid "stopped"
+#~ msgstr "停止"
+
+#~ msgid "Stop this background job"
+#~ msgstr "このバックグラウンドジョブを停止"
+
+#~ msgid "Reported by %1"
+#~ msgstr "%1による報告"
+
+#~ msgid "done"
+#~ msgstr "完了"
+
+#~ msgid "failed"
+#~ msgstr "失敗"
+
+#~ msgid "running"
+#~ msgstr "実行中"
+
+#~ msgid "done in %1"
+#~ msgstr "%1で完了"
+
+#~ msgid "failed, exit code %1"
+#~ msgstr "失敗、終了コード %1"
+
+#~ msgid "%n background job"
+#~ msgid_plural "%n background jobs"
+#~ msgstr[0] "%n件のバックグラウンドジョブ"
+
+#~ msgid "%n more background job"
+#~ msgid_plural "%n more background jobs"
+#~ msgstr[0] "他%n件のバックグラウンドジョブ"
+
+#~ msgid "Folder on %1"
+#~ msgstr "%1 のフォルダー"
+
+#~ msgid "/home/you/project"
+#~ msgstr "/home/you/project"
 
 #~ msgid "Yes, and don't ask again for %1 commands in %2"
 #~ msgstr "はい、%2 での %1 コマンドは今後確認しない"
@@ -3664,9 +3866,6 @@ msgstr "ダウンロードした更新ファイルが破損しています（チ
 
 #~ msgid "Background"
 #~ msgstr "バックグラウンド"
-
-#~ msgid "Ended"
-#~ msgstr "終了済み"
 
 #~ msgid "Interactive, in a terminal"
 #~ msgstr "対話型（ターミナル）"
@@ -4521,3 +4720,9 @@ msgstr "ダウンロードした更新ファイルが破損しています（チ
 #~ "Microsoft Teamsアプリがまだ設定されていません。\n"
 #~ "\n"
 #~ "設定 → システムを開いて「Microsoft Teams」を探し、EntraアプリのクライアントIDを貼り付けてください。msgaを自分でビルドしている場合は、代わりに credentials.cmake に MSGA_TEAMS_CLIENT_ID として記入して再ビルドしてください。"
+
+#~ msgid "When a message is sent, \":)\" becomes 🙂 — the message box keeps what you typed."
+#~ msgstr "送信するときに「:)」は「🙂」になります（入力欄は入力したまま）。"
+
+#~ msgid "\":)\" goes out as \"🙂\": when the message is sent, not as you type."
+#~ msgstr "「:)」は送信のときに「🙂」になります（入力中は変わりません）。"

@@ -8,6 +8,7 @@
 #pragma once
 
 #include "model/backend.h"
+#include "model/backend_slot.h"
 #include "model/store.h"
 #include "model/store_slot.h"
 #include "ui/ui.h"
@@ -36,12 +37,14 @@ class ImageCache;   // app/screens/messages/image_cache.h (decoded, scaled, LRU-
 class RemoteImages; // app/screens/common/remote_images.h (downloads + their disk cache)
 
 struct Context {
-    ui::App         &app;
+    ui::App           &app;
     // The open workspace's Store (store() reads it). Observe through the
     // slot itself: a workspace switch moves those observers along.
-    model::StoreSlot store;
-    Backend         &backend;
-    ImageCache      &images;
+    model::StoreSlot   store;
+    // The open workspace's backend (backend() calls it). Signing in, out or
+    // switching workspaces points it at another one.
+    model::BackendSlot backend;
+    ImageCache        &images;
 
     // Navigation requests any screen may make; the shell implements them.
     std::function<void(ConvRef)>                   openConversation;
@@ -71,6 +74,10 @@ struct Context {
     std::function<void(std::vector<std::string> paths, bool thread)> attachFiles;
     // Settings → Link previews (the shell sets it and rebuilds the rows).
     bool                                                             linkPreviews  = true;
+    // Settings → Smileys: a typed ":)" becomes an emoji as the word ends, the
+    // pairs being smileyMap (mrkdwn/smileys.h; empty = the usual set).
+    bool                                                             smileyToEmoji = true;
+    std::string                                                      smileyMap;
     // Settings → Threads "Inline": a thread's replies open under its message
     // in the list instead of the side panel (the shell rebuilds the rows).
     bool                                                             threadsInline = false;

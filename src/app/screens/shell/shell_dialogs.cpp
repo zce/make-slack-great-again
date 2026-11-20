@@ -451,7 +451,7 @@ public:
           _workspaces(std::move(workspaces)) {
         // The message's workspace: the open one. Its own backend reads its
         // files (not the screens' proxy, which follows the next switch).
-        model::Backend *srcBackend = &ctx.backend;
+        model::Backend *srcBackend = &ctx.backend();
         int             at         = -1;
         for (size_t i = 0; i < _workspaces.size(); ++i)
             if (_workspaces[i].store == &ctx.store()) {
@@ -459,7 +459,7 @@ public:
                 at         = int(i);
             }
         if (at < 0) { // the demo, tests: the open workspace alone
-            _workspaces = {ForwardWorkspace{{}, {}, &ctx.store(), &ctx.backend, {}}};
+            _workspaces = {ForwardWorkspace{{}, {}, &ctx.store(), &ctx.backend(), {}}};
             at          = 0;
         }
         _src = contextFor(ctx, ctx.store(), *srcBackend);
@@ -1329,7 +1329,7 @@ Popup *showRenameDialog(screens::Context &ctx, Window &w, ConvRef c) {
     save->onClick = [raw, field, &ctx, c] {
         std::string name(str::trim(field->text()));
         raw->accept();
-        ctx.backend.setLocalName(c, std::move(name));
+        ctx.backend().setLocalName(c, std::move(name));
     };
     field->onReturn = save->onClick;
     w.showPopup(std::move(d));
@@ -1431,9 +1431,9 @@ Popup *showSectionDialog(screens::Context &ctx, Window &w, const std::string &id
         std::string e = *emoji;
         raw->accept();
         if (id.empty())
-            ctx.backend.createSection(std::move(name), std::move(e), first);
+            ctx.backend().createSection(std::move(name), std::move(e), first);
         else
-            ctx.backend.updateSection(id, std::move(name), std::move(e));
+            ctx.backend().updateSection(id, std::move(name), std::move(e));
     };
     field->onSubmit = [save] { return save->onClick(), true; };
     w.showPopup(std::move(d));
@@ -1456,7 +1456,7 @@ Popup *showDeleteSectionDialog(screens::Context &ctx, Window &w, const std::stri
         themed(C::FormText)
     );
     Dialog *raw   = d.get();
-    d->onAccepted = [&ctx, id] { ctx.backend.deleteSection(id); };
+    d->onAccepted = [&ctx, id] { ctx.backend().deleteSection(id); };
     w.showPopup(std::move(d));
     return raw;
 }

@@ -56,6 +56,11 @@ public:
     void setNotifyLevel(model::ConvRef conv, model::NotifyLevel level) override;
     void leave(model::ConvRef conv) override;
     void openDm(model::UserRef user, std::function<void(model::ConvRef)> done) override;
+    // The group DM of exactly those people: reopened if the Store knows it,
+    // else created. One person asks openDm.
+    void openDmGroup(
+        const std::vector<model::UserRef> &users, std::function<void(model::ConvRef)> done
+    ) override;
     void joinChannel(model::ConvRef conv, ConvDone done) override;
     // A new, empty channel with me as its only member.
     void createChannel(std::string name, bool isPrivate, ConvDone done) override;
@@ -137,7 +142,6 @@ public:
 private:
     enum class ConvFlag : uint8_t { Starred, Muted, Notify, Member };
     void           setConvFlag(model::ConvRef conv, ConvFlag f, int v);
-    void           setMessageFlag(model::ConvRef conv, model::Ts ts, bool pinFlag, bool on);
     void           later(int ms, std::function<void()> fn);
     model::Ts      nextTs();
     void           scheduleAutoReply(model::ConvRef conv, model::Ts thread);

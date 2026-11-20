@@ -102,6 +102,28 @@ void RtmPresence::noteActivity() {
     sendTickle(false);
 }
 
+void RtmPresence::setPresenceSubs(std::vector<std::string> ids) {
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    if (ids == _subs)
+        return;
+    _subs = std::move(ids);
+    sendPresenceSub();
+}
+
+void RtmPresence::sendPresenceSub() {
+    if (_state != Link::Active || !connected() || _subs.empty())
+        return;
+    std::string frame = "{\"type\":\"presence_sub\",\"ids\":[";
+    for (size_t i = 0; i < _subs.size(); ++i) {
+        if (i)
+            frame += ',';
+        json::escapeString(frame, _subs[i]);
+    }
+    frame += "]}";
+    _ws->sendText(frame);
+}
+
 void RtmPresence::ensureHolding() {
     if (!holding() || _unavailable || _connecting || _reconnectTimer)
         return;
@@ -218,7 +240,8 @@ void RtmPresence::onText(const std::string &text) {
     // hello/pong/error control frames; message delivery stays with polling.
     const std::string_view t(text);
     if (t.find("hello") == t.npos && t.find("pong") == t.npos &&
-        t.find("error") == t.npos && t.find("user_typing") == t.npos)
+        t.find("error") == t.npos && t.find("user_typing") == t.npos &&
+        t.find("presence_change") == t.npos)
         return;
     json::Document doc;
     if (!doc.parse(std::string_view(text), nullptr))
@@ -231,7 +254,12 @@ void RtmPresence::onText(const std::string &text) {
             stopTimer(_tickleTimer);
             _tickleTimer = _app.addTimer(_t.alwaysTickleMs, true, [this] { sendTickle(true); });
         }
-        sendTickle(true); // active at once, not at the first input
+        sendTickle(true);  // active at once, not at the first input
+        sendPresenceSub(); // a new socket subscribes to nobody
+        return;
+    }
+    if (type == "presence_change") {
+        onPresenceChange(doc.root());
         return;
     }
     if (type == "pong") {
@@ -298,6 +326,22 @@ void RtmPresence::sendTickle(bool force) {
         return;
     _lastTickle = now;
     _ws->sendText("{\"type\":\"tickle\"}");
+}
+
+void RtmPresence::onPresenceChange(const json::Value &frame) {
+    const std::string_view presence = frame["presence"].str();
+    if (presence.empty() || !onPresence)
+        return;
+    const bool               active = presence == "active";
+    std::vector<std::string> ids;
+    if (const std::string_view one = frame["user"].str(); !one.empty())
+        ids.emplace_back(one);
+    for (const json::Value u : frame["users"])
+        if (!u.str().empty())
+            ids.emplace_back(u.str());
+    auto fn = onPresence;
+    for (const std::string &id : ids)
+        fn(id, active);
 }
 
 void RtmPresence::onIdle() {

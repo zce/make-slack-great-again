@@ -25,7 +25,6 @@
 #include "app/identity.h"
 #include "app/llm/service.h"
 #include "app/media/audio_player.h"
-#include "app/model/backend_proxy.h"
 #include "app/model/null_backend.h"
 #ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
@@ -74,20 +73,20 @@
 #include <string>
 #include <string_view>
 
-#if defined(MSGA_DEMO) && (defined(__linux__) || defined(__APPLE__))
+#if defined(MSGA_DEMO) && (defined(MSGA_FREEDESKTOP) || defined(__APPLE__))
 #include <cerrno>
 #include <csignal>
 #include <dirent.h>
 #include <ftw.h>
 #include <unistd.h>
 #endif
-#if (defined(MSGA_ASAN) || defined(MSGA_DEV_DIAG)) && !defined(_WIN32)
+#if (defined(MSGA_ASAN) || defined(MSGA_DEV_DIAG)) && !defined(_WIN32) && !defined(MSGA_PORT)
 #include <csignal>
 #endif
 
 namespace {
 
-#if defined(MSGA_ASAN) && !defined(_WIN32)
+#if defined(MSGA_ASAN) && !defined(_WIN32) && !defined(MSGA_PORT)
 // ASan builds (scripts/run-asan.sh): Ctrl+C / SIGTERM quit the app normally,
 // so LeakSanitizer gets to print its report at exit.
 volatile std::sig_atomic_t gQuitSignal = 0;
@@ -108,7 +107,7 @@ volatile std::sig_atomic_t gStatsSignal = 0;
 // - Before the platform starts: it reads all of these on first use.
 // - Keyed by pid, not a fixed name, so parallel demo runs don't collide.
 // - Stale dirs (pid no longer running) are GC'd here, not left to pile up.
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(MSGA_FREEDESKTOP) || defined(__APPLE__)
 bool wipeDir(const std::string &dir) {
     return nftw(
                dir.c_str(),
@@ -138,7 +137,7 @@ void gcStaleDemoState(const std::string &tmp, std::string_view prefix) {
 #endif
 
 bool isolateDemoState(std::string *error) {
-#if !defined(__linux__) && !defined(__APPLE__)
+#if !defined(MSGA_FREEDESKTOP) && !defined(__APPLE__)
     *error = "demo mode redirects HOME/XDG_* and is Linux/macOS-only for now";
     return false;
 #else
@@ -179,7 +178,7 @@ bool isolateDemoState(std::string *error) {
 }
 
 std::string demoInstanceKey() {
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(MSGA_FREEDESKTOP) || defined(__APPLE__)
     return str::concat({identity::instanceKey(), "-demo-", str::number(getpid())});
 #else
     return str::concat({identity::instanceKey(), "-demo"});
@@ -210,9 +209,27 @@ bool parseNotificationClick(std::string_view s, uint64_t *id, std::string *actio
     return *id != 0;
 }
 
+#ifdef MSGA_FLATPAK
+// The sandbox's /tmp is its own, which no host program sees: the browser
+// signing in to Slack needs a throwaway profile both sides can name.
+// Temporary files go under the app's cache folder instead, whose path is the
+// same on the host.
+void useHostVisibleTemp() {
+    const char *cache = std::getenv("XDG_CACHE_HOME");
+    if (!cache || !*cache)
+        return;
+    const std::string tmp = file::join(cache, "tmp");
+    if (file::makeDirs(tmp))
+        setenv("TMPDIR", tmp.c_str(), 1);
+}
+#endif
+
 } // namespace
 
 int main(int argc, char **argv) {
+#ifdef MSGA_FLATPAK
+    useHostVisibleTemp();
+#endif
 #ifdef MSGA_DEMO
     std::string demo;
 #else
@@ -384,12 +401,12 @@ int main(int argc, char **argv) {
     app->setUserTextScale(settings.fontScale());
     settings.applyPalettes();
 
-    // The demo workspace, or the signed-in one (Accounts swaps it in behind
-    // the proxy the screens hold).
-    model::Store        store;
-    model::NullBackend  noWorkspace(store);
-    model::BackendProxy backend(store, noWorkspace);
-    net::Client         client(pa);
+    // The demo workspace, or the signed-in one (Accounts points the screens'
+    // backend at it, ctx.backend).
+    model::Store       store;
+    model::NullBackend noWorkspace(store);
+    model::Backend    *backend = &noWorkspace;
+    net::Client        client(pa);
     // Pictures and the update's download on a worker pool of their own, so
     // a screenful of avatars never holds up the workspace's API calls.
     net::Client         transfers(pa);
@@ -413,7 +430,7 @@ int main(int argc, char **argv) {
     if (!demo.empty()) {
         demoBackend.emplace(store, pa);
         demoBackend->setFixture(demo, 0);
-        backend.setTarget(*demoBackend);
+        backend = &*demoBackend;
     }
     const bool demoMode = demoBackend.has_value();
 #else
@@ -429,7 +446,7 @@ int main(int argc, char **argv) {
     alignas(16) static char noCache[16];
     screens::ImageCache    &imageRef = *reinterpret_cast<screens::ImageCache *>(noCache);
 #endif
-    screens::Context ctx{*app, store, backend, imageRef, {}, {}, {}, {}, {}};
+    screens::Context ctx{*app, store, *backend, imageRef, {}, {}, {}, {}, {}};
     ctx.remote = &remote;
     // The AI providers (Settings → AI assistance; the shell keeps them in step).
     llm::Service ai(pa);
@@ -451,7 +468,7 @@ int main(int argc, char **argv) {
     desc.title   = "MSGA";
     desc.appId   = appId;
     desc.wmClass = "MSGA"; // WM_CLASS res_class: the application name
-#ifdef __linux__
+#ifdef MSGA_FREEDESKTOP
     // The logo for the X11 _NET_WM_ICON, at 16 to 256 px.
     for (int n : {16, 20, 24, 32, 48, 64, 128, 256}) {
         gfx::Bitmap  b(n, n);
@@ -560,7 +577,6 @@ int main(int argc, char **argv) {
             win,
             settings,
             [&sh] { sh.saveSettingsSoon(); },
-            backend,
             noWorkspace,
             client,
             auth::WorkspaceStore::defaultPath(pa)
@@ -683,7 +699,7 @@ int main(int argc, char **argv) {
     // re-arms its deadline every second; if the loop wedges, it fires.
     if (watchdog)
         app->addTimer(1000, true, [] { crash::heartbeat(); });
-#if defined(MSGA_ASAN) && !defined(_WIN32)
+#if defined(MSGA_ASAN) && !defined(_WIN32) && !defined(MSGA_PORT)
     std::signal(SIGINT, [](int) { gQuitSignal = 1; });
     std::signal(SIGTERM, [](int) { gQuitSignal = 1; });
     app->addTimer(250, true, [&] {

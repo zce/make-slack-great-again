@@ -125,6 +125,9 @@ public:
     void moveToSection(model::ConvRef conv, const std::string &id) override;
     void moveSection(const std::string &id, int step) override;
     void openDm(model::UserRef user, std::function<void(model::ConvRef)> done) override;
+    void openDmGroup(
+        const std::vector<model::UserRef> &users, std::function<void(model::ConvRef)> done
+    ) override;
     void joinChannel(model::ConvRef conv, ConvDone done) override;
     void createChannel(std::string name, bool isPrivate, ConvDone done) override;
     void loadChannelDirectory() override;
@@ -213,6 +216,8 @@ public:
     void                                     noteUserActivity() override;
     void                                     setWindowVisible(bool visible) override;
     RtmPresence                             *presenceLinkForTest() const; // null: OAuth
+    // The wall clock nowSecs() reads (0: the real one).
+    void setNowSecsForTest(int64_t secs) { _nowSecsForTest = secs; }
     // readCall, for the tests of the lanes.
     void readCallForTest(std::string method, std::string form, ApiDone done, bool background) {
         readCall(std::move(method), std::move(form), std::move(done), background);
@@ -252,6 +257,9 @@ public:
     // Re-poll my presence snapshot (users.getPresence: manual_away, online…);
     // `then` runs once it answered (not after ~SlackBackend).
     void               refreshSelfPresence(std::function<void()> then);
+    // Users whose presence only the presence link can bring (Slack Connect:
+    // users.getPresence answers user_not_found); no-op without the link.
+    void               subscribePresence(std::vector<std::string> ids);
 
     plat::App                   &app() { return _app; }
     net::Client                 &client() { return _client; }
@@ -287,6 +295,10 @@ private:
     // Merges a conversation the server just described (channel_created,
     // conversations.info) keeping what only this client knows.
     model::ConvRef       mergeConversation(model::Conversation fresh);
+    // Merges a user the server just described (users.list, users.info,
+    // user_change) keeping presence and DND: polled separately, never in
+    // the user object. The caller notifies (usersChanged).
+    model::UserRef       mergeUser(model::User fresh);
     void                 reloadConversations();
     void                 backfillOpen(); // the open chat's head page, now
     void                 reloadUsergroups();
@@ -356,6 +368,12 @@ private:
     // `done`, which also puts a failure on the error banner as tr(what) with
     // the re-auth hint (the profile and photo errors).
     Done bannerOnFailure(const char *what, Done done);
+    // conversations.open for `users` (comma-separated ids): the DM or group
+    // DM it answers, reopened, or `fresh` with that id when the roster lacks
+    // it; a failure goes to onError and done(kNoConv) (slack_actions.cpp).
+    void openConversation(
+        std::string users, model::Conversation fresh, std::function<void(model::ConvRef)> done
+    );
     // A reminder was set or moved here: the alarm re-arms (slack_backend.cpp).
     void rearmReminders();
     // cancelScheduled's calls (slack_actions.cpp): a session's draft (retry:
@@ -379,7 +397,8 @@ private:
     std::unique_ptr<net::Client>       _transfers;
     net::Client                       &transfers();
     std::vector<std::shared_ptr<Done>> _downloads; // downloadFile's, until answered
-    bool                               _authLost = false;
+    bool                               _authLost       = false;
+    int64_t                            _nowSecsForTest = 0;
     // The viewer's muted conversations, from users.prefs.get /
     // client.userBoot's muted_channels (the web client's own list; the
     // conversation object carries no per-user mute). _mutedKnown once Slack

@@ -46,13 +46,17 @@ struct User {
     std::string avatar;      // local path or URL
     std::string statusEmoji; // shortcode without colons
     std::string statusText;
-    int32_t     tzOffset    = 0; // seconds east of UTC
-    bool        hasTz       = false;
-    bool        active      = false; // presence
-    bool        bot         = false;
-    bool        admin       = false;
-    bool        owner       = false;
-    bool        dnd         = false;
+    // When the status ends (epoch secs, 0 = never). The service clears it
+    // then but tells nobody outside the user's own org (Slack Connect):
+    // Store::clearEndedStatuses drops it here.
+    int64_t     statusExpiry = 0;
+    int32_t     tzOffset     = 0; // seconds east of UTC
+    bool        hasTz        = false;
+    bool        active       = false; // presence
+    bool        bot          = false;
+    bool        admin        = false;
+    bool        owner        = false;
+    bool        dnd          = false;
     // Interned from a reference (mention, reaction) before the roster knew
     // them; a later addUser() fills the record in place.
     bool        placeholder = false;
@@ -179,7 +183,7 @@ struct Button {
     // pressed; the others are pressed with their block and value.
     std::string url, blockId, value;
     // The attachment it belongs to, 1-based (drawn in that card, as Slack
-    // does); 0 = the message's own.
+    // does); 0 = the message's own; -1 = its call card's (Call).
     int32_t     attachment = 0;
     bool        operator==(const Button &) const;
 };
@@ -191,6 +195,20 @@ struct Huddle {
     int64_t              startSec = 0, endSec = 0;
     bool                 ended = false;
     bool                 operator==(const Huddle &) const;
+};
+
+// A Calls API call (Zoom's "/zoom", …), drawn as Slack's call card; its
+// Join is a link Button with attachment -1 (drawn in the card).
+struct Call {
+    std::string          id; // call_id; "" = no call
+    // Each may be missing (another Calls provider than Zoom): the card leaves
+    // its part out ("Call" for no name).
+    std::string          name, displayId, icon;
+    std::vector<UserRef> people; // live: in it now; ended: everyone who was
+    int64_t              startSec = 0, endSec = 0;
+    bool                 ended       = false;
+    bool                 peopleKnown = false; // the call said who (else no "Waiting…")
+    bool                 operator==(const Call &) const;
 };
 
 // The parts most messages don't have.
@@ -211,6 +229,7 @@ struct MessageExtras {
     // Only on local outgoing copies; kept with the cached message for a faithful Retry.
     std::string             sendBlocks;
     bool                    sendBroadcast = false;
+    Call                    call;   // a call block's call
 
     // Out of line (store.cpp): the implicit ones would inline a dozen string
     // and vector destructors into every function that drops a message.
@@ -267,12 +286,12 @@ struct Message {
 };
 
 struct Thread {
-    Ts                   root = 0;
-    std::vector<Message> replies; // oldest first
-    // A permalink can open a thread older than the channel's loaded history.
-    // Keep its fetched parent here rather than splicing it into channel history
-    // and corrupting the cursor used to load earlier channel pages.
-    std::unique_ptr<Message> parent;
+    Ts                       root = 0;
+    std::vector<Message>     replies; // oldest first
+    // The root itself when Conversation::messages doesn't hold it (older than
+    // the loaded history): conversations.replies brings it with the replies.
+    // Never in `messages` -- that would leave a gap in the history list.
+    std::unique_ptr<Message> detachedRoot;
 };
 
 // A new metadata field also goes into store.cpp's sameMeta (addConversation

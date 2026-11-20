@@ -42,12 +42,11 @@ bool transient(const std::string &e) {
     return isTransportError(e) || isTransientSlackError(e) || e == "fatal_error";
 }
 
-void addParam(std::string &form, std::string_view k, std::string_view v) {
-    if (!form.empty())
-        form += '&';
-    form += net::percentEncode(k);
-    form += '=';
-    form += net::percentEncode(v);
+// Slack entity-escapes bare & < > in stored text; unescape both sides so a
+// sent text compares equal to its stored form.
+std::string unescaped(std::string_view t) {
+    const std::string out = mrkdwn::decodeEntities(t);
+    return std::string(str::trim(out));
 }
 
 // The pending copy's file card, from the local file (images preview
@@ -201,10 +200,12 @@ struct SlackBackend::Write {
     void later(int ms, std::function<void()> fn) { timers.after(ms, std::move(fn)); }
     // `done` later, never from inside the call (the Backend contract).
     void post(std::function<void()> fn) { model::postWhileAlive(b._app, b._alive, std::move(fn)); }
-    // A Done answered later, without a call (nothing to do, or refused here).
-    void answer(Done done, bool ok, std::string err = {}) {
+    // `done` answered later with `args`, without a call (nothing to do, or
+    // refused here); a null one is never called.
+    template <class Fn, class... Args>
+    void answer(Fn done, Args... args) {
         if (done)
-            post([done = std::move(done), ok, err = std::move(err)] { done(ok, err); });
+            post([done = std::move(done), ... args = std::move(args)] { done(args...); });
     }
 
     // A request outside the form-encoded Web API (an upload's bytes, a
@@ -750,16 +751,8 @@ struct SlackBackend::Write {
     // Only an exact client_msg_id is evidence that this request was accepted.
     // No hit can mean pagination, indexing lag, or a Slack reply without ids.
     void reconcile(SendPtr st) {
-        std::string form;
-        addParam(form, "channel", b.convId(st->conv));
-        addParam(form, "oldest", st->oldest);
-        addParam(form, "limit", "100");
-        if (st->thread)
-            addParam(form, "ts", model::formatTs(st->thread));
-        b.api(
-            st->thread ? "conversations.replies" : "conversations.history",
-            std::move(form),
-            [this, st](const json::Document &doc, const std::string &err) {
+        scanRecent(
+            st, st->oldest, "100", [this, st](const json::Document &doc, const std::string &err) {
                 if (err == "cancelled")
                     return;
                 if (err.empty())
@@ -773,6 +766,22 @@ struct SlackBackend::Write {
                     }
                 retryOrFail(st, st->lastError);
             }
+        );
+    }
+
+    // The recent messages a send is looked for in: the conversation's (or
+    // the thread's) after `oldest`, up to `limit`.
+    void scanRecent(const SendPtr &st, std::string_view oldest, const char *limit, ApiDone done) {
+        std::string form;
+        addParam(form, "channel", b.convId(st->conv));
+        addParam(form, "oldest", oldest);
+        addParam(form, "limit", limit);
+        if (st->thread)
+            addParam(form, "ts", model::formatTs(st->thread));
+        b.api(
+            st->thread ? "conversations.replies" : "conversations.history",
+            std::move(form),
+            std::move(done)
         );
     }
 
@@ -1052,9 +1061,7 @@ struct SlackBackend::Write {
         const model::Store::SavedItem *item      = store().findSaved(conv, ts);
         const bool                     wasListed = item != nullptr;
         const int64_t wasAt = item ? item->savedAt : 0, wasItemDue = item ? item->due : 0;
-        store().updateMessage(conv, ts, [on](model::Message &x) { x.saved = on; });
-        store().setReminderAt(conv, ts, on ? due : 0);
-        store().setSavedItem(conv, ts, on, on ? due : 0);
+        store().setSaved(conv, ts, on, due);
         std::string form = net::formEncode(
             {{"item_type", "message"}, {"item_id", b.convId(conv)}, {"ts", model::formatTs(ts)}}
         );
@@ -1287,6 +1294,10 @@ void SlackBackend::editBlocks(ConvRef conv, Ts ts, std::string text, std::string
     addParam(form, "channel", convId(conv));
     addParam(form, "ts", model::formatTs(ts));
     addParam(form, "text", text);
+    // chat.update parses as "client" unless told otherwise, unlike
+    // chat.postMessage: <url|label> would come back escaped, brackets and
+    // all, as typed text (issue #173).
+    addParam(form, "parse", "none");
     // Text without blocks makes chat.update drop the message's blocks, which
     // is right for a plain edit and why a list travels again here.
     if (!blocks.empty())
@@ -1675,10 +1686,7 @@ std::string SlackBackend::threadMarkForm(ConvRef conv, Ts root, Ts ts, bool read
         form += "&read=0";
     // On Grid, as the feed found it needs: with team_id.
     if (_threadsTeamId)
-        form +=
-            "&" + net::formEncode(
-                      {{"team_id", _store.workspaceId.empty() ? _creds.teamId : _store.workspaceId}}
-                  );
+        addParam(form, "team_id", _store.workspaceId.empty() ? _creds.teamId : _store.workspaceId);
     return form;
 }
 
@@ -1708,10 +1716,7 @@ std::string SlackBackend::threadSubForm(ConvRef conv, Ts root) const {
     std::string form =
         net::formEncode({{"channel", convId(conv)}, {"thread_ts", model::formatTs(root)}});
     if (_threadsTeamId)
-        form +=
-            "&" + net::formEncode(
-                      {{"team_id", _store.workspaceId.empty() ? _creds.teamId : _store.workspaceId}}
-                  );
+        addParam(form, "team_id", _store.workspaceId.empty() ? _creds.teamId : _store.workspaceId);
     return form;
 }
 
@@ -1822,26 +1827,34 @@ void SlackBackend::leave(ConvRef conv) {
 
 void SlackBackend::openDm(model::UserRef user, std::function<void(ConvRef)> done) {
     if (user >= _store.userCount()) {
-        _write->post([done] {
-            if (done)
-                done(model::kNoConv);
-        });
+        _write->answer(std::move(done), model::kNoConv);
         return;
     }
     for (ConvRef c = 0; c < _store.conversationCount(); ++c) {
         const model::Conversation &cv = _store.conversation(c);
         if (cv.kind == model::ConvKind::Dm && cv.dmUser == user && cv.member) {
-            _write->post([done, c] {
-                if (done)
-                    done(c);
-            });
+            _write->answer(std::move(done), c);
             return;
         }
     }
     // conversations.open creates the DM or reopens a closed one.
+    model::Conversation c; // the roster refresh fills in the rest
+    c.name        = _store.user(user).name;
+    c.kind        = model::ConvKind::Dm;
+    c.dmUser      = user;
+    c.memberCount = 2;
+    openConversation(_store.user(user).id, std::move(c), std::move(done));
+}
+
+void SlackBackend::openConversation(
+    std::string users, model::Conversation fresh, std::function<void(ConvRef)> done
+) {
     api("conversations.open",
-        net::formEncode({{"users", _store.user(user).id}}),
-        [this, user, done](const json::Document &doc, const std::string &err) {
+        net::formEncode({{"users", users}}),
+        // Shared: the callback is copyable and a Conversation is not.
+        [this,
+         fresh = std::make_shared<model::Conversation>(std::move(fresh)),
+         done  = std::move(done)](const json::Document &doc, const std::string &err) {
             if (err == "cancelled")
                 return;
             const std::string id(doc.root()["channel"]["id"].str());
@@ -1850,13 +1863,8 @@ void SlackBackend::openDm(model::UserRef user, std::function<void(ConvRef)> done
                 markAlive(id);
                 found = _store.findConversation(id);
                 if (found == model::kNoConv) {
-                    model::Conversation c; // the roster refresh fills in the rest
-                    c.id          = id;
-                    c.name        = _store.user(user).name;
-                    c.kind        = model::ConvKind::Dm;
-                    c.dmUser      = user;
-                    c.memberCount = 2;
-                    found         = _store.addConversation(std::move(c));
+                    fresh->id = id;
+                    found     = _store.addConversation(std::move(*fresh));
                 } else {
                     _store.updateConversation(found, [](model::Conversation &c) {
                         c.member = true;
@@ -1864,8 +1872,8 @@ void SlackBackend::openDm(model::UserRef user, std::function<void(ConvRef)> done
                 }
             } else {
                 LOG_WARN("slack", "conversations.open: %s", err.c_str());
-                // People, "Message", /dm — the banner says why (the raw
-                // error).
+                // People, "Message", /dm, the group DM picker — the banner
+                // says why (the raw error).
                 if (onError && !err.empty())
                     onError(err);
             }
@@ -1874,14 +1882,62 @@ void SlackBackend::openDm(model::UserRef user, std::function<void(ConvRef)> done
         });
 }
 
+// A group DM: conversations.open with the whole list of people creates the
+// mpdm, or answers the one that already exists (Slack keeps one per set).
+// Me is never in the list; a single person is a DM.
+void SlackBackend::openDmGroup(
+    const std::vector<model::UserRef> &users, std::function<void(ConvRef)> done
+) {
+    std::vector<model::UserRef> members;
+    for (model::UserRef u : users)
+        if (u < _store.userCount() && u != _store.me &&
+            std::find(members.begin(), members.end(), u) == members.end())
+            members.push_back(u);
+    if (members.empty()) {
+        _write->answer(std::move(done), model::kNoConv);
+        return;
+    }
+    if (members.size() == 1) {
+        openDm(members.front(), std::move(done));
+        return;
+    }
+    // The group of exactly these people, if the roster already knows it open:
+    // no round trip, and its history is here rather than up on the server. A
+    // closed one goes to conversations.open, which reopens it.
+    for (ConvRef c = 0; c < _store.conversationCount(); ++c) {
+        const model::Conversation &cv = _store.conversation(c);
+        if (cv.kind != model::ConvKind::Group || !cv.member ||
+            cv.members.size() != members.size() + 1)
+            continue;
+        bool all = true;
+        for (model::UserRef u : members)
+            all = all && std::find(cv.members.begin(), cv.members.end(), u) != cv.members.end();
+        if (all) {
+            _write->answer(std::move(done), c);
+            return;
+        }
+    }
+    std::string ids;
+    for (model::UserRef u : members) {
+        if (!ids.empty())
+            ids += ',';
+        ids += _store.user(u).id;
+    }
+    model::Conversation c; // the roster refresh fills in the rest
+    c.kind    = model::ConvKind::Group;
+    // Slack names an mpdm "mpdm-a--b-1"; the members are what the UI shows,
+    // so the name is left to the roster too.
+    c.members = std::move(members);
+    c.members.push_back(_store.me);
+    c.memberCount = uint32_t(c.members.size());
+    openConversation(std::move(ids), std::move(c), std::move(done));
+}
+
 // conversations.join, then the channel is a member one (only the
 // membership changes; the roster is not reloaded).
 void SlackBackend::joinChannel(ConvRef conv, ConvDone done) {
     if (conv >= _store.conversationCount()) {
-        _write->post([done] {
-            if (done)
-                done(model::kNoConv, "channel_not_found");
-        });
+        _write->answer(std::move(done), model::kNoConv, "channel_not_found");
         return;
     }
     api("conversations.join",
@@ -1933,10 +1989,7 @@ void SlackBackend::createChannel(std::string name, bool isPrivate, ConvDone done
 
 void SlackBackend::loadMembers(ConvRef conv, MembersDone done) {
     if (conv >= _store.conversationCount()) {
-        _write->post([done] {
-            if (done)
-                done({}, {});
-        });
+        _write->answer(std::move(done), std::vector<model::UserRef>(), std::string());
         return;
     }
     auto ms  = std::make_shared<Write::Members>();
@@ -1989,9 +2042,10 @@ void SlackBackend::setStatus(std::string emoji, std::string text, int64_t expiry
         .endObject();
     _write->setProfile(
         p,
-        [emoji = std::move(emoji), text = std::move(text)](model::User &u) {
-            u.statusEmoji = emoji;
-            u.statusText  = text;
+        [emoji = std::move(emoji), text = std::move(text), expiry](model::User &u) {
+            u.statusEmoji  = emoji;
+            u.statusText   = text;
+            u.statusExpiry = text.empty() && emoji.empty() ? 0 : expiry;
         },
         std::move(done)
     );
@@ -2046,7 +2100,7 @@ void SlackBackend::updateProfile(
         }
     p.endObject();
     if (!any) {
-        _write->answer(std::move(done), true);
+        _write->answer(std::move(done), true, "");
         return;
     }
     _write->setProfile(
@@ -2208,10 +2262,7 @@ std::string markdownContent(std::string_view markdown) {
 void SlackBackend::loadChannelCanvas(ConvRef conv, std::function<void(std::string)> done) {
     const std::string &id = convId(conv);
     if (id.empty()) {
-        _write->post([done] {
-            if (done)
-                done({});
-        });
+        _write->answer(std::move(done), std::string());
         return;
     }
     api("conversations.info",
@@ -2320,7 +2371,7 @@ void SlackBackend::editCanvas(
     // canvases.edit takes one change per call ("no more than 1 items
     // allowed", verified by msga): sent one by one, in order.
     if (changes.empty()) {
-        _write->answer(std::move(done), true);
+        _write->answer(std::move(done), true, "");
         return;
     }
     const CanvasChange c = std::move(changes.front());
@@ -2600,10 +2651,7 @@ void SlackBackend::pressButton(ConvRef conv, Ts ts, const std::string &buttonId,
 
 void SlackBackend::loadSidebarTheme(std::function<void(SidebarTheme, std::string)> done) {
     if (!_creds.sessionAuth()) {
-        _write->post([done] {
-            if (done)
-                done({}, "not_supported");
-        });
+        _write->answer(std::move(done), SidebarTheme(), "not_supported");
         return;
     }
     api("users.prefs.get",

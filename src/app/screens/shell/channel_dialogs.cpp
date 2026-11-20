@@ -55,45 +55,136 @@ private:
     Label *_label;
 };
 
-// ── Find a channel ──────────────────────────────────────────────────────────
+// ── New group DM ───────────────────────────────────────────────────────────
 
 constexpr int kVisibleRows = 6; // the lists' height, in rows
+
+// A group DM needs two people besides me, so the rows are picks rather than
+// opens: a click toggles a row's check box and "Message" takes the set. One
+// person is a DM, which is what the People tab already does with a click.
+class GroupFinder final : public Dialog {
+public:
+    GroupFinder(
+        screens::Context                                 &ctx,
+        Avatars                                          &avatars,
+        std::function<void(const std::vector<UserRef> &)> done
+    )
+        : Dialog(tr("New group DM"), 560), _ctx(ctx), _done(std::move(done)) {
+        content()->style().spacing(12);
+        _search = content()->add<TextField>(
+            tr("Search for people"), TextField::Size::Normal, uint16_t(Icon::Search)
+        );
+        _list = content()->add<BrowseList>(avatars);
+        _list->style().height(kVisibleRows * BrowseList::kRowH).noShrink();
+        BrowseList::Options opt;
+        opt.multi = true;
+        _list->setOptions(opt);
+        _list->setItems(groupItems(ctx.store));
+        _list->onPickedChanged = [this] { refreshMessageButton(); };
+        // The people a roster load brings in land in the open list.
+        _observer = ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
+            if (ch.kind != model::ChangeKind::Roster)
+                return;
+            _list->refreshItems(groupItems(_ctx.store));
+            _list->applyFilter(_search->text());
+        });
+        _search->edit().onChange = [this] { _list->applyFilter(_search->text()); };
+        _search->edit().onKey    = [this](const Event &e) { return _list->navKey(e); };
+
+        Button *cancel = makeButton(tr("Cancel"), V::Secondary);
+        _message       = makeButton(tr("Message"), V::Primary);
+        _count         = new Label(std::string(), Font::Small, C::FormTextMuted);
+        addButtonRow(_message, cancel, _count);
+        _message->onClick = [this] { startConversation(); };
+        refreshMessageButton();
+    }
+    ~GroupFinder() override { _ctx.store.unobserve(_observer); }
+
+    BrowseList &list() { return *_list; }
+    TextField  &search() { return *_search; }
+    Button     &messageButton() { return *_message; }
+
+private:
+    // The People list without me: I am in every group DM I start.
+    static std::vector<BrowseList::Item> groupItems(const model::Store &store) {
+        std::vector<BrowseList::Item> items = peopleItems(store);
+        if (store.me != model::kNoUser) {
+            const std::string &me = store.user(store.me).id;
+            std::erase_if(items, [&me](const BrowseList::Item &it) { return it.id == me; });
+        }
+        return items;
+    }
+    void refreshMessageButton() {
+        const size_t n = _list->picked().size();
+        _message->setEnabled(n > 0);
+        _count->setText(n ? i18n::trn("%n person", "%n people", int64_t(n)) : std::string());
+        _count->setVisible(n > 0);
+    }
+    void startConversation() {
+        std::vector<UserRef> people;
+        for (const std::string &id : _list->picked())
+            if (const UserRef u = _ctx.store().findUser(id); u != model::kNoUser)
+                people.push_back(u);
+        if (people.empty())
+            return;
+        auto cb = std::move(_done);
+        accept();
+        if (cb)
+            cb(people);
+    }
+
+    screens::Context                                 &_ctx;
+    std::function<void(const std::vector<UserRef> &)> _done;
+    TextField                                        *_search   = nullptr;
+    BrowseList                                       *_list     = nullptr;
+    Button                                           *_message  = nullptr;
+    Label                                            *_count    = nullptr;
+    model::Store::ObserverId                          _observer = 0;
+};
+
+// ── Find a channel ──────────────────────────────────────────────────────────
 
 class ChannelFinder final : public Dialog {
 public:
     ChannelFinder(
-        screens::Context            &ctx,
-        Avatars                     &avatars,
-        std::function<void(ConvRef)> channel,
-        std::function<void(UserRef)> person,
-        std::function<void()>        create
+        screens::Context                                 &ctx,
+        Avatars                                          &avatars,
+        std::function<void(ConvRef)>                      channel,
+        std::function<void(UserRef)>                      person,
+        std::function<void()>                             create,
+        std::function<void(const std::vector<UserRef> &)> people
     )
-        : Dialog(std::string(), 720), _ctx(ctx), _channel(std::move(channel)),
-          _person(std::move(person)), _create(std::move(create)) {
+        : Dialog(std::string(), 720), _ctx(ctx), _avatars(avatars), _channel(std::move(channel)),
+          _person(std::move(person)), _people(std::move(people)) {
         // A bare card: its own chrome, the lists edge to edge.
         content()->style().spacing(0);
 
-        // ── Top bar: search + Create Channel + close ──
-        auto *top = content()->add<View>();
-        top->style()
-            .row()
-            .items(Align::Center)
-            .spacing(8)
-            .padding(24, 20, 24 - Dialog::kCloseInset, 16);
-        _search = top->add<TextField>(
-            tr("Search for channels"), TextField::Size::Normal, uint16_t(Icon::Search)
-        );
-        _search->style().flex(1).minW = 200;
-        auto *createBtn               = top->add<Button>(
-            tr("Create Channel"), V::Primary, Button::Form::Normal
-        ); // this casing on purpose
-        createBtn->setFocusable(false);
-        createBtn->onClick = [this] {
-            auto cb = _create;
-            reject();
-            if (cb)
-                cb();
+        // ── Top bar: search + the dialog's buttons + close ──
+        auto *top = addFinderBar(content(), 16, tr("Search for channels"), _search);
+        // The People tab's second button: a DM between several people.
+        _groupBtn =
+            top->add<Button>(tr("New group DM"), Button::Kind::Secondary, Button::Form::Normal);
+        _groupBtn->setFocusable(false);
+        _groupBtn->onClick = [this] {
+            Window *w = window();
+            if (!w)
+                return;
+            // The finder may be gone by the time Message is pressed: the
+            // group starts all the same, and only a live finder closes.
+            std::weak_ptr<int> alive = _alive;
+            auto              *d     = new GroupFinder(
+                _ctx, _avatars, [this, alive, cb = _people](const std::vector<UserRef> &users) {
+                    if (!alive.expired())
+                        reject();
+                    if (cb)
+                        cb(users);
+                }
+            );
+            w->showPopup(std::unique_ptr<Popup>(d));
+            d->search().edit().focus(); // the popup takes the focus when it shows
         };
+        // "Create Channel": this casing on purpose.
+        addFinderButton(*this, top, tr("Create Channel"), std::move(create));
         addDialogCloseButton(top)->onClick = [this] { reject(); };
 
         // ── Tab bar ──
@@ -125,7 +216,7 @@ public:
             if (_tab == 0)
                 applyFilter();
         });
-        ctx.backend.loadChannelDirectory();
+        ctx.backend().loadChannelDirectory();
 
         _search->edit().onChange = [this] { applyFilter(); };
         // The search field drives the open list: arrows move, Enter opens.
@@ -140,12 +231,14 @@ public:
             _tabs[i]->setActive(i == tab);
             _lists[i]->setVisible(i == tab);
         }
+        _groupBtn->setVisible(tab == 1 && bool(_people));
         _search->edit().setPlaceholder(
             tab == 0 ? tr("Search for channels") : tr("Search for people")
         );
         applyFilter();
     }
     TextField &search() { return *_search; }
+    Button    &groupButton() { return *_groupBtn; }
 
 private:
     // The open list only; the other one is filtered when its tab opens.
@@ -163,15 +256,18 @@ private:
             pe(u);
     }
 
-    screens::Context            &_ctx;
-    std::function<void(ConvRef)> _channel;
-    std::function<void(UserRef)> _person;
-    std::function<void()>        _create;
-    TextField                   *_search   = nullptr;
-    FinderTab                   *_tabs[2]  = {};
-    BrowseList                  *_lists[2] = {};
-    int                          _tab      = 0;
-    model::Store::ObserverId     _observer = 0;
+    screens::Context                                 &_ctx;
+    Avatars                                          &_avatars;
+    std::function<void(ConvRef)>                      _channel;
+    std::function<void(UserRef)>                      _person;
+    std::function<void(const std::vector<UserRef> &)> _people;
+    TextField                                        *_search   = nullptr;
+    Button                                           *_groupBtn = nullptr;
+    FinderTab                                        *_tabs[2]  = {};
+    BrowseList                                       *_lists[2] = {};
+    int                                               _tab      = 0;
+    model::Store::ObserverId                          _observer = 0;
+    std::shared_ptr<int>                              _alive    = std::make_shared<int>(0);
 };
 
 // ── Create a channel ────────────────────────────────────────────────────────
@@ -318,6 +414,16 @@ std::vector<BrowseList::Item> channelItems(const model::Store &store) {
     return items;
 }
 
+BrowseList::Item userItem(const model::User &u, const std::string &name) {
+    BrowseList::Item it;
+    it.id     = u.id;
+    it.title  = name;
+    it.avatar = u.avatar;
+    if (!u.name.empty() && u.name != name)
+        it.subtitle = "@" + u.name;
+    return it;
+}
+
 std::vector<BrowseList::Item> peopleItems(const model::Store &store) {
     // Strangers surface only because they share a channel with us, but
     // conversations.open rejects them: a dead end as a DM target.
@@ -338,15 +444,9 @@ std::vector<BrowseList::Item> peopleItems(const model::Store &store) {
     std::vector<BrowseList::Item> items;
     items.reserve(people.size());
     for (UserRef r : people) {
-        const model::User &u    = store.user(r);
-        const std::string &name = u.displayName.empty() ? u.name : u.displayName;
-        BrowseList::Item   it;
-        it.id     = u.id;
-        it.title  = name;
-        it.avatar = u.avatar;
-        if (!u.name.empty() && u.name != name)
-            it.subtitle = "@" + u.name;
-        it.searchKey = screens::userSearchKey(u);
+        const model::User &u  = store.user(r);
+        BrowseList::Item   it = userItem(u, u.displayName.empty() ? u.name : u.displayName);
+        it.searchKey          = screens::userSearchKey(u);
         items.push_back(std::move(it));
     }
     return items;
@@ -361,16 +461,17 @@ std::string channelName(std::string_view typed) {
 // ── Entry points ────────────────────────────────────────────────────────────
 
 Popup *showFindChannel(
-    screens::Context            &ctx,
-    Window                      &w,
-    Avatars                     &avatars,
-    int                          tab,
-    std::function<void(ConvRef)> channel,
-    std::function<void(UserRef)> person,
-    std::function<void()>        create
+    screens::Context                                 &ctx,
+    Window                                           &w,
+    Avatars                                          &avatars,
+    int                                               tab,
+    std::function<void(ConvRef)>                      channel,
+    std::function<void(UserRef)>                      person,
+    std::function<void()>                             create,
+    std::function<void(const std::vector<UserRef> &)> people
 ) {
     auto d = std::make_unique<ChannelFinder>(
-        ctx, avatars, std::move(channel), std::move(person), std::move(create)
+        ctx, avatars, std::move(channel), std::move(person), std::move(create), std::move(people)
     );
     auto *raw = d.get();
     if (tab == 1)

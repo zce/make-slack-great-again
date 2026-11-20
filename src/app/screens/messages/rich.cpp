@@ -176,7 +176,7 @@ struct Builder {
                 s.linkId = target(e.kind, e.data);
                 // One the roster doesn't list: its name is looked up once.
                 if (store.findConversation(e.data) == model::kNoConv && !store.channelName(e.data))
-                    ctx.backend.resolveChannel(e.data);
+                    ctx.backend().resolveChannel(e.data);
                 const std::string name = entityText(store, e);
                 t.append(name.empty() ? std::string(slice) : name, s);
                 break;
@@ -805,8 +805,8 @@ void copyCode(Context &ctx, const std::string &code, ui::Window *w, ui::PointF a
 
 namespace {
 
-#if defined(__linux__)
-// Whether a mail app handles mailto:. On Linux the opener reports
+#if defined(MSGA_FREEDESKTOP)
+// Whether a mail app handles mailto:. On Linux and the BSDs the opener reports
 // nothing back, so ask xdg-mime whether anything takes mailto: (once; the
 // answer is remembered). 1 = yes, 0 = no, -1 = not asked yet.
 int g_mailHandler = -1;
@@ -829,7 +829,7 @@ void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at
             ctx.openUrl(url);
         return;
     }
-#if defined(__linux__)
+#if defined(MSGA_FREEDESKTOP)
     if (g_mailHandler < 0) {
         // The query runs a process: on a worker, then the click goes on.
         auto found = std::make_shared<bool>(true);

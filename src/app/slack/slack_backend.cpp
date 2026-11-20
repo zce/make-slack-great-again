@@ -63,6 +63,8 @@ constexpr int64_t     kSavedGapMs             = 5 * 60'000; // kRemindersRefresh
 constexpr int64_t     kScheduledGapMs         = 5 * 60'000; // ones scheduled elsewhere
 constexpr int64_t     kScheduledSentSlackMs   = 15'000;     // re-list this long after one is due
 constexpr int64_t     kUsersRefreshGapMs      = 24 * 60 * 60'000;
+// Ended statuses (status_expiration): no request, only the Store's clock.
+constexpr int64_t     kStatusSweepGapMs       = 30'000;
 // A VIP list edited in another client (no realtime event reaches a session
 // workspace): rarely changed, so slower than stars and sections.
 constexpr int64_t     kVipsGapMs              = 15 * 60'000;
@@ -81,6 +83,12 @@ constexpr const char *kSubThreadReplies = "10";
 // Lost connections and gateway pages: 10 tries back off 0, 1, 2 … 60 s, about
 // four minutes in all (bounded, so a long outage surfaces as an error).
 constexpr int         kMaxUserReprobes = 20, kMaxTransientRetries = 6, kMaxTransportRetries = 10;
+// Slack Connect DM partners: no user_change ever reaches us for them, and
+// calendar statuses switch on the hour and half hour. Their profiles are read
+// again a minute past each (wall clock), up to this many per pass (the
+// longest unread first) on their own budget.
+constexpr int         kMaxPartnerReprobes = 50;
+constexpr int64_t     kReprobeSlotSecs = 30 * 60, kReprobeSlotLagSecs = 60;
 constexpr const char *kHistoryLimit            = "50";
 constexpr int64_t     kRateLimitNoticeGapMs    = 15'000;
 // A reminder more than a week overdue is marked fired without a
@@ -119,6 +127,30 @@ Ts pruneCut(std::vector<Ts> roots, size_t keep) {
         return 0;
     std::nth_element(roots.begin(), roots.end() - long(keep), roots.end());
     return roots[roots.size() - keep];
+}
+
+// A thread-keyed set's or map's key.
+const std::string &entryKey(const std::string &k) {
+    return k;
+}
+template <class V>
+const std::string &entryKey(const std::pair<const std::string, V> &kv) {
+    return kv.first;
+}
+
+// Drops the keys of `m`'s threads below pruneCut that `drop` agrees to;
+// false while it holds no more than 2 × keep.
+template <class C, class Drop>
+bool pruneThreads(C &m, size_t keep, Drop drop) {
+    if (m.size() <= 2 * keep)
+        return false;
+    std::vector<Ts> roots;
+    roots.reserve(m.size());
+    for (const auto &e : m)
+        roots.push_back(keyTs(entryKey(e)));
+    const Ts cut = pruneCut(std::move(roots), keep);
+    std::erase_if(m, [&](const auto &e) { return keyTs(entryKey(e)) < cut && drop(entryKey(e)); });
+    return true;
 }
 
 } // namespace
@@ -249,7 +281,9 @@ struct SlackBackend::Read {
     // ── VIP (users.prefs.get's vip_users: with Names at connect, then alone) ─
     int64_t   lastVips = 0;
     void      refreshVips();
-    void      applyVips(const std::vector<std::string> &ids);
+    // A users.prefs.get answer: the VIP list, then the mutes (epoch: the
+    // mute epoch when it was asked).
+    void      applyPrefs(const json::Value &prefs, uint64_t epoch);
 
     // ── Users ───────────────────────────────────────────────────────────────
     std::unordered_set<std::string>          pendingUsers, presenceUnavailable, offRoster;
@@ -267,7 +301,9 @@ struct SlackBackend::Read {
     void fetchUserIfNeeded(UserRef u);
     void fetchMissingDmUsers();
     void resolveAuthors(const std::vector<model::Message> &page);
-    void reprobeOffRoster();
+    // `partners`: the half-hourly pass, DM partners too (see
+    // kMaxPartnerReprobes); otherwise only the daily refresh.
+    void reprobeOffRoster(bool partners = false);
     void requestPresence(UserRef u, bool background);
     void pollDmPresence();
     void pollDnd(const std::vector<UserRef> &users);
@@ -347,7 +383,9 @@ struct SlackBackend::Read {
     int64_t         lastRoster = 0, lastCounts = 0, lastThreads = 0, lastFg = 0, lastBg = 0;
     int64_t         lastPresence = 0, lastSelf = 0, lastDnd = 0, lastStarred = 0;
     int64_t         lastSaved = 0, lastUsers = 0;
-    bool            visible = true; // the window shows (setWindowVisible)
+    int64_t         lastStatusSweep = 0;
+    bool            visible         = true; // the window shows (setWindowVisible)
+    int64_t         reprobeSlot     = -1;   // the half hour of the last partner re-probe
     // By ConvRef (0: none yet): the newest ts a poll saw (baselineOf), and
     // the revision of the last poll that landed.
     std::vector<Ts> pollBaseline;
@@ -653,7 +691,7 @@ void SlackBackend::Read::pageFrom(std::shared_ptr<Pager> p, std::string cursor) 
     }
     std::string form = p->form;
     if (!cursor.empty())
-        form.append(str::concat({form.empty() ? "" : "&", "cursor=", net::percentEncode(cursor)}));
+        addParam(form, "cursor", cursor);
     call(
         p->method,
         std::move(form),
@@ -687,7 +725,7 @@ std::string SlackBackend::Read::teamForm(
     std::string        f    = net::formEncode(kv);
     const std::string &team = s.workspaceId.empty() ? b._creds.teamId : s.workspaceId;
     if (!team.empty())
-        f.append(str::concat({f.empty() ? "" : "&", "team_id=", net::percentEncode(team)}));
+        addParam(f, "team_id", team);
     return f;
 }
 
@@ -929,12 +967,9 @@ void SlackBackend::Read::mergeUsers(std::vector<model::User> users) {
                 if (u.name.empty())
                     u.name = old.name;
             }
-            // Presence is polled separately (and may already have answered
-            // for a user only interned so far).
-            u.active = old.active;
-            u.dnd    = old.dnd;
         }
-        s.addUser(std::move(u));
+        // Presence may already have answered for a user only interned so far.
+        b.mergeUser(std::move(u));
     }
     s.usersChanged();
 }
@@ -1146,12 +1181,11 @@ void SlackBackend::Read::loadNames() {
                 return;
             }
             const json::Value prefs = doc.root()["prefs"];
-            applyVips(mapjson::vipUsers(prefs));
-            b.applyMutedChannels(prefs, epoch);
+            applyPrefs(prefs, epoch);
             if (namesMode != NamesMode::Service)
                 return;
             namesAsked    = true;
-            namesOverride = mapjson::namesOverride(doc.root()["prefs"]);
+            namesOverride = mapjson::namesOverride(prefs);
             applyNames();
             if (namesOverride != 0 || bootDefault)
                 return;
@@ -1214,20 +1248,19 @@ void SlackBackend::Read::refreshVips() {
         "users.prefs.get",
         {},
         [this, epoch = b._muteEpoch](const json::Document &doc, const std::string &err) {
-            if (!err.empty())
-                return;
-            const json::Value prefs = doc.root()["prefs"];
-            applyVips(mapjson::vipUsers(prefs));
-            b.applyMutedChannels(prefs, epoch);
+            if (err.empty())
+                applyPrefs(doc.root()["prefs"], epoch);
         },
         Lane::Background
     );
 }
 
 // Sets every user's vip flag from this run's list, clearing anyone dropped
-// from it. Interns ids first: a VIP nobody has messaged yet still counts.
-// A set: up to 300 VIPs against a Grid roster of many thousands.
-void SlackBackend::Read::applyVips(const std::vector<std::string> &ids) {
+// from it, then hands the mutes on. Interns ids first: a VIP nobody has
+// messaged yet still counts. A set: up to 300 VIPs against a Grid roster
+// of many thousands.
+void SlackBackend::Read::applyPrefs(const json::Value &prefs, uint64_t epoch) {
+    const std::vector<std::string>       ids = mapjson::vipUsers(prefs);
     std::unordered_set<std::string_view> vips;
     for (const std::string &id : ids)
         if (vips.insert(id).second)
@@ -1241,6 +1274,7 @@ void SlackBackend::Read::applyVips(const std::vector<std::string> &ids) {
     }
     if (changed)
         s.usersChanged();
+    b.applyMutedChannels(prefs, epoch);
 }
 
 // users.prefs.get's muted_channels: the web client's mute list, and the only
@@ -1665,11 +1699,7 @@ void SlackBackend::Read::fetchUserIfNeeded(UserRef ref) {
                 probedAt[u.id] = now();
                 extrasChanged();
             }
-            if (const UserRef r = s.findUser(u.id); r != kNoUser) {
-                u.active = s.user(r).active;
-                u.dnd    = s.user(r).dnd;
-            }
-            s.usersChanged(s.addUser(std::move(u)));
+            s.usersChanged(b.mergeUser(std::move(u)));
         }
     );
 }
@@ -1696,26 +1726,43 @@ void SlackBackend::Read::resolveAuthors(const std::vector<model::Message> &page)
         if (m.isHuddle()) // a huddle row's attendees too
             for (UserRef u : m.extra->huddle.attendees)
                 fetchUserIfNeeded(u);
+        if (m.extra && !m.extra->call.id.empty()) // a call card's people too
+            for (UserRef u : m.extra->call.people)
+                fetchUserIfNeeded(u);
     }
 }
 
-// Users known only through users.info get a
-// daily refresh, oldest first, capped per pass, on the paced lane.
-void SlackBackend::Read::reprobeOffRoster() {
-    const int64_t                                t = now();
-    std::vector<std::pair<int64_t, std::string>> due;
+// Users known only through users.info (Slack Connect peers are never in
+// users.list) get a daily refresh, oldest first, capped per pass, on the
+// paced lane; DM partners among them, with `partners`, a half-hourly one on
+// a budget of their own.
+void SlackBackend::Read::reprobeOffRoster(bool partners) {
+    const int64_t                   t = now();
+    std::unordered_set<std::string> dmPeers;
+    if (partners)
+        for (ConvRef r = 0; r < s.conversationCount(); ++r) {
+            const model::Conversation &c = s.conversation(r);
+            if (c.kind == model::ConvKind::Dm && c.dmUser != kNoUser && c.dmUser != s.me)
+                dmPeers.insert(s.user(c.dmUser).id);
+        }
+    std::vector<std::pair<int64_t, std::string>> due, peers;
     for (const std::string &id : offRoster) {
         if (!hasUserIdPrefix(id) || mapjson::isSlackSystemUser(id) || pendingUsers.count(id))
             continue;
         const auto    it   = probedAt.find(id);
         const int64_t last = it == probedAt.end() ? 0 : it->second;
-        if (it != probedAt.end() && t - last < kUsersRefreshGapMs)
-            continue;
-        due.emplace_back(last, id);
+        if (dmPeers.count(id))
+            peers.emplace_back(last, id);
+        else if (it == probedAt.end() || t - last >= kUsersRefreshGapMs)
+            due.emplace_back(last, id);
     }
     std::sort(due.begin(), due.end());
     if (due.size() > size_t(kMaxUserReprobes))
         due.resize(kMaxUserReprobes);
+    std::sort(peers.begin(), peers.end());
+    if (peers.size() > size_t(kMaxPartnerReprobes))
+        peers.resize(kMaxPartnerReprobes);
+    due.insert(due.end(), peers.begin(), peers.end());
     if (!due.empty())
         extrasChanged();
     for (const auto &[last, id] : due) {
@@ -1726,13 +1773,10 @@ void SlackBackend::Read::reprobeOffRoster() {
             [this](const json::Document &doc, const std::string &err) {
                 if (!err.empty())
                     return;
-                model::User   u = mapjson::toUser(doc.root()["user"]);
-                const UserRef r = s.findUser(u.id);
-                if (u.id.empty() || r == kNoUser)
+                model::User u = mapjson::toUser(doc.root()["user"]);
+                if (u.id.empty() || s.findUser(u.id) == kNoUser)
                     return;
-                u.active = s.user(r).active;
-                u.dnd    = s.user(r).dnd;
-                s.usersChanged(s.addUser(std::move(u)));
+                s.usersChanged(b.mergeUser(std::move(u)));
             },
             Lane::Background
         );
@@ -1784,6 +1828,15 @@ void SlackBackend::Read::pollDmPresence() {
     std::sort(dms.begin(), dms.end(), [](const auto &a, const auto &b) {
         return a.first > b.first;
     });
+    // Partners users.getPresence won't answer for (Slack Connect): the
+    // presence link streams theirs (session workspaces holding it).
+    std::vector<std::string> subs;
+    for (const auto &[ts, ref] : dms) {
+        const model::User &u = s.user(ref);
+        if (!u.bot && (offRoster.count(u.id) || presenceUnavailable.count(u.id)))
+            subs.push_back(u.id);
+    }
+    b.subscribePresence(std::move(subs));
     const size_t n = dms.size(), hot = std::min<size_t>(kPresenceHot, n);
     std::vector<UserRef> selected;
     selected.reserve(kPresenceHot + kPresenceRotate);
@@ -2026,14 +2079,6 @@ void SlackBackend::Read::sectionWriteDone(const std::string &err) {
 // The edits: shown in the Store at once (the local defaults), then sent; a
 // refused one is set right by the list that follows it.
 namespace {
-void addParam(std::string &form, std::string_view k, std::string_view v) {
-    if (!form.empty())
-        form += '&';
-    form += net::percentEncode(k);
-    form += '=';
-    form += net::percentEncode(v);
-}
-
 // [{"channel_section_id":…,"channel_ids":[…]}] (bulkUpdate's insert/remove).
 std::string sectionChannels(const std::string &section, const std::string &channel) {
     json::Writer w;
@@ -2199,9 +2244,7 @@ void SlackBackend::Read::refreshSaved() {
                 refs.emplace_back(c, ts, it["date_created"].integer());
             }
             auto apply = [this](ConvRef c, Ts ts, bool saved, int64_t due, int64_t savedAt) {
-                s.updateMessage(c, ts, [saved](model::Message &m) { m.saved = saved; });
-                s.setReminderAt(c, ts, due);
-                s.setSavedItem(c, ts, saved, due, savedAt); // the Saved messages page
+                s.setSaved(c, ts, saved, due, savedAt); // + the Saved messages page
             };
             for (const auto &[c, ts, created] : refs) {
                 const std::string k  = threadKey(c, ts);
@@ -2602,22 +2645,13 @@ void SlackBackend::Read::loadThreadPages(ConvRef c, Ts root, bool live, Backend:
                     done(false, "channel_not_found");
                 return;
             }
-            // Existing channel roots only need their thread fields refreshed.
-            // A permalink may point to an older root absent from the channel's
-            // currently loaded page: keep the complete parent on the thread,
-            // never insert it into channel history (which would break paging).
+            // A root in the loaded history gets its thread fields refreshed;
+            // an older one is kept beside the replies for the thread view.
             if (acc->haveRoot) {
-                if (s.indexOf(c, root) != SIZE_MAX)
-                    s.updateMessage(c, root, [&](model::Message &r) {
-                        r.replyCount  = acc->rootMsg.replyCount;
-                        r.latestReply = acc->rootMsg.latestReply;
-                        r.replyUsers  = acc->rootMsg.replyUsers;
-                        r.threadTs    = root;
-                    });
-                else {
-                    fetchUserIfNeeded(acc->rootMsg.user);
-                    s.setThreadRoot(c, std::move(acc->rootMsg));
-                }
+                std::vector<model::Message> one;
+                one.push_back(std::move(acc->rootMsg));
+                resolveAuthors(one);
+                s.setThreadRoot(c, std::move(one.front()));
             }
             resolveAuthors(acc->replies);
             std::vector<const model::Message *> have = s.threadTimeline(c, root);
@@ -2965,6 +2999,23 @@ void SlackBackend::Read::tick() {
         // without it nobody gets a name, so again at the roster cadence.
         lastUsers = t;
         loadUsers([](const std::string &) {});
+    }
+    // (2c) Statuses whose end passed: Slack clears them silently for anyone
+    // whose user_change never reaches us (Slack Connect).
+    if (t - lastStatusSweep >= kStatusSweepGapMs) {
+        lastStatusSweep = t;
+        s.clearEndedStatuses(b.nowSecs());
+    }
+    // (2d) Calendar statuses switch on the hour and half hour, and Slack
+    // Connect partners' never reach us: a minute past, their profiles are
+    // read again. Not at launch (the first slot only marks the time), and
+    // not while the window is hidden (a slot missed then runs when shown).
+    if (const int64_t slot = (b.nowSecs() - kReprobeSlotLagSecs) / kReprobeSlotSecs;
+        reprobeSlot < 0) {
+        reprobeSlot = slot;
+    } else if (visible && usersLoaded && slot != reprobeSlot) {
+        reprobeSlot = slot;
+        reprobeOffRoster(true);
     }
     if (t - lastSaved >= kSavedGapMs)
         refreshSaved();
@@ -3798,7 +3849,7 @@ void SlackBackend::loadThreadsView(std::string cursor, ThreadsViewDone done) {
     std::string form = "limit=10&priority_mode=all"; // every followed thread
     // Continuation is the previous answer's max_ts (no next_cursor here).
     if (!cursor.empty())
-        form += "&" + net::formEncode({{"current_ts", cursor}});
+        addParam(form, "current_ts", cursor);
     r->call(
         "subscriptions.thread.getView",
         r->threadsForm(std::move(form)),
@@ -3854,7 +3905,7 @@ void SlackBackend::loadThreadsView(std::string cursor, ThreadsViewDone done) {
 void SlackBackend::Read::threadSubsPage(std::string cursor, ThreadsViewDone done) {
     std::string form = kSubsForm;
     if (!cursor.empty())
-        form += "&" + net::formEncode({{"cursor", cursor}});
+        addParam(form, "cursor", cursor);
     call(
         "subscriptions.thread.getTimestamps",
         threadsForm(std::move(form)),
@@ -4236,22 +4287,11 @@ void SlackBackend::followSettled(ConvRef c, Ts root) {
 // feed's per-thread baselines and read floors (ones I still follow or
 // with an unread reply stay).
 void SlackBackend::Read::pruneThreadState() {
-    if (followed.size() > 2 * kMaxFollowed) {
-        std::vector<Ts> roots;
-        for (const std::string &k : followed)
-            roots.push_back(keyTs(k));
-        const Ts cut = pruneCut(std::move(roots), kMaxFollowed);
-        std::erase_if(followed, [cut](const std::string &k) { return keyTs(k) < cut; });
+    const auto any = [](const std::string &) { return true; };
+    if (pruneThreads(followed, kMaxFollowed, any))
         extrasChanged();
-    }
-    if (unfollowed.size() > 2 * kMaxFollowed) {
-        std::vector<Ts> roots;
-        for (const auto &[k, at] : unfollowed)
-            roots.push_back(keyTs(k));
-        const Ts cut = pruneCut(std::move(roots), kMaxFollowed);
-        std::erase_if(unfollowed, [cut](const auto &kv) { return keyTs(kv.first) < cut; });
+    if (pruneThreads(unfollowed, kMaxFollowed, any))
         extrasChanged();
-    }
     // Settled changes to threads the feed never showed again.
     if (followHeld.size() > kMaxThreadState)
         std::erase_if(followHeld, [](const auto &kv) { return kv.second != kHeld; });
@@ -4310,6 +4350,14 @@ ConvRef SlackBackend::mergeConversation(model::Conversation fresh) {
     if (const ConvRef r = _store.findConversation(fresh.id); r != kNoConv)
         _read->carryLocal(fresh, _store.conversation(r));
     return _store.addConversation(std::move(fresh));
+}
+
+UserRef SlackBackend::mergeUser(model::User fresh) {
+    if (const UserRef r = _store.findUser(fresh.id); r != kNoUser) {
+        fresh.active = _store.user(r).active;
+        fresh.dnd    = _store.user(r).dnd;
+    }
+    return _store.addUser(std::move(fresh));
 }
 
 void SlackBackend::reloadConversations() {
@@ -4433,6 +4481,7 @@ model::Backend::Capabilities SlackBackend::capabilities() const {
     c.sidebarTheme     = _creds.sessionAuth(); // users.prefs.get: xoxc only
     c.customSections   = _creds.sessionAuth(); // users.channelSections.*: xoxc only
     c.vips             = _creds.sessionAuth(); // users.prefs.get's vip_users: xoxc only
+    c.groupDms         = true;                 // conversations.open with several users
     return c;
 }
 
@@ -4445,7 +4494,7 @@ model::Backend::SelfPresence SlackBackend::selfPresence() const {
 }
 
 int64_t SlackBackend::nowSecs() const {
-    return base::nowSecs();
+    return _nowSecsForTest ? _nowSecsForTest : base::nowSecs();
 }
 
 } // namespace slack

@@ -6,6 +6,7 @@
 #include "base/time.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <tuple>
 #include <charconv>
 #include <cstdio>
@@ -194,6 +195,7 @@ bool Block::operator==(const Block &) const                     = default;
 bool Attachment::operator==(const Attachment &) const           = default;
 bool Button::operator==(const Button &) const                   = default;
 bool Huddle::operator==(const Huddle &) const                   = default;
+bool Call::operator==(const Call &) const                       = default;
 bool MessageExtras::operator==(const MessageExtras &) const     = default;
 
 bool Message::operator==(const Message &o) const {
@@ -377,6 +379,23 @@ void Store::usersChanged(UserRef u) {
     emit({ChangeKind::Users});
 }
 
+bool Store::clearEndedStatuses(int64_t nowSecs) {
+    bool any = false;
+    for (size_t i = 0; i < _users.size(); ++i) {
+        User &u = _users[i];
+        if (u.statusExpiry == 0 || u.statusExpiry > nowSecs)
+            continue;
+        u.statusEmoji.clear();
+        u.statusText.clear();
+        u.statusExpiry = 0;
+        _touchedUsers.push_back(UserRef(i));
+        any = true;
+    }
+    if (any)
+        emit({ChangeKind::Users});
+    return any;
+}
+
 namespace {
 
 uint64_t mixHash(uint64_t h, std::string_view v) {
@@ -430,6 +449,7 @@ void Store::noteUserRevisions() {
         };
         h = mixHash(h, std::string_view(flags, sizeof flags));
         h = mixHash(h, std::string_view(reinterpret_cast<const char *>(&u.tzOffset), 4));
+        h = mixHash(h, std::string_view(reinterpret_cast<const char *>(&u.statusExpiry), 8));
         h |= 1; // never 0: a new slot always differs
         if (h != _profileHash[i]) {
             _profileHash[i] = h;
@@ -484,35 +504,41 @@ namespace {
 
 // Every Conversation field but the loaded messages and threads. A field added
 // to Conversation belongs here too, or changing only it emits no Meta.
+auto metaOf(const Conversation &c) {
+    return std::tie(
+        c.id,
+        c.name,
+        c.topic,
+        c.kind,
+        c.dmUser,
+        c.members,
+        c.memberCount,
+        c.unread,
+        c.mentions,
+        c.lastRead,
+        c.latest,
+        c.starred,
+        c.muted,
+        c.member,
+        c.extShared,
+        c.notify,
+        c.canvasTitle,
+        c.canvasId,
+        c.localName,
+        c.huddleActive,
+        c.huddleLink,
+        c.huddleParticipants,
+        c.hasMoreBefore
+    );
+}
+
 bool sameMeta(const Conversation &a, const Conversation &b) {
-    const auto meta = [](const Conversation &c) {
-        return std::tie(
-            c.id,
-            c.name,
-            c.topic,
-            c.kind,
-            c.dmUser,
-            c.members,
-            c.memberCount,
-            c.unread,
-            c.mentions,
-            c.lastRead,
-            c.latest,
-            c.starred,
-            c.muted,
-            c.member,
-            c.extShared,
-            c.notify,
-            c.canvasTitle,
-            c.canvasId,
-            c.localName,
-            c.huddleActive,
-            c.huddleLink,
-            c.huddleParticipants,
-            c.hasMoreBefore
-        );
-    };
-    return meta(a) == meta(b);
+    return metaOf(a) == metaOf(b);
+}
+
+// …a copy of them, to tell an edit's changes by.
+auto metaCopy(const Conversation &c) {
+    return std::apply([](const auto &...f) { return std::make_tuple(f...); }, metaOf(c));
 }
 
 } // namespace
@@ -619,8 +645,12 @@ std::string Store::displayName(ConvRef ref) const {
 void Store::updateConversation(ConvRef c, const std::function<void(Conversation &)> &fn) {
     if (c >= _convs.size())
         return;
+    // An edit that changed nothing (the same flag again, a page that says
+    // what the last one did) is no news: every Meta costs the sidebar a pass.
+    const auto before = metaCopy(_convs[c]);
     fn(_convs[c]);
-    emit({ChangeKind::Meta, c});
+    if (metaOf(_convs[c]) != before)
+        emit({ChangeKind::Meta, c});
 }
 
 Thread *Store::findThread(Conversation &c, Ts root) {
@@ -713,40 +743,17 @@ Message *Store::findMessage(ConvRef ref, Ts ts) {
     Conversation &c = _convs[ref];
     if (auto it = lowerByTs(c.messages, ts); it != c.messages.end() && it->ts == ts)
         return &*it;
-    for (auto &t : c.threads)
+    for (auto &t : c.threads) {
         if (auto it = lowerByTs(t.replies, ts); it != t.replies.end() && it->ts == ts)
             return &*it;
-    // A deep-linked thread's root may be older than the fetched channel page.
-    for (auto &t : c.threads)
-        if (t.root == ts && t.parent)
-            return t.parent.get();
+        if (t.root == ts && t.detachedRoot)
+            return t.detachedRoot.get();
+    }
     return nullptr;
 }
 
 const Message *Store::findMessage(ConvRef ref, Ts ts) const {
     return const_cast<Store *>(this)->findMessage(ref, ts);
-}
-
-void Store::setThreadRoot(ConvRef ref, Message root) {
-    if (ref >= _convs.size() || !root.ts || root.isReply())
-        return;
-    Conversation &c = _convs[ref];
-    // A root already in the top-level timeline needs no separate copy.
-    if (indexOf(ref, root.ts) != SIZE_MAX)
-        return;
-    Thread *t = findThread(c, root.ts);
-    if (!t) {
-        c.threads.push_back(Thread{root.ts, {}});
-        t = &c.threads.back();
-    }
-    if (t->parent) {
-        if (*t->parent == root)
-            return;
-        root.saved = t->parent->saved;
-    }
-    t->parent = std::make_unique<Message>(std::move(root));
-    // Only thread views should rebuild: the channel history has not changed.
-    emit({ChangeKind::Update, ref, t->root, t->root});
 }
 
 const std::vector<Message> *Store::replies(ConvRef ref, Ts root) const {
@@ -856,8 +863,7 @@ void Store::addPage(ConvRef ref, std::vector<Message> page, bool threadReplies) 
             groups.push_back({thread, {}});
             it = groups.end() - 1;
         }
-        it->messages.push_back(std::move(m));
-    }
+        it->messages.push_back(std::move(m));    }
 
     for (Group &group : groups) {
         const Ts thread = group.thread;
@@ -933,8 +939,13 @@ void Store::addPage(ConvRef ref, std::vector<Message> page, bool threadReplies) 
                 std::make_move_iterator(after.begin()),
                 std::make_move_iterator(after.end())
             );
-        if (!thread && !list.empty())
+        if (!thread && !list.empty()) {
             c.latest = std::max(c.latest, list.back().ts);
+            // Older history reached a detached root: the list's copy is the one.
+            for (Thread &t : c.threads)
+                if (t.detachedRoot && indexOf(ref, t.root) != SIZE_MAX)
+                    t.detachedRoot.reset();
+        }
 
         for (Ts ts : updated)
             emit({ChangeKind::Update, ref, thread, ts});
@@ -987,8 +998,8 @@ size_t Store::conversationHistoryBytes(const Conversation &c) const {
     size_t n = messageVectorStorage(c.messages) + c.threads.capacity() * sizeof(Thread);
     for (const Thread &t : c.threads) {
         n += messageVectorStorage(t.replies);
-        if (t.parent)
-            n += sizeof(Message) + messagePayloadStorage(*t.parent);
+        if (t.detachedRoot)
+            n += sizeof(Message) + messagePayloadStorage(*t.detachedRoot);
     }
     return n;
 }
@@ -1007,7 +1018,7 @@ bool historyProtected(const Message &m) {
 }
 
 bool threadReclaimable(const Thread &t) {
-    return (!t.parent || !historyProtected(*t.parent)) &&
+    return (!t.detachedRoot || !historyProtected(*t.detachedRoot)) &&
            std::none_of(t.replies.begin(), t.replies.end(), historyProtected);
 }
 
@@ -1179,6 +1190,16 @@ void Store::addMessage(ConvRef ref, Message m) {
     const bool          inTarget =
         thread ? indexOf(ref, ts, thread) != SIZE_MAX : indexOf(ref, ts) != SIZE_MAX;
 
+    // At the end of its list (the usual): one appended; else inserted at ts.
+    const auto added = [&](Ts list, bool atEnd) {
+        emit(
+            {atEnd ? ChangeKind::Append : ChangeKind::Insert,
+             ref,
+             list,
+             atEnd ? 0 : ts,
+             atEnd ? 1u : 0u}
+        );
+    };
     if (thread) {
         Message   *root       = findMessage(ref, thread);
         auto      &list       = *listFor(c, thread, true);
@@ -1208,8 +1229,7 @@ void Store::addMessage(ConvRef ref, Message m) {
                  atEnd ? 1u : 0u,
                  true}
             );
-        }
-        if (root)
+        }        if (root)
             emit({ChangeKind::Update, ref, 0, thread});
         if (removed.channel) {
             recountUnread(c);
@@ -1265,6 +1285,35 @@ void Store::addMessage(ConvRef ref, Message m) {
     }
     if (typingChanged)
         emit({ChangeKind::Typing, ref, replyThread});
+}
+
+void Store::setThreadRoot(ConvRef ref, Message root) {
+    if (ref >= _convs.size() || !root.ts)
+        return;
+    const Ts ts   = root.ts;
+    root.threadTs = ts;
+    if (indexOf(ref, ts) != SIZE_MAX) {
+        updateMessage(ref, ts, [&](Message &r) {
+            r.replyCount  = root.replyCount;
+            r.latestReply = root.latestReply;
+            r.replyUsers  = std::move(root.replyUsers);
+            r.threadTs    = ts;
+        });
+        return;
+    }
+    Conversation &c = _convs[ref];
+    listFor(c, ts, true);
+    Thread *t = findThread(c, ts);
+    if (t->detachedRoot) {
+        root.saved = t->detachedRoot->saved; // app-side state the server doesn't send
+        if (*t->detachedRoot == root)
+            return;
+        *t->detachedRoot = std::move(root);
+    } else {
+        t->detachedRoot = std::make_unique<Message>(std::move(root));
+    }
+    // Only thread views should rebuild: the channel history has not changed.
+    emit({ChangeKind::Update, ref, t->root, t->root});
 }
 
 bool Store::updateMessage(ConvRef ref, Ts ts, const std::function<void(Message &)> &fn) {
@@ -1386,8 +1435,7 @@ bool Store::removeMessage(ConvRef ref, Ts ts) {
         emit({ChangeKind::Remove, ref, ts, ts});
         return true;
     }
-    auto &list = *listFor(c, thread, false);
-    list.erase(lowerByTs(list, ts));
+    auto &list = *listFor(c, thread, false);    list.erase(lowerByTs(list, ts));
     if (thread) {
         if (Message *root = findMessage(ref, thread)) {
             if (root->replyCount)
@@ -1463,11 +1511,14 @@ void Store::recountUnread(Conversation &c) {
 void Store::markRead(ConvRef ref, Ts ts) {
     if (ref >= _convs.size())
         return;
-    Conversation &c = _convs[ref];
+    Conversation  &c      = _convs[ref];
+    const Ts       last   = c.lastRead;
+    const uint32_t unread = c.unread, mentions = c.mentions;
     if (ts > c.lastRead)
         c.lastRead = ts;
     recountUnread(c);
-    emit({ChangeKind::Meta, ref});
+    if (c.lastRead != last || c.unread != unread || c.mentions != mentions)
+        emit({ChangeKind::Meta, ref});
 }
 
 void Store::threadRead(ConvRef ref, Ts root, Ts ts) {
@@ -1485,13 +1536,16 @@ void Store::markUnread(ConvRef ref, Ts ts) {
 }
 
 namespace {
-std::vector<Store::Mark>::iterator findMark(std::vector<Store::Mark> &v, ConvRef c, Ts ts) {
-    return std::find_if(v.begin(), v.end(), [&](const Store::Mark &m) {
+// The entry for a message (a mark, a saved item), const or not.
+template <class V>
+auto findMark(V &v, ConvRef c, Ts ts) {
+    return std::find_if(v.begin(), v.end(), [&](const auto &m) {
         return m.conv == c && m.ts == ts;
     });
 }
 
-std::vector<Store::Draft>::iterator findDraft(std::vector<Store::Draft> &v, ConvRef c, Ts thread) {
+template <class V>
+auto findDraft(V &v, ConvRef c, Ts thread) {
     return std::find_if(v.begin(), v.end(), [&](const Store::Draft &d) {
         return d.conv == c && d.thread == thread;
     });
@@ -1499,8 +1553,7 @@ std::vector<Store::Draft>::iterator findDraft(std::vector<Store::Draft> &v, Conv
 } // namespace
 
 bool Store::threadMuted(ConvRef c, Ts root) const {
-    auto &v = const_cast<std::vector<Mark> &>(_mutedThreads);
-    return findMark(v, c, root) != v.end();
+    return findMark(_mutedThreads, c, root) != _mutedThreads.end();
 }
 
 void Store::setThreadMuted(ConvRef c, Ts root, bool on) {
@@ -1516,9 +1569,8 @@ void Store::setThreadMuted(ConvRef c, Ts root, bool on) {
 }
 
 const Store::Draft *Store::draft(ConvRef c, Ts thread) const {
-    auto &v  = const_cast<std::vector<Draft> &>(_drafts);
-    auto  it = findDraft(v, c, thread);
-    return it == v.end() ? nullptr : &*it;
+    const auto it = findDraft(_drafts, c, thread);
+    return it == _drafts.end() ? nullptr : &*it;
 }
 
 void Store::setDraft(ConvRef c, Ts thread, std::string html, std::vector<std::string> files) {
@@ -1541,20 +1593,26 @@ void Store::setDraft(ConvRef c, Ts thread, std::string html, std::vector<std::st
 }
 
 int64_t Store::reminderAt(ConvRef c, Ts ts) const {
-    auto &v  = const_cast<std::vector<Mark> &>(_reminders);
-    auto  it = findMark(v, c, ts);
-    return it == v.end() ? 0 : it->value;
+    const auto it = findMark(_reminders, c, ts);
+    return it == _reminders.end() ? 0 : it->value;
 }
 
 void Store::setReminderAt(ConvRef c, Ts ts, int64_t due) {
-    auto it = findMark(_reminders, c, ts);
-    if (it != _reminders.end() ? it->value != due : due > 0)
-        ++_localRev; // the workspace cache saves it
+    putReminder(c, ts, due);
+    emit({ChangeKind::Update, c, 0, ts});
+}
+
+bool Store::putReminder(ConvRef c, Ts ts, int64_t due) {
+    auto       it      = findMark(_reminders, c, ts);
+    const bool changed = it != _reminders.end() ? it->value != due : due > 0;
+    if (!changed)
+        return false;
+    ++_localRev; // the workspace cache saves it
     if (it != _reminders.end())
         _reminders.erase(it);
     if (due > 0)
         _reminders.push_back({c, ts, due});
-    emit({ChangeKind::Update, c, 0, ts});
+    return true;
 }
 
 namespace {
@@ -1587,61 +1645,85 @@ void Store::sortSaved() {
 }
 
 const Store::SavedItem *Store::findSaved(ConvRef c, Ts ts) const {
-    for (const SavedItem &s : _saved)
-        if (s.conv == c && s.ts == ts)
-            return &s;
-    return nullptr;
+    const auto it = findMark(_saved, c, ts);
+    return it == _saved.end() ? nullptr : &*it;
 }
 
 void Store::setSavedItem(ConvRef c, Ts ts, bool on, int64_t due, int64_t savedAt) {
-    auto it = std::find_if(_saved.begin(), _saved.end(), [&](const SavedItem &s) {
-        return s.conv == c && s.ts == ts;
-    });
+    if (putSavedItem(c, ts, on, due, savedAt) || on)
+        emit({ChangeKind::Update, c, 0, ts});
+}
+
+bool Store::putSavedItem(ConvRef c, Ts ts, bool on, int64_t due, int64_t savedAt) {
+    auto it = findMark(_saved, c, ts);
     if (!on) {
         if (it == _saved.end())
-            return;
+            return false;
         _saved.erase(it);
-    } else {
-        if (it == _saved.end()) {
-            SavedItem s;
-            s.conv = c;
-            s.ts   = ts;
-            it     = _saved.insert(_saved.end(), std::move(s));
-        }
-        if (it->due != due)
-            it->fired = false; // rescheduled: it goes off again
-        it->due = due;
-        if (savedAt > 0)
-            it->savedAt = savedAt;
-        else if (it->savedAt <= 0)
-            it->savedAt = base::nowSecs();
-        if (!it->previewed)
-            if (const Message *m = findMessage(c, ts))
-                takePreview(*it, *m);
-        sortSaved();
+        return true;
     }
-    emit({ChangeKind::Update, c, 0, ts});
+    bool changed = it == _saved.end();
+    if (changed) {
+        SavedItem s;
+        s.conv = c;
+        s.ts   = ts;
+        it     = _saved.insert(_saved.end(), std::move(s));
+    }
+    if (it->due != due) {
+        it->due   = due;
+        it->fired = false; // rescheduled: it goes off again
+        changed   = true;
+    }
+    const int64_t at = savedAt > 0 ? savedAt : it->savedAt > 0 ? it->savedAt : base::nowSecs();
+    changed          = changed || it->savedAt != at;
+    it->savedAt      = at;
+    if (!it->previewed)
+        if (const Message *m = findMessage(c, ts)) {
+            takePreview(*it, *m);
+            changed = true;
+        }
+    if (changed)
+        sortSaved();
+    return changed;
+}
+
+void Store::setSaved(ConvRef c, Ts ts, bool on, int64_t due, int64_t savedAt) {
+    if (!on)
+        due = 0;
+    bool flagged = false;
+    Ts   thread  = 0;
+    if (Message *m = findMessage(c, ts)) {
+        thread   = m->isReply() ? m->threadTs : 0;
+        flagged  = m->saved != on;
+        m->saved = on;
+    }
+    const bool reminded = putReminder(c, ts, due);
+    const bool listed   = putSavedItem(c, ts, on, due, savedAt);
+    // The message's own Update (in its thread's list) also tells the Saved
+    // page; a reply's needs one of the conversation's too.
+    if (flagged)
+        emit({ChangeKind::Update, c, thread, ts});
+    if ((reminded || listed) && !(flagged && thread == 0))
+        emit({ChangeKind::Update, c, 0, ts});
 }
 
 void Store::setSavedPreview(ConvRef c, Ts ts, const Message *m) {
-    for (SavedItem &s : _saved)
-        if (s.conv == c && s.ts == ts) {
-            if (m)
-                takePreview(s, *m);
-            else
-                s.previewed = true; // gone: "No preview available"
-            emit({ChangeKind::Update, c, 0, ts});
-            return;
-        }
+    const auto it = findMark(_saved, c, ts);
+    if (it == _saved.end())
+        return;
+    if (m)
+        takePreview(*it, *m);
+    else
+        it->previewed = true; // gone: "No preview available"
+    emit({ChangeKind::Update, c, 0, ts});
 }
 
 void Store::setReminderFired(ConvRef c, Ts ts, bool fired) {
-    for (SavedItem &s : _saved)
-        if (s.conv == c && s.ts == ts && s.fired != fired) {
-            s.fired = fired;
-            emit({ChangeKind::Update, c, 0, ts});
-            return;
-        }
+    const auto it = findMark(_saved, c, ts);
+    if (it == _saved.end() || it->fired == fired)
+        return;
+    it->fired = fired;
+    emit({ChangeKind::Update, c, 0, ts});
 }
 
 void Store::setScheduled(std::vector<ScheduledItem> items) {
