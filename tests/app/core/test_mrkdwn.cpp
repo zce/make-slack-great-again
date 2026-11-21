@@ -532,8 +532,15 @@ TEST("mrkdwn: permalink parsing edge cases") {
     CHECK_FALSE(mrkdwn::parseMessageLink(
         "https://x.slack.com/archives/C1/p1786008939071009?thread_ts=1786008000.000100&thread_ts=1786008000.000200"
     ).valid());
-    CHECK_FALSE(mrkdwn::parseMessageLink(
+    // Unknown parameters carry no routing meaning: ignore them rather than
+    // losing a destination we understand.
+    ref = mrkdwn::parseMessageLink(
         "https://x.slack.com/archives/C1/p1786008939071009?thread_ts=1786008000.000100&extra=1"
+    );
+    REQUIRE(ref.valid());
+    CHECK_STR(ref.threadTs, "1786008000.000100");
+    REQUIRE(mrkdwn::parseMessageLink(
+        "https://x.slack.com/archives/C1/p1786008939071009?tracking=%ZZ&flag"
     ).valid());
     CHECK_FALSE(mrkdwn::parseMessageLink(
         "https://x.slack.com/archives/C1/p1786008939071009?thread_ts=%ZZ"
@@ -825,6 +832,24 @@ TEST("mrkdwn: official Slack native links") {
     CHECK_STR(actualBrowserLink.messageTs, "1793818271.076489");
     CHECK_STR(actualBrowserLink.threadTs, "1792674458.384049");
 
+    // Slack desktop adds a per-launch signal when it forwards a link. It
+    // picks no destination, so a link that carried it must still resolve.
+    const auto desktopForward = mrkdwn::parseNativeLink(
+        "slack://channel?team=T0A0PUXB7QD&id=C0A4GKEUGGP"
+        "&message=1795201537.461219&thread_ts=1795133749.875099&host=slack.com"
+        "&desktop_deeplink_signal_request=a5d44031-2a26-4f0d-ac78-6cbe0bc767c4"
+    );
+    REQUIRE(desktopForward.valid());
+    CHECK_STR(desktopForward.id, "C0A4GKEUGGP");
+    CHECK_STR(desktopForward.messageTs, "1795201537.461219");
+    CHECK_STR(desktopForward.threadTs, "1795133749.875099");
+    REQUIRE(mrkdwn::parseNativeLink(
+        "slack://open?team=T0A0PUXB7QD&desktop_deeplink_signal_request=s1"
+    ).valid());
+    REQUIRE(mrkdwn::parseNativeLink(
+        "slack://user?team=T0A0PUXB7QD&id=U1&desktop_deeplink_signal_request=s1"
+    ).valid());
+
     const auto target = mrkdwn::parseNativeLink(
         "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&message=1793818271%2E076489"
     );
@@ -869,9 +894,15 @@ TEST("mrkdwn: official Slack native links") {
     CHECK_FALSE(mrkdwn::parseNativeLink("slack://open?team=T1&team=T2").valid());
     CHECK_FALSE(mrkdwn::parseNativeLink("slack://file?team=T1&id=F1").valid());
     CHECK_FALSE(mrkdwn::parseNativeLink("msga://oauth/callback?code=abc").valid());
-    CHECK_FALSE(mrkdwn::parseNativeLink(
-        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&extra=1"
-    ).valid());
+    // Unknown parameters carry no routing meaning: ignore them rather than
+    // losing a destination we understand. Known ones stay strict below.
+    const auto noisy = mrkdwn::parseNativeLink(
+        "slack://channel?team=T123ABC456&id=C0A4GKEUGGP"
+        "&extra=1&tracking=%ZZ&flag"
+        "&desktop_deeplink_signal_request=s1&desktop_deeplink_signal_request=s2"
+    );
+    REQUIRE(noisy.valid());
+    CHECK_STR(noisy.id, "C0A4GKEUGGP");
     CHECK_FALSE(mrkdwn::parseNativeLink(
         "slack://channel?team=T123ABC456&id=C0A4GKEUGGP&host=evil.example"
     ).valid());

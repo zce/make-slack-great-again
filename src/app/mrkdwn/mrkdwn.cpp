@@ -940,29 +940,33 @@ MessageRef parseMessageLink(std::string_view url) {
         const size_t amp = query.find('&', pos);
         const std::string_view item =
             query.substr(pos, amp == std::string_view::npos ? amp : amp - pos);
+        if (item.empty())
+            return {};
         const size_t eq = item.find('=');
-        if (item.empty() || eq == std::string_view::npos || eq == 0 || eq + 1 == item.size())
-            return {};
-        const std::string_view key = item.substr(0, eq);
-        std::string value;
-        if (!decodeQueryValue(item.substr(eq + 1), &value))
-            return {};
-
-        if (key == "thread_ts") {
-            if (haveThread)
+        const std::string_view key = eq == std::string_view::npos ? item : item.substr(0, eq);
+        // Only the parameters we route by are decoded and validated. Slack
+        // adds others over time (tracking, desktop signals); rejecting them
+        // would make an otherwise known destination unopenable.
+        if (key == "thread_ts" || key == "cid") {
+            if (eq == std::string_view::npos || eq + 1 == item.size())
                 return {};
-            haveThread = true;
-            std::string canonical;
-            if (!canonicalSlackTimestamp(value, &canonical))
+            std::string value;
+            if (!decodeQueryValue(item.substr(eq + 1), &value))
                 return {};
-            if (canonical != ref.ts)
-                ref.threadTs = std::move(canonical);
-        } else if (key == "cid") {
-            if (haveCid || value != ref.conv)
-                return {};
-            haveCid = true;
-        } else {
-            return {}; // Unsupported query parameters must not change routing silently.
+            if (key == "thread_ts") {
+                if (haveThread)
+                    return {};
+                haveThread = true;
+                std::string canonical;
+                if (!canonicalSlackTimestamp(value, &canonical))
+                    return {};
+                if (canonical != ref.ts)
+                    ref.threadTs = std::move(canonical);
+            } else {
+                if (haveCid || value != ref.conv)
+                    return {};
+                haveCid = true;
+            }
         }
 
         if (amp == std::string_view::npos)
@@ -1044,36 +1048,45 @@ NativeLink parseNativeLink(std::string_view url) {
         const size_t amp = query.find('&', pos);
         const std::string_view item =
             query.substr(pos, amp == std::string_view::npos ? amp : amp - pos);
+        if (item.empty())
+            return {};
         const size_t eq = item.find('=');
-        if (item.empty() || eq == std::string_view::npos || eq == 0 || eq + 1 == item.size())
-            return {};
-        const std::string_view key = item.substr(0, eq);
-        std::string value;
-        if (!decodeQueryValue(item.substr(eq + 1), &value))
-            return {};
+        const std::string_view key = eq == std::string_view::npos ? item : item.substr(0, eq);
+        // As in parseMessageLink: decode and validate only what selects the
+        // destination. Slack's desktop client adds transport parameters such
+        // as desktop_deeplink_signal_request to links it forwards; they must
+        // not make the link unopenable.
+        const bool routed =
+            key == "team" || key == "id" ||
+            (path == "channel" && (key == "message" || key == "thread_ts" || key == "host"));
+        if (routed) {
+            if (eq == std::string_view::npos || eq + 1 == item.size())
+                return {};
+            std::string value;
+            if (!decodeQueryValue(item.substr(eq + 1), &value))
+                return {};
 
-        if (key == "team") {
-            if (haveTeam) return {};
-            haveTeam = true;
-            out.team = std::move(value);
-        } else if (key == "id") {
-            if (haveId) return {};
-            haveId = true;
-            out.id = std::move(value);
-        } else if (path == "channel" && key == "message") {
-            if (haveMessage) return {};
-            haveMessage = true;
-            out.messageTs = std::move(value);
-        } else if (path == "channel" && key == "thread_ts") {
-            if (haveThread) return {};
-            haveThread = true;
-            out.threadTs = std::move(value);
-        } else if (path == "channel" && key == "host") {
-            if (haveHost) return {};
-            haveHost = true;
-            host = std::move(value);
-        } else {
-            return {};
+            if (key == "team") {
+                if (haveTeam) return {};
+                haveTeam = true;
+                out.team = std::move(value);
+            } else if (key == "id") {
+                if (haveId) return {};
+                haveId = true;
+                out.id = std::move(value);
+            } else if (key == "message") {
+                if (haveMessage) return {};
+                haveMessage = true;
+                out.messageTs = std::move(value);
+            } else if (key == "thread_ts") {
+                if (haveThread) return {};
+                haveThread = true;
+                out.threadTs = std::move(value);
+            } else {
+                if (haveHost) return {};
+                haveHost = true;
+                host = std::move(value);
+            }
         }
 
         if (amp == std::string_view::npos)
