@@ -2683,6 +2683,10 @@ void Shell::jumpToMessage(ConvRef conv, Ts ts, Ts thread) {
         open(conv);
     if (conv != _current)
         return;
+    // A jump from the Files tab (or the canvas) returns to Messages first:
+    // the target row lives behind the message list, not the other page.
+    if (_tabs && _tabs->active() != ConvTabs::kMessages)
+        showTab(ConvTabs::kMessages);
 #ifdef MSGA_HAVE_MESSAGES
     if (!thread) {
         showMessageArea();

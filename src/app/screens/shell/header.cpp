@@ -695,12 +695,25 @@ void ConvTabs::setBookmarks(bool visible) {
 
 void ConvTabs::layout() {
     // Too narrow for every tab with its text: Files and Bookmarks show their
-    // icons alone.
-    float need = 16;
+    // icons alone. MSGA puts a right-aligned huddle action area in this same
+    // strip, so its measured width must come out of the tab budget too.
+    const Style &st   = currentStyle();
+    float        need = 0;
     for (View *v : _tabs)
         if (v->visible())
-            need += static_cast<Tab *>(v)->full + 4;
-    const bool compact = need > width();
+            need += static_cast<Tab *>(v)->full + st.gap;
+    float reserved = 0;
+    for (size_t i = 0; i < childCount(); ++i) {
+        View *c   = child(i);
+        bool  tab = false;
+        for (View *t : _tabs)
+            tab = tab || t == c;
+        if (tab || !c->visible())
+            continue;
+        const Style &cs = c->currentStyle();
+        reserved += c->measure(kInf, kInf).w + cs.margin.l + cs.margin.r + st.gap;
+    }
+    const bool compact = need + reserved > width() - st.pad.l - st.pad.r;
     for (int i : {kFiles, kBookmarks})
         static_cast<Tab *>(_tabs[size_t(i)])->setCompact(compact);
     TabStrip::layout();

@@ -903,6 +903,40 @@ TEST("tabs: Files where the service lists them; Bookmarks while there are any") 
     CHECK(tabs.tab(shell::ConvTabs::kBookmarks)->visible());
 }
 
+TEST("tabs: the right-hand action area comes out of the tab budget") {
+    Harness          h;
+    shell::ConvTabs &tabs = h.sh->tabs();
+    float            full = 0;
+    for (size_t i = 0; i < tabs.tabCount(); ++i)
+        if (tabs.tab(i)->visible())
+            full += tabs.tab(i)->width() + 4;
+    auto *action = tabs.add<ui::View>();
+    action->style().width(120).noShrink();
+    const ui::RectF wide = tabs.frame();
+    tabs.setFrame({wide.x, wide.y, full + 76, wide.h});
+    tabs.layout();
+    CHECK(tabs.compact());
+    tabs.setFrame(wide);
+    tabs.layout();
+    CHECK_FALSE(tabs.compact());
+}
+
+TEST("files: a message jump returns to Messages") {
+    Harness       h;
+    const ConvRef general = h.conv("C0GENERAL");
+    h.sh->open(general);
+    pump();
+    h.sh->showTab(shell::ConvTabs::kFiles);
+    CHECK(h.sh->filesPage().visible());
+    const Ts ts = h.store.conversation(general).messages.back().ts;
+    h.sh->jumpToMessage(general, ts, 0);
+    pump();
+    CHECK(h.sh->tabs().active() == shell::ConvTabs::kMessages);
+    CHECK_FALSE(h.sh->filesPage().visible());
+    CHECK(h.sh->messagesView()->visible());
+    CHECK(h.sh->composer().visible());
+}
+
 TEST("files: the tab lists the conversation's files newest first; a click opens one") {
     Harness       h;
     const ConvRef general = h.conv("C0GENERAL");

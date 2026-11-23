@@ -1,5 +1,6 @@
 #include "screens/shell/files_page.h"
 
+#include "app/model/timers.h"
 #include "app/screens/common/file_badge.h"
 #include "app/screens/common/message_text.h"
 #include "base/i18n.h"
@@ -200,11 +201,8 @@ void FilesPage::loadMore() {
 void FilesPage::loadMoreSoon() {
     if (_queued || _nextPage <= 0)
         return;
-    _queued                   = true;
-    std::weak_ptr<bool> alive = _alive;
-    _ctx.app.platform().post([this, alive] {
-        if (alive.expired())
-            return;
+    _queued = true;
+    model::postWhileAlive(_ctx.app.platform(), _alive, [this] {
         _queued = false;
         if (visible() && !_scroll->canScroll())
             loadMore();
