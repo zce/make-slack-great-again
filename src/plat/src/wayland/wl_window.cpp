@@ -135,6 +135,7 @@ WlWindow::WlWindow(WlApp *a, const WindowDesc &d)
         if (agree)
             _scale = first;
     }
+    _announcedScale = _scale; // what the app reads right after createWindow
     createRole();
 }
 
@@ -247,7 +248,7 @@ void WlWindow::setSize(Size s) {
         return;
     _size = s;
     if (_configured) {
-        emitEvent({.type = EventType::Resized});
+        emitResized();
         _frameWanted = true;
     }
 }
@@ -560,13 +561,11 @@ void WlWindow::onConfigure(uint32_t serial) {
     _configured        = true;
     const bool resized = s.w != _size.w || s.h != _size.h;
     _size              = s;
-    // A fractional-scale preference can arrive before the first configure.
-    // updateScale() intentionally does not emit Resized while unconfigured,
-    // so the UI can still have its initial 1x text/layout cache even though
-    // the Wayland canvas is already at 1.5x or 2x. Always synchronize it on
-    // the first configure, even when the compositor kept our requested size.
-    if (first || resized)
-        emitEvent({.type = EventType::Resized});
+    // The first configure announces the size/scale the app now has (a
+    // fractional-scale preference may have arrived before it), and every
+    // later size or scale change goes out the same way.
+    if (first || resized || _scale != _announcedScale)
+        emitResized();
     if (stateChanged)
         emitEvent({.type = EventType::StateChanged});
     _frameWanted = true; // a Frame follows every configure
@@ -643,12 +642,18 @@ void WlWindow::updateScale() {
     if (s == _scale)
         return;
     _scale = s;
+    // Unconfigured, the first configure announces it (onConfigure).
     if (_configured) {
-        emitEvent({.type = EventType::Resized});
+        emitResized();
         _frameWanted = true;
     }
     if (app->_pointerFocus == this)
         app->applyCursor(true); // re-rasterise the theme cursor at the new scale
+}
+
+void WlWindow::emitResized() {
+    _announcedScale = _scale;
+    emitEvent({.type = EventType::Resized});
 }
 
 // ── present ─────────────────────────────────────────────────────────────────

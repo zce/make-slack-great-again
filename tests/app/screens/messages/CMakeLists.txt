@@ -14,3 +14,7 @@ foreach(t image grouping dates anchoring actions thread loading selection openin
     endif()
     msga_add_test(messages_${t} COMMAND msga_app_tests test_messages ${t} TZ LABELS messages ${cost_args})
 endforeach()
+
+# message_list_model.h's free functions: a bare model::Store, no plat/widget tree.
+target_sources(msga_app_tests PRIVATE test_message_list_model.cpp)
+msga_add_test(message_list_model_tests COMMAND msga_app_tests test_message_list_model LABELS messages)

@@ -17,6 +17,18 @@ msga_add_test(pages_tests COMMAND msga_app_tests test_pages TZ
 msga_add_test(shell_ui_tests COMMAND msga_app_tests test_shell_ui TZ
     HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-shell-ui LABELS shell COST 5.9)
 
+# sidebar_model.h's free functions: a bare model::Store, no plat/widget tree.
+target_sources(msga_app_tests PRIVATE test_sidebar_model.cpp)
+msga_add_test(sidebar_model_tests COMMAND msga_app_tests test_sidebar_model LABELS shell)
+
+# shell_notify_model.h's free functions: same, a bare model::Store.
+target_sources(msga_app_tests PRIVATE test_shell_notify_model.cpp)
+msga_add_test(shell_notify_model_tests COMMAND msga_app_tests test_shell_notify_model LABELS shell)
+
+# typingStateOf: same, a bare model::Store.
+target_sources(msga_app_tests PRIVATE test_typing_indicator.cpp)
+msga_add_test(typing_indicator_tests COMMAND msga_app_tests test_typing_indicator LABELS shell)
+
 # Its own throwaway HOME: it writes a launcher entry and a socket there.
 target_sources(msga_app_tests PRIVATE test_identity.cpp)
 msga_add_test(identity_tests COMMAND msga_app_tests test_identity

@@ -11,6 +11,7 @@ add_library(msga_screens_shell STATIC
     composer.cpp
     composer_popups.cpp
     context_menus.cpp
+    files_page.cpp
     fuzzy_match.cpp
     gif_search.cpp
     header.cpp
@@ -25,9 +26,11 @@ add_library(msga_screens_shell STATIC
     shortcuts.cpp
     shell.cpp
     shell_notify.cpp
+    shell_notify_model.cpp
     shell_text.cpp
     sidebar.cpp
     sidebar_footer.cpp
+    sidebar_model.cpp
     overview_page.cpp
     saved_page.cpp
     scheduled_page.cpp

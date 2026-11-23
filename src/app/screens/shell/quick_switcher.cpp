@@ -29,22 +29,23 @@ constexpr float kResultInsetX = 10;
 constexpr float kMessageRowH = 60;
 constexpr size_t kPreviewChars = 180;
 
+} // namespace
+
 // Issue #60: fuzzy, not substring ("xdg" lands on #xd-general). None
 // for an id we can't name yet: not something to offer.
-std::optional<double> scoreOf(const QuickSwitchName &n, const std::vector<uint32_t> &q) {
+std::optional<double> quickSwitchScore(const QuickSwitchName &n, const std::vector<uint32_t> &q) {
     if (n.text.folded.empty())
-        return std::nullopt;
+        return std::nullopt; // no name yet: not something to offer
     std::optional<double> s = fuzzyScore(q, n.text);
     if (!n.alt.folded.empty())
         if (const std::optional<double> a = fuzzyScore(q, n.alt); a && (!s || *a > *s))
             s = a;
     if (!s)
         return std::nullopt;
-    // Group DMs are named after their members, so a person matches every
-    // group they are in as well as their DM — and the groups, often more
-    // recent, buried it (issue #61): half a consecutive match.
     return *s + (n.group ? -0.5 : 0.0);
 }
+
+namespace {
 
 // A workspace tab's bubble: the rail's 40 px bubble in a slot that
 // keeps room for the selection ring (accent around the current one, a
@@ -189,7 +190,7 @@ QuickSwitcher::Scored scoreAll(
 ) {
     QuickSwitcher::Scored scored;
     for (size_t i = 0; i < order.size() && i < names.size(); ++i)
-        if (const std::optional<double> sc = scoreOf(names[i], q))
+        if (const std::optional<double> sc = quickSwitchScore(names[i], q))
             scored.emplace_back(*sc, order[i]);
     return scored;
 }
@@ -674,6 +675,17 @@ QuickSwitcher::QuickSwitcher(
     _moreButton->onClick = [this] { loadMore(); };
     refreshStrip();
     refilter();
+}
+
+// The best score: the same key and bias as the list rows, so "the
+// workspace with the best match" is the one whose top row would rank highest.
+std::optional<double> QuickSwitcher::bestScore(QuickSwitchTab &t, std::string_view query) {
+    const std::vector<uint32_t> q = fuzzyQuery(str::trim(query));
+    std::optional<double>       best;
+    for (const QuickSwitchName &n : names(t))
+        if (const std::optional<double> s = quickSwitchScore(n, q); s && (!best || *s > *best))
+            best = s;
+    return best;
 }
 
 // Names change with Meta and Users changes only (renames, a member's new

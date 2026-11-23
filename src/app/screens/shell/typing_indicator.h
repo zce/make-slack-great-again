@@ -9,6 +9,13 @@
 
 namespace shell {
 
+// Who's typing in `conv`'s `thread` right now. The agent "thinking"
+// state and its clock were deliberately removed with agent sessions.
+struct TypingState {
+    std::vector<model::UserRef> who;
+};
+TypingState typingStateOf(const model::Store &store, model::ConvRef conv, model::Ts thread);
+
 class TypingIndicator : public ui::View {
 public:
     explicit TypingIndicator(screens::Context &ctx);
