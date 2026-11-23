@@ -3777,11 +3777,13 @@ TEST("overview: Threads refresh is single-flight and retries failures") {
     CHECK_FALSE(page.canRetry());
 }
 
-TEST("activity page: the conversation tabs still read Messages | canvas") {
+TEST("activity page: the conversation tabs still read Messages | canvas | Files | Bookmarks") {
     Harness          h;
     shell::ConvTabs &tabs = h.sh->tabs();
-    CHECK(tabs.tabCount() == 2);
+    CHECK(tabs.tabCount() == 4);
     CHECK_STR(tabs.tabText(0), "Messages");
+    CHECK_STR(tabs.tabText(2), "Files");
+    CHECK_STR(tabs.tabText(3), "Bookmarks");
     tabs.setCanvas(true, true, "Plan");
     CHECK_STR(tabs.tabText(1), "Plan");
     tabs.setCanvas(true, false, {});

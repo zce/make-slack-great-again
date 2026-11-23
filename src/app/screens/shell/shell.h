@@ -34,6 +34,7 @@ class Updater;
 namespace shell {
 
 class CanvasPage;
+class FilesPage;
 class ConvHeader;
 class OverviewPage;
 class SavedPage;
@@ -181,6 +182,18 @@ public:
     void           openBrowseDialog(int tab);
     // "Create a channel": the two-step dialog, then the backend creates it.
     void           openCreateChannel();
+
+    // The header's tabs: ConvTabs::kMessages, kCanvas or kFiles.
+    void                                showTab(int tab);
+    FilesPage                          &filesPage() const { return *_files; }
+    // The open conversation's bookmarks as last read (the Bookmarks tab),
+    // asked for again when it opens and they are older than 5 minutes.
+    const std::vector<model::Bookmark> &bookmarks() const;
+    void                                lookUpBookmarks(model::ConvRef conv);
+    // The Bookmarks tab's menu: one item per bookmark; a pick opens it.
+    std::vector<ui::MenuItem>           bookmarkItems() const;
+    void                                openBookmark(size_t i);
+    void                                showBookmarksMenu();
 
     // The sidebar's entries over the sections, each an overview page in the
     // content area in the conversation's place, no composer, refilled on
@@ -479,12 +492,21 @@ private:
     TypingIndicator              *_typing   = nullptr;
     ui::View                     *_messages = nullptr, *_mainPane = nullptr;
     CanvasPage                   *_canvas   = nullptr;
+    FilesPage                    *_files    = nullptr;
     ui::View                     *_welcome  = nullptr; // the shortcuts panel (no conversation open)
     ui::View                     *_splitter = nullptr;
     ThreadArea                   *_thread   = nullptr;
     QuickSwitcher                *_switcher = nullptr;
     std::unique_ptr<Menus>        _menus;
     std::unique_ptr<ProfileCards> _profiles;
+
+    // Bookmarks by "<workspace id>/<conversation id>", with when they were read.
+    struct BookmarkList {
+        std::vector<model::Bookmark> items;
+        int64_t                      at = 0; // epoch secs
+    };
+    std::unordered_map<std::string, BookmarkList> _bookmarks;
+    std::string bookmarkKey(model::ConvRef conv) const;
 
     model::ConvRef              _current = model::kNoConv;
     NavHistory                  _nav;

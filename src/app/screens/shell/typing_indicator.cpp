@@ -66,12 +66,18 @@ void TypingIndicator::setTarget(model::ConvRef conv, model::Ts thread) {
     refresh();
 }
 
+TypingState typingStateOf(const model::Store &store, model::ConvRef conv, model::Ts thread) {
+    TypingState out;
+    if (conv != model::kNoConv)
+        for (const model::Typing &t : store.typing(conv))
+            if (t.thread == thread)
+                out.who.push_back(t.user);
+    return out;
+}
+
 void TypingIndicator::refresh() {
-    std::vector<model::UserRef> who;
-    if (_conv != model::kNoConv)
-        for (const model::Typing &t : _ctx.store().typing(_conv))
-            if (t.thread == _thread)
-                who.push_back(t.user);
+    const TypingState state = typingStateOf(_ctx.store(), _conv, _thread);
+    const auto       &who   = state.who;
     setVisible(!who.empty());
     if (who.empty()) {
         _label->setText({});

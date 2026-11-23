@@ -14,6 +14,7 @@
 #include "screens/shell/nav_chrome.h"
 #include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar_footer.h"
+#include "screens/shell/sidebar_model.h"
 
 #include <algorithm>
 #include <cmath>
@@ -258,15 +259,6 @@ public:
     }
 };
 
-bool looksLikeUserId(std::string_view s) {
-    if (s.size() < 9 || (s[0] != 'U' && s[0] != 'W'))
-        return false;
-    for (char ch : s.substr(1))
-        if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')))
-            return false;
-    return true;
-}
-
 // The list's content. Rows a rebuild just made have no frames until the
 // layout pass, so revealing one waits for this view's layout: after it, the
 // rows sit where they will be drawn (scrolling from paint instead would move
@@ -283,14 +275,6 @@ public:
 };
 
 } // namespace
-
-bool deadDm(const model::Store &store, const model::Conversation &c) {
-    if (c.kind != ConvKind::Dm || c.dmUser == model::kNoUser)
-        return false;
-    const model::User &u = store.user(c.dmUser);
-    return !u.placeholder &&
-           (u.deleted || u.displayName == "deactivateduser" || looksLikeUserId(u.label()));
-}
 
 // ── Rows ────────────────────────────────────────────────────────────────────
 
@@ -830,12 +814,19 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
             // the user's sections unless their scope is on). A starred one in
             // one of the user's sections is listed there: that scope decides.
             const bool  inOwn = r && r->section->kind == Sidebar::Custom;
-            const bool  filterFlip =
-                _filters.unreadsOnly && ch.conv != _selected &&
-                !(cv.starred && !inOwn && !_filters.unreadsOnlyAppliesToStarred) &&
-                !(inOwn && !_filters.unreadsOnlyAppliesToCustomSections) &&
-                !(r && r->section->kind == Sidebar::Drafts) &&
-                (r ? r->unread != paintsUnread(cv) : cv.member && paintsUnread(cv));
+            const bool  filterFlip = sidebarFilterFlip({
+                .unreadsOnly                        = _filters.unreadsOnly,
+                .isSelectedConv                     = ch.conv == _selected,
+                .starred                            = cv.starred,
+                .isInCustomSection                  = inOwn,
+                .isInDrafts                         = r && r->section->kind == Sidebar::Drafts,
+                .unreadsOnlyAppliesToStarred        = _filters.unreadsOnlyAppliesToStarred,
+                .unreadsOnlyAppliesToCustomSections = _filters.unreadsOnlyAppliesToCustomSections,
+                .rowExists                          = r != nullptr,
+                .rowWasUnread                       = r && r->unread,
+                .wouldPaintUnread                   = paintsUnread(cv),
+                .isMember                           = cv.member,
+            });
             // Same classify() rebuild() uses, so a row only looks "moved" when it would be.
             const bool reclassified = r && misplaced(ch.conv);
             if (!r != !cv.member || reclassified || filterFlip)
@@ -878,12 +869,12 @@ void Sidebar::setFilters(const Filters &f) {
 }
 
 bool Sidebar::muted(const model::Conversation &c) const {
-    return level(c) == model::NotifyLevel::Nothing;
+    return sidebarMuted(level(c));
 }
 
 // The effective level: Default follows the global level.
 model::NotifyLevel Sidebar::level(const model::Conversation &c) const {
-    return c.effectiveNotify(_filters.defaultLevel);
+    return sidebarLevel(c, _filters.defaultLevel);
 }
 
 // The one rule for bold rows and the unreads-only filter. A mute silences
@@ -891,23 +882,11 @@ model::NotifyLevel Sidebar::level(const model::Conversation &c) const {
 // DM: a muted channel is bold only for its mentions, a muted DM for any
 // unread message.
 bool Sidebar::paintsUnread(const model::Conversation &c) const {
-    if (c.unread == 0)
-        return false;
-    if (muted(c))
-        return c.isDirect() || c.mentions > 0;
-    return !(
-        level(c) == model::NotifyLevel::Mentions && !_filters.highlightMentionsOnly &&
-        !c.isDirect() && c.mentions == 0
-    );
+    return sidebarPaintsUnread(c, _filters.defaultLevel, _filters.highlightMentionsOnly);
 }
 
 int Sidebar::redCount(const model::Conversation &c) const {
-    if (c.latest && tsSecs(c.latest) < _ctx.backend().nowSecs() - kMaxNotifyAgeSecs)
-        return 0;
-    // DMs count unread messages; channels count mentions.
-    // This fork has no agent-session capability (that feature was removed).
-    // Muting suppresses the ordinary rows but not these important counts.
-    return c.isDirect() ? int(c.unread) : int(c.mentions);
+    return sidebarRedCount(c, _filters.defaultLevel, _ctx.backend().nowSecs());
 }
 
 bool Sidebar::isApp(const model::Conversation &c) const {
@@ -916,16 +895,7 @@ bool Sidebar::isApp(const model::Conversation &c) const {
 
 // A Slack Connect conversation, shared with another org.
 bool Sidebar::isExternal(const model::Conversation &c) const {
-    const auto &store = _ctx.store();
-    if (c.extShared.value_or(false))
-        return true;
-    if (c.kind == ConvKind::Dm)
-        return c.dmUser != model::kNoUser && store.user(c.dmUser).stranger;
-    if (c.kind == ConvKind::Group)
-        return std::any_of(c.members.begin(), c.members.end(), [&](model::UserRef u) {
-            return store.user(u).stranger;
-        });
-    return false;
+    return sidebarIsExternal(c, _ctx.store());
 }
 
 // An unread DM or group DM from a VIP -- temporary like Slack's own "VIP
@@ -933,16 +903,7 @@ bool Sidebar::isExternal(const model::Conversation &c) const {
 // messages are its peer's; a group DM's newest one must be loaded and a
 // VIP's, as being in the group is not having sent the unread message.
 bool Sidebar::isVip(const model::Conversation &c) const {
-    if (c.unread == 0 || muted(c) || !c.isDirect())
-        return false;
-    const auto &store = _ctx.store();
-    if (c.kind == ConvKind::Dm)
-        return c.dmUser != model::kNoUser && store.user(c.dmUser).vip;
-    if (c.messages.empty())
-        return false;
-    const model::Message &last = c.messages.back();
-    return last.ts == c.latest && last.ts > c.lastRead && last.user != model::kNoUser &&
-           store.user(last.user).vip;
+    return sidebarIsVip(c, _ctx.store(), _filters.defaultLevel);
 }
 
 // VIP unreads first: Slack lifts them above every section, starred and app
@@ -950,18 +911,29 @@ bool Sidebar::isVip(const model::Conversation &c) const {
 // draft goes to Drafts, out of Starred and the user's sections too (see
 // rebuild), so the draft is never out of sight.
 Sidebar::Kind Sidebar::classify(model::ConvRef ref) const {
-    const auto &c = _ctx.store().conversation(ref);
-    if (_ctx.backend().capabilities().vips && isVip(c))
-        return Vip;
-    if (_ctx.store().draft(ref, 0) != nullptr)
-        return Drafts;
-    if (c.starred)
+    switch (sidebarClassify(
+        ref,
+        _ctx.store(),
+        _filters.defaultLevel,
+        _ctx.backend().capabilities().vips,
+        _filters.externalSection
+    )) {
+    case SidebarKind::Starred:
         return Starred;
-    if (isApp(c))
+    case SidebarKind::Channels:
+        return Channels;
+    case SidebarKind::Direct:
+        return Direct;
+    case SidebarKind::Apps:
         return Apps;
-    if (_filters.externalSection && isExternal(c))
+    case SidebarKind::External:
         return External;
-    return c.isDirect() ? Direct : Channels;
+    case SidebarKind::Vip:
+        return Vip;
+    case SidebarKind::Drafts:
+        return Drafts;
+    }
+    return Channels; // unreachable
 }
 
 void Sidebar::setVisited(std::unordered_map<std::string, int64_t> stamps) {
@@ -992,18 +964,14 @@ bool Sidebar::misplaced(ConvRef ref) const {
 // Relevant: unread, open, visited or active within the window, or a
 // channel nothing is known about yet.
 bool Sidebar::relevant(ConvRef ref) const {
-    const auto &c = _ctx.store().conversation(ref);
-    if (c.unread > 0 || ref == _selected)
-        return true;
-    const int64_t cutoff =
-        _ctx.backend().nowSecs() - int64_t(std::max(1, _filters.relevantDays)) * 86400;
-    const auto v = _visited.find(c.id);
-    if (v != _visited.end() && v->second >= cutoff)
-        return true;
-    const model::Ts activity = std::max(c.latest, c.lastRead);
-    if (activity)
-        return tsSecs(activity) >= cutoff;
-    return !c.isDirect();
+    return sidebarRelevant(
+        ref,
+        _ctx.store(),
+        _selected,
+        _ctx.backend().nowSecs(),
+        _filters.relevantDays,
+        _visited
+    );
 }
 
 void Sidebar::rebuild() {
@@ -1066,8 +1034,8 @@ void Sidebar::rebuild() {
         _navDivider->style().margins(20, 12, 20, 10);
     }
 
-    // Bucketed by classify(); sorted per section by sortOf().
-    std::vector<ConvRef> lists[4], hiddenCh, external, vipUnread, drafts;
+    // Bucketed by sidebarClassify(); sorted per section by sortOf().
+    std::vector<ConvRef> lists[4], external, vipUnread, drafts;
     const auto           listed = [&](ConvRef c) {
         return !_filters.unreadsOnly || c == _selected || paintsUnread(store.conversation(c));
     };
@@ -1107,52 +1075,33 @@ void Sidebar::rebuild() {
                  listed(c)))
                 custom[s].push_back(c);
         }
-    for (ConvRef c = 0; c < store.conversationCount(); ++c) {
-        const auto &cv = store.conversation(c);
-        if (!cv.member || deadDm(store, cv) || inCustom[c])
-            continue;
-        // classify() picks the bucket; each case keeps its own visibility
-        // rule (unread-only filter, relevance window, ...).
-        switch (classify(c)) {
-        case Drafts:
-            drafts.push_back(c); // a draft is never hidden by the filters
-            break;
-        case Starred:
-            if (!_filters.unreadsOnly || !_filters.unreadsOnlyAppliesToStarred || listed(c))
-                lists[Starred].push_back(c);
-            break;
-        case Apps:
-            if (listed(c) && (_filters.showAgentsApps || c == _selected))
-                lists[Apps].push_back(c);
-            break;
-        case Vip:
-            vipUnread.push_back(c); // unread already required; always shown
-            break;
-        case External:
-            // Keep external conversations discoverable beyond the relevance
-            // window, as before the DMs-first change.
-            if (listed(c))
-                external.push_back(c);
-            break;
-        case Direct:
-            if (relevant(c) && listed(c))
-                lists[Direct].push_back(c);
-            break;
-        case Channels:
-            if (relevant(c) && listed(c))
-                lists[Channels].push_back(c);
-            else
-                hiddenCh.push_back(c);
-            break;
-        case Team:
-        case Custom:
-        case KindCount:
-            break; // classify() never returns these
-        }
-    }
-    _hiddenChannels = _showAllChannels ? 0 : int(hiddenCh.size());
-    if (_showAllChannels)
-        lists[Channels].insert(lists[Channels].end(), hiddenCh.begin(), hiddenCh.end());
+    const SidebarListFilters listFilters{
+        _filters.relevantDays,
+        _filters.showAgentsApps,
+        _filters.unreadsOnly,
+        _filters.externalSection,
+        _filters.unreadsOnlyAppliesToStarred,
+        _filters.highlightMentionsOnly,
+        _filters.defaultLevel
+    };
+    SidebarLists built = buildSidebarLists(
+        store,
+        listFilters,
+        _selected,
+        caps.vips,
+        now,
+        _visited,
+        _showAllChannels,
+        inCustom
+    );
+    lists[Starred]  = std::move(built.starred);
+    lists[Channels] = std::move(built.channels);
+    lists[Direct]   = std::move(built.direct);
+    lists[Apps]     = std::move(built.apps);
+    external        = std::move(built.external);
+    vipUnread       = std::move(built.vipUnread);
+    drafts          = std::move(built.drafts);
+    _hiddenChannels = int(built.hiddenChannels.size());
     struct Def {
         Icon        icon;
         const char *title;
@@ -2155,37 +2104,6 @@ bool Sidebar::joinHuddle(ConvRef conv) {
 int Sidebar::attentionCount() const {
     return workspaceAttention(_ctx.store(), _filters.defaultLevel, _ctx.backend().nowSecs())
         .important;
-}
-
-Attention workspaceAttention(const model::Store &st, model::NotifyLevel fallback, int64_t nowSecs) {
-    Attention a;
-    for (ConvRef c = 0; c < st.conversationCount(); ++c) {
-        const auto &cv = st.conversation(c);
-        if (!cv.member)
-            continue; // left or closed
-        const bool conversationFresh =
-            !cv.latest || tsSecs(cv.latest) >= nowSecs - kMaxNotifyAgeSecs;
-        const model::Ts threadLatest = st.unreadThreadLatest(c);
-        const bool threadFresh =
-            !threadLatest || tsSecs(threadLatest) >= nowSecs - kMaxNotifyAgeSecs;
-        const model::NotifyLevel level = cv.effectiveNotify(fallback);
-        // A mute (or an explicit Nothing) suppresses ordinary channel
-        // unread, not the important badge: mentions and all DM messages
-        // still count, as Slack's muted-conversation rule says.
-        const int conversation =
-            conversationFresh ? (cv.isDirect() ? int(cv.unread) : int(cv.mentions)) : 0;
-        // A followed thread reply can be real attention even when the
-        // channel cursor (or its top-level message) is old. Compare the two
-        // signals for one conversation so a reply counted in both is not
-        // added twice; this is a conservative union, not an exact Slack
-        // total.
-        const int threads = threadFresh ? st.unreadThreads(c) : 0;
-        a.important += std::max(conversation, threads);
-        a.unread = a.unread ||
-                   (conversationFresh && !cv.isDirect() &&
-                    level == model::NotifyLevel::All && cv.unread > cv.mentions);
-    }
-    return a;
 }
 
 } // namespace shell

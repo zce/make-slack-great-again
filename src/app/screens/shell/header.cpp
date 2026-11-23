@@ -550,9 +550,18 @@ public:
         Label       probe(label->text(), Font::TabBold);
         const float w = std::min(240.f, std::ceil(probe.measure(kInf, kInf).w));
         label->style().width(w);
-        style().padding(lead(), 0, 10, 0).width(lead() + w + 10);
+        full = lead() + w + 10;
+        applyWidth();
     }
-    void setActive(bool on) {
+    // Compact: the icon alone, its text as the tooltip (a narrow strip).
+    void setCompact(bool on) {
+        if (on == compact || !hasIcon)
+            return;
+        compact = on;
+        applyWidth();
+    }
+    float width() const { return compact ? 10 + 15 + 10 : full; }
+    void  setActive(bool on) {
         active = on;
         label->setFont(on ? Font::TabBold : Font::Control);
         label->setColor(on ? C::Text : C::TextMuted);
@@ -574,7 +583,15 @@ public:
     Icon   icon;
     bool   hasIcon;
     Label *label;
-    bool   active = false;
+    bool   active = false, compact = false;
+    float  full = 0; // the width with its text
+
+private:
+    void applyWidth() {
+        label->setVisible(!compact);
+        setTooltip(compact ? label->text() : std::string());
+        style().padding(lead(), 0, 10, 0).width(width());
+    }
 };
 
 } // namespace
@@ -656,6 +673,54 @@ void TabStrip::paintOver(gfx::Painter &p) {
 ConvTabs::ConvTabs() {
     addTab(Icon::MessageCircle, tr("Messages"));
     addTab(Icon::StickyNotePlus, tr("Add canvas"));
+    addTab(Icon::Paperclip, tr("Files"));
+    addTab(Icon::Bookmark, tr("Bookmarks"));
+    _tabs[kFiles]->setVisible(false);
+    _tabs[kBookmarks]->setVisible(false);
+    _tabs[kBookmarks]->onClick = [this] {
+        if (onBookmarks)
+            onBookmarks();
+    };
+}
+
+void ConvTabs::setFiles(bool visible) {
+    _tabs[kFiles]->setVisible(visible);
+    if (!visible && _active == kFiles)
+        setActive(kMessages);
+}
+
+void ConvTabs::setBookmarks(bool visible) {
+    _tabs[kBookmarks]->setVisible(visible);
+}
+
+void ConvTabs::layout() {
+    // Too narrow for every tab with its text: Files and Bookmarks show their
+    // icons alone. MSGA puts a right-aligned huddle action area in this same
+    // strip, so its measured width must come out of the tab budget too.
+    const Style &st   = currentStyle();
+    float        need = 0;
+    for (View *v : _tabs)
+        if (v->visible())
+            need += static_cast<Tab *>(v)->full + st.gap;
+    float reserved = 0;
+    for (size_t i = 0; i < childCount(); ++i) {
+        View *c   = child(i);
+        bool  tab = false;
+        for (View *t : _tabs)
+            tab = tab || t == c;
+        if (tab || !c->visible())
+            continue;
+        const Style &cs = c->currentStyle();
+        reserved += c->measure(kInf, kInf).w + cs.margin.l + cs.margin.r + st.gap;
+    }
+    const bool compact = need + reserved > width() - st.pad.l - st.pad.r;
+    for (int i : {kFiles, kBookmarks})
+        static_cast<Tab *>(_tabs[size_t(i)])->setCompact(compact);
+    TabStrip::layout();
+}
+
+bool ConvTabs::compact() const {
+    return static_cast<Tab *>(_tabs[kFiles])->compact;
 }
 
 void ConvTabs::setCanvas(bool visible, bool hasCanvas, std::string title) {
@@ -666,8 +731,8 @@ void ConvTabs::setCanvas(bool visible, bool hasCanvas, std::string title) {
         hasCanvas ? (title.empty() ? std::string(tr("Untitled")) : std::move(title))
                   : std::string(tr("Add canvas"))
     );
-    if (!visible && _active == 1)
-        setActive(0); // can't stay on a hidden tab
+    if (!visible && _active == kCanvas)
+        setActive(kMessages); // can't stay on a hidden tab
 }
 
 } // namespace shell
