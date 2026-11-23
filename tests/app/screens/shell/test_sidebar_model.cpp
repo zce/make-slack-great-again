@@ -400,7 +400,7 @@ TEST("sidebar_model: workspaceAttention sums mentions/unread, skips muted and st
 
     Attention att = workspaceAttention(s, NotifyLevel::All, 1'000'000);
     CHECK(att.important == 3); // the muted channel's mention still counts
-    CHECK_FALSE(att.unread);   // its ordinary unread is silenced
+    CHECK(att.unread);         // the first channel's ordinary unread still counts
     CHECK(att.dot() == 2);     // important > 0 -> red
 }
 

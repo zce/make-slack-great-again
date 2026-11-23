@@ -677,17 +677,6 @@ QuickSwitcher::QuickSwitcher(
     refilter();
 }
 
-// The best score: the same key and bias as the list rows, so "the
-// workspace with the best match" is the one whose top row would rank highest.
-std::optional<double> QuickSwitcher::bestScore(QuickSwitchTab &t, std::string_view query) {
-    const std::vector<uint32_t> q = fuzzyQuery(str::trim(query));
-    std::optional<double>       best;
-    for (const QuickSwitchName &n : names(t))
-        if (const std::optional<double> s = quickSwitchScore(n, q); s && (!best || *s > *best))
-            best = s;
-    return best;
-}
-
 // Names change with Meta and Users changes only (renames, a member's new
 // label): rebuilt then, not per keystroke.
 const std::vector<QuickSwitchName> &QuickSwitcher::names(QuickSwitchTab &t) {

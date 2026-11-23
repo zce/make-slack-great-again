@@ -259,15 +259,6 @@ public:
     }
 };
 
-bool looksLikeUserId(std::string_view s) {
-    if (s.size() < 9 || (s[0] != 'U' && s[0] != 'W'))
-        return false;
-    for (char ch : s.substr(1))
-        if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')))
-            return false;
-    return true;
-}
-
 // The list's content. Rows a rebuild just made have no frames until the
 // layout pass, so revealing one waits for this view's layout: after it, the
 // rows sit where they will be drawn (scrolling from paint instead would move
@@ -284,14 +275,6 @@ public:
 };
 
 } // namespace
-
-bool deadDm(const model::Store &store, const model::Conversation &c) {
-    if (c.kind != ConvKind::Dm || c.dmUser == model::kNoUser)
-        return false;
-    const model::User &u = store.user(c.dmUser);
-    return !u.placeholder &&
-           (u.deleted || u.displayName == "deactivateduser" || looksLikeUserId(u.label()));
-}
 
 // ── Rows ────────────────────────────────────────────────────────────────────
 
@@ -905,7 +888,6 @@ bool Sidebar::paintsUnread(const model::Conversation &c) const {
 int Sidebar::redCount(const model::Conversation &c) const {
     return sidebarRedCount(c, _filters.defaultLevel, _ctx.backend().nowSecs());
 }
-
 
 bool Sidebar::isApp(const model::Conversation &c) const {
     return c.kind == ConvKind::Dm && c.dmUser != model::kNoUser && _ctx.store().user(c.dmUser).bot;
@@ -2123,6 +2105,5 @@ int Sidebar::attentionCount() const {
     return workspaceAttention(_ctx.store(), _filters.defaultLevel, _ctx.backend().nowSecs())
         .important;
 }
-
 
 } // namespace shell
