@@ -1069,6 +1069,19 @@ TEST("redirect: Authorization only to the same host") {
     CHECK_FALSE(contains(r.body, "authorization"));
 }
 
+TEST("redirect: an https exchange never downgrades to http") {
+    NEED_SERVER();
+    if (srv.tlsBase.empty())
+        return skip("https downgrade", srv.tlsWhy);
+    net::Request req;
+    req.url = srv.tlsBase + "/to-http";
+    req.headers.push_back({"Authorization", "Bearer x"});
+    const net::Response r = fetch(req);
+    CHECK_STR(r.error, "");
+    CHECK(r.status == 302); // handed back, not followed over plain http
+    CHECK_STR(r.url, srv.tlsBase + "/to-http");
+}
+
 TEST("redirect: limits and POST to GET") {
     NEED_SERVER();
     net::Request req;

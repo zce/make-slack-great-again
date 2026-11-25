@@ -121,6 +121,28 @@ net::Response ctl(const char *method, const std::string &path, std::string body)
     return out;
 }
 
+const TlsProxy &tlsProxy() {
+    static const TlsProxy value = [] {
+        TlsProxy            out;
+        const net::Response r = ctl("POST", "/_ctl/tls");
+        json::Document      doc;
+        doc.parse(r.body, nullptr);
+        if (!doc.root()["ok"].boolean()) {
+            out.error = std::string(doc.root()["error"].str("unavailable"));
+            return out;
+        }
+        out.proxy = "http://127.0.0.1:" + std::to_string(doc.root()["proxy"].integer());
+        out.ca    = std::string(doc.root()["ca"].str());
+        out.port  = int(doc.root()["tls_port"].integer());
+        if (out.ca.empty() || out.port <= 0) {
+            out       = TlsProxy();
+            out.error = "bad /_ctl/tls answer";
+        }
+        return out;
+    }();
+    return value;
+}
+
 void set(const std::string &answers) {
     ctl("POST", "/_ctl/set", answers);
 }

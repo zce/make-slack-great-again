@@ -1357,14 +1357,17 @@ void SlackBackend::react(ConvRef conv, Ts ts, std::string_view name, bool add) {
 }
 
 // The bytes with the workspace's token (and,
-// for session auth, its d cookie), then written to disk on a worker. Slack
-// answers a request it doesn't accept with its sign-in page (HTML, 200):
-// that is a failure, not the file.
+// for session auth, its d cookie), then written to disk on a worker. A file's
+// url_private is not proof it lives on Slack: an external file's points at its
+// provider (Slack's file object documentation says so), so only Slack's own
+// https hosts get the credentials. Slack answers a request it doesn't accept
+// with its sign-in page (HTML, 200): that is a failure, not the file.
 void SlackBackend::downloadFile(const std::string &url, std::string toPath, Done done) {
     net::Request req;
     req.url       = url;
     req.timeoutMs = kUploadTimeoutMs;
-    addAuthHeaders(req.headers, _auth);
+    if (const Auth *auth = downloadAuth(url, {}, &_auth))
+        addAuthHeaders(req.headers, *auth);
     // Held here too: a workspace switch (our destructor) cancels the
     // transfer and still answers it, so the caller's background job ends.
     auto held = std::make_shared<Done>(std::move(done));
@@ -2395,7 +2398,10 @@ void SlackBackend::loadCanvasContent(const std::string &fileId, CanvasHtmlDone d
             }
             net::Request req;
             req.url = url;
-            addAuthHeaders(req.headers, _auth);
+            // files.info's url_private names the host that actually serves it:
+            // a remote file's can be external, so classify it like a download.
+            if (const Auth *auth = downloadAuth(url, {}, &_auth))
+                addAuthHeaders(req.headers, *auth);
             _write->raw(std::move(req), [done](net::Response r) {
                 if (r.error == "cancelled")
                     return;

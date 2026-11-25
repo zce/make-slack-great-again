@@ -63,11 +63,18 @@ WebSockets (Socket Mode and the RTM presence link):
     POST /_ctl/ws/opt       {"ws_extra": n, "rtm_nopong": bool}
     GET  /_ctl/ws           [{conn, open}] of every socket so far
 """
+import atexit
 import base64
 import hashlib
 import json
+import os
+import shutil
+import socket
+import ssl
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -102,6 +109,137 @@ def ws_target(conn):
         return sockets.get(conn)
     live = [h for h in sockets.values() if h.ws_open and h.ws_id.startswith('sm-')]
     return live[-1] if live else None
+
+
+# The Slack file hosts over TLS, on demand (/_ctl/tls): a certificate for
+# them, an HTTPS server with the same Handler, and a CONNECT proxy that
+# relays every tunnel to it. The client reaches files.slack.com through the
+# proxy; no DNS or /etc/hosts entry is involved. Its CA bundle goes in
+# SSL_CERT_FILE. Kept apart from `state`: /_ctl/reset must not stop them.
+tls_state = {'info': None}
+
+
+def make_cert():
+    openssl = shutil.which('openssl')
+    if not openssl:
+        return None, 'no openssl'
+    tmp = tempfile.mkdtemp(prefix='msga-slack-tls-')
+    atexit.register(shutil.rmtree, tmp, True)
+    key, crt = os.path.join(tmp, 'key.pem'), os.path.join(tmp, 'cert.pem')
+    r = subprocess.run(
+        [openssl, 'req', '-x509', '-newkey', 'ec', '-pkeyopt',
+         'ec_paramgen_curve:prime256v1', '-nodes', '-days', '2',
+         '-subj', '/CN=files.slack.com',
+         '-addext',
+         'subjectAltName=DNS:files.slack.com,DNS:files.slack-edge.com,'
+         'DNS:localhost,IP:127.0.0.1',
+         '-addext', 'basicConstraints=critical,CA:TRUE',
+         '-keyout', key, '-out', crt],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if r.returncode != 0:
+        return None, 'openssl failed'
+    bundle = os.path.join(tmp, 'bundle.pem')
+    with open(bundle, 'wb') as out:
+        out.write(open(crt, 'rb').read())
+        for sys_bundle in ('/etc/ssl/certs/ca-certificates.crt',
+                           '/etc/pki/tls/certs/ca-bundle.crt',
+                           '/etc/ssl/ca-bundle.pem', '/etc/ssl/cert.pem'):
+            if os.path.exists(sys_bundle):
+                out.write(open(sys_bundle, 'rb').read())
+                break
+    return (key, crt, bundle), None
+
+
+class Proxy:
+    """A CONNECT tunnel to the local TLS server: the fake's Slack file host."""
+
+    def __init__(self, target_port):
+        self.target = target_port
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(('127.0.0.1', 0))
+        self.sock.listen(16)
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.handle, args=(conn,), daemon=True).start()
+
+    def handle(self, conn):
+        try:
+            data = b''
+            while b'\r\n\r\n' not in data and len(data) < 8192:
+                part = conn.recv(4096)
+                if not part:
+                    return
+                data += part
+            head, rest = data.split(b'\r\n\r\n', 1)
+            if not head.startswith(b'CONNECT '):
+                return
+            up = socket.create_connection(('127.0.0.1', self.target))
+            conn.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+            if rest:
+                up.sendall(rest)
+
+            def pump(src, dst):
+                try:
+                    while True:
+                        chunk = src.recv(65536)
+                        if not chunk:
+                            break
+                        dst.sendall(chunk)
+                except OSError:
+                    pass
+                try:
+                    dst.shutdown(socket.SHUT_WR)
+                except OSError:
+                    pass
+
+            other = threading.Thread(target=pump, args=(conn, up), daemon=True)
+            other.start()
+            pump(up, conn)
+            other.join(timeout=5)
+        except OSError:
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+
+def start_tls():
+    if tls_state['info'] is not None:
+        return tls_state['info']
+    files, why = make_cert()
+    if not files:
+        tls_state['info'] = {'ok': False, 'error': why}
+        return tls_state['info']
+    key, crt, bundle = files
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(crt, key)
+
+    class TlsServer(ThreadingHTTPServer):
+        def finish_request(self, request, client_address):
+            try:
+                request = context.wrap_socket(request, server_side=True)
+            except (ssl.SSLError, OSError):
+                return
+            self.RequestHandlerClass(request, client_address, self)
+
+    server = TlsServer(('127.0.0.1', 0), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    proxy = Proxy(server.server_address[1])
+    tls_state['info'] = {
+        'ok': True, 'proxy': proxy.port, 'tls_port': server.server_address[1], 'ca': bundle,
+    }
+    return tls_state['info']
 
 
 reset()
@@ -343,6 +481,20 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/_ctl/log':
             with lock:
                 self.send_json(state['log'])
+        elif self.path.startswith('/redirect?'):
+            # The same request headers, then a Location: a redirect test.
+            target = parse_qs(self.path.split('?', 1)[1]).get('to', [''])[0]
+            with lock:
+                state['log'].append({
+                    'method': 'download', 'form': {'path': self.path},
+                    'auth': self.headers.get('Authorization', ''),
+                    'cookie': self.headers.get('Cookie', ''),
+                    'ctype': '', 'len': 0,
+                })
+            self.send_response(302)
+            self.send_header('Location', target)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
         elif self.path.startswith('/update/'):  # /update/<version>/<sha256>.manifest
             version, sha = self.path[len('/update/'):].rsplit('.', 1)[0].split('/', 1)
             self.send_json({'version': int(version), 'updatedAt': '2026-10-01T00:00:00Z',
@@ -386,6 +538,8 @@ class Handler(BaseHTTPRequestHandler):
                 for k, v in json.loads(raw).items():
                     state['table'][k] = v if isinstance(v, list) else [v]
                 return self.send_json({'ok': True})
+            if path == '/_ctl/tls':
+                return self.send_json(start_tls())
             if path == '/_ctl/ws/opt':
                 state.update(json.loads(raw))
                 return self.send_json({'ok': True})

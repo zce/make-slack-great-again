@@ -344,6 +344,12 @@ void Client::Impl::run(Job &job) {
         Url next;
         if (!next.parse(url.resolve(location)) || next.scheme == "ws" || next.scheme == "wss")
             break; // hand the 3xx back as is
+        // Never carry an https exchange onto plain http: the caller's
+        // Authorization and cookies (including the seeded d cookie) would
+        // cross the wire in clear. A public http resource can be fetched
+        // directly, without them, by its own request.
+        if (url.secure() && !next.secure())
+            break;
         // What browsers do: 303 always, and 301/302 after a POST, become a GET.
         if (resp.status == 303 ||
             ((resp.status == 301 || resp.status == 302) && req.method == "POST")) {
