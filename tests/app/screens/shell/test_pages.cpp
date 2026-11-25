@@ -906,6 +906,9 @@ TEST("emoji picker: the search finds what a fold-per-name search finds; recents 
 // reshapes: sweeping the pointer down the sidebar builds no text layout.
 TEST("pages: hovering sidebar rows reshapes no text") {
     Harness         h;
+    // The fixture's bookmarks arrive a fake round trip after the open and add
+    // the header's Bookmarks tab: on a slow machine that lands mid-sweep.
+    REQUIRE(until([&] { return h.sh->tabs().tab(shell::ConvTabs::kBookmarks)->visible(); }));
     const ui::RectF sb    = h.sh->sidebar().windowRect();
     auto            sweep = [&] {
         for (float y = sb.y + 4; y < sb.bottom() - 4; y += 7) {
@@ -915,9 +918,6 @@ TEST("pages: hovering sidebar rows reshapes no text") {
         app().platform().testHooks()->injectPointerMove(h.win->native(), {sb.right() + 300, 400});
         app().pump(0);
     };
-    // The fixture's bookmarks arrive a fake round trip after the open and add
-    // the header's Bookmarks tab: on a slow machine that lands mid-sweep.
-    REQUIRE(until([&] { return h.sh->tabs().tab(shell::ConvTabs::kBookmarks)->visible(); }));
     sweep(); // anything shaped lazily on a first hover (none expected) is done
     const size_t n0 = text::layoutBuilds();
     sweep();
