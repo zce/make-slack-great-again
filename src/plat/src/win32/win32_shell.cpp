@@ -403,6 +403,7 @@ struct Shell final : IconHost {
 #endif
 
     int            badge        = 0;
+    bool           badgeDot     = false; // the count is 0
     HICON          badgeIcon    = nullptr;
     ITaskbarList3 *taskbar      = nullptr;
     bool           taskbarTried = false;
@@ -1210,15 +1211,18 @@ void Win32App::forceBalloonNotifications(bool on) {
 
 // ── badge ───────────────────────────────────────────────────────────────────
 
-void Win32App::setBadgeCount(int count) {
+void Win32App::setBadgeCount(int count, bool dot) {
     Shell &s = shell();
     count    = std::max(0, count);
-    if (count == s.badge)
+    dot      = dot && count == 0;
+    if (count == s.badge && dot == s.badgeDot)
         return;
-    s.badge = count;
+    s.badge    = count;
+    s.badgeDot = dot;
     if (s.badgeIcon)
         DestroyIcon(s.badgeIcon);
-    s.badgeIcon = count > 0 ? iconFromImage(badgeImage(count, smallIconSize())) : nullptr;
+    s.badgeIcon =
+        count > 0 || dot ? iconFromImage(badgeImage(count, dot, smallIconSize())) : nullptr;
     for (auto *w : _windows)
         applyBadge(w->hwnd());
 }
@@ -1244,7 +1248,9 @@ void Win32App::applyBadge(HWND h) {
     if (!s.taskbar)
         return;
     // The description is what screen readers announce for the overlay.
-    const std::wstring text = s.badge > 0 ? std::to_wstring(s.badge) + L" unread" : std::wstring();
+    const std::wstring text = s.badge > 0  ? std::to_wstring(s.badge) + L" unread"
+                              : s.badgeDot ? std::wstring(L"Unread")
+                                           : std::wstring();
     s.taskbar->SetOverlayIcon(h, s.badgeIcon, text.empty() ? nullptr : text.c_str());
 }
 
