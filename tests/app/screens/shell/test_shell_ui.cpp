@@ -113,6 +113,12 @@ struct Fake : fake::FakeBackend {
                 done({}, error);
         });
     }
+    void loadConversationFiles(ConvRef conv, int page, std::function<void(FilesPage)> done) override {
+        if (holdFiles)
+            heldFiles = std::move(done);
+        else
+            fake::FakeBackend::loadConversationFiles(conv, page, std::move(done));
+    }
     void sendBlocks(
         ConvRef conv, std::string text, std::string blocks, Ts thread, bool bc, Done done
     ) override {
@@ -140,6 +146,8 @@ struct Fake : fake::FakeBackend {
     std::string           membersError, lastBlocks;
     bool                  holdMembers = false;
     std::function<void()> heldMembers;
+    bool holdFiles = false;
+    std::function<void(FilesPage)> heldFiles;
     std::string           scheduleError; // scheduleMessage fails with it
     void                  refreshScheduled() override { ++scheduledRefreshes; }
     void                  cancelScheduled(const std::string &id, Done done) override {
@@ -942,6 +950,16 @@ TEST("files: the tab lists the conversation's files newest first; a click opens 
     const ConvRef general = h.conv("C0GENERAL");
     h.sh->open(general);
     pump();
+    model::Message shared;
+    shared.ts   = h.store.conversation(general).latest + 1'000'000; // files are sorted by seconds
+    shared.user = h.store.findUser("U0MIRA");
+    model::File external;
+    external.id        = "FEXTERNAL";
+    external.name      = "Shared document";
+    external.permalink = "https://t.slack.com/files/U0MIRA/FEXTERNAL";
+    external.external  = "https://example.com/document";
+    shared.extras().files.push_back(external);
+    h.store.addMessage(general, std::move(shared));
     std::string opened;
     h.ctx.openUrl = [&](const std::string &u) { opened = u; };
     h.sh->tabs().tab(shell::ConvTabs::kFiles)->onClick();
@@ -949,7 +967,7 @@ TEST("files: the tab lists the conversation's files newest first; a click opens 
     CHECK(fp.visible());
     CHECK(h.sh->tabs().active() == shell::ConvTabs::kFiles);
     CHECK_FALSE(h.sh->composer().visible());
-    REQUIRE(until([&] { return fp.rowCount() >= 2; }));
+    REQUIRE(until([&] { return fp.rowCount() >= 3; }));
     // The CSV came 45 minutes after the dashboard picture.
     size_t csv = fp.rowCount(), png = fp.rowCount();
     for (size_t i = 0; i < fp.rowCount(); ++i) {
@@ -964,6 +982,9 @@ TEST("files: the tab lists the conversation's files newest first; a click opens 
     CHECK(fp.rowText(csv).find(" \xC2\xB7 ") != std::string::npos);
     fp.activate(csv); // no preview: the file itself (the demo's local copy)
     CHECK(opened.find("signups-week-37.csv") != std::string::npos);
+    CHECK_STR(fp.file(0).id, "FEXTERNAL");
+    fp.activate(0);
+    CHECK_STR(opened, external.external);
 #ifdef MSGA_HAVE_MESSAGES
     opened.clear();
     fp.activate(png); // a picture: the file viewer
@@ -999,6 +1020,27 @@ TEST("files: the tab lists the conversation's files newest first; a click opens 
     REQUIRE(until([&] { return !fp.loading(); }));
     CHECK(fp.rowCount() == 0);
     CHECK_STR(fp.statusText(), "No files have been shared here yet.");
+}
+
+TEST("files: an old conversation response cannot replace the current file list") {
+    Harness h;
+    h.backend.holdFiles = true;
+    h.sh->showTab(shell::ConvTabs::kFiles);
+    REQUIRE(h.backend.heldFiles);
+    auto late = std::move(h.backend.heldFiles);
+    h.backend.holdFiles = false;
+    h.sh->open(h.conv("C0GENERAL"));
+    pump();
+    h.sh->showTab(shell::ConvTabs::kFiles);
+    shell::FilesPage &fp = h.sh->filesPage();
+    REQUIRE(until([&] { return fp.rowCount() >= 2; }));
+    const std::string first = fp.file(0).id;
+    model::File stale;
+    stale.id       = "FSTALE";
+    stale.external = "https://example.com/stale";
+    late({{{stale}}, 0, {}});
+    REQUIRE(fp.rowCount() >= 2);
+    CHECK_STR(fp.file(0).id, first);
 }
 
 // The canvas tab: the fixture's canvas as editable

@@ -167,6 +167,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_body(json.dumps(self.echo_headers()), ctype='application/json')
         elif path == '/to-localhost':  # another host name for the same (local) server
             self.redirect('http://localhost:%d/final' % self.server.server_address[1])
+        elif path == '/to-http':  # a secure page that tries to downgrade
+            self.redirect('http://localhost:1/never')
         elif path == '/same-host':
             self.redirect('/final')
         elif path == '/loop':

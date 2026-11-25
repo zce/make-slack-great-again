@@ -50,7 +50,9 @@ const char *kWorkspace = R"({
      {"type": "message", "ts": "1700000002.000000", "user": "UME", "text": "second"},
      {"type": "message", "ts": "1700000001.000000", "user": "UMIRA", "text": "first",
       "files": [{"id": "F1", "name": "cat.png", "mimetype": "image/png",
-                 "url_private": "https://files/cat.png", "original_w": 16, "original_h": 9}]}]}
+                 "url_private": "https://files/cat.png", "original_w": 16, "original_h": 9},
+                {"id": "F2", "name": "Terms", "pretty_type": "Google Docs", "is_external": true,
+                 "external_url": "https://docs.google.com/document/d/X/edit"}]}]}
 })";
 
 std::string cacheDir() {
@@ -179,8 +181,9 @@ TEST("slack cache: a cold start writes it, a warm start shows it before the netw
     REQUIRE(general.messages.size() == 3);
     CHECK(!general.hasMoreBefore); // the cache held the whole history
     CHECK_STR(general.messages[0].text, "first");
-    REQUIRE(general.messages[0].files().size() == 1);
+    REQUIRE(general.messages[0].files().size() == 2);
     CHECK_STR(general.messages[0].files()[0].path, "https://files/cat.png");
+    CHECK_STR(general.messages[0].files()[1].external, "https://docs.google.com/document/d/X/edit");
     REQUIRE(general.messages[2].reactions.size() == 1);
     CHECK(general.messages[2].reactions[0].users[0] == e.store.me);
     CHECK(general.messages[1].user == e.store.me);
@@ -239,6 +242,29 @@ TEST("slack cache: a broadcast reply keeps its thread context across a restart")
     CHECK(broadcast.threadTs == root);
     REQUIRE(broadcast.extra);
     CHECK_STR(broadcast.extra->threadParentText, "original topic");
+}
+
+TEST("slack cache: files from an older cache still open their Slack page") {
+    wipe();
+    const std::string dir = cacheDir();
+    REQUIRE(file::writeAtomic(file::join(dir, "roster.json"), R"({"v":1,"c":[["C1","general"]]})"));
+    // The old positional File record ends at transcriptVtt, with no external URL.
+    REQUIRE(file::writeAtomic(file::join(dir, "messages/C1.json"), R"({"v":1,"m":[
+        [1700000001000000,0,0,"UME","",0,"shared",0,[],[],
+         ["","","",[["F1","terms.txt","text/plain","Plain text","https://files/terms.txt",
+                    "","",0,0,0,0,"","https://t.slack.com/files/UME/F1","","",""]]]]]})"));
+    model::Store s;
+    cache::WorkspaceCache wc(app(), s, dir);
+    REQUIRE(wc.load(nullptr));
+    const ConvRef c = s.findConversation("C1");
+    REQUIRE(wc.loadMessages(c) != 0);
+    REQUIRE(s.conversation(c).messages.size() == 1);
+    const auto &files = s.conversation(c).messages[0].files();
+    REQUIRE(files.size() == 1);
+    CHECK(files[0].external.empty());
+    CHECK_STR(files[0].webUrl(), "https://t.slack.com/files/UME/F1");
+    wc.close(false);
+    wipe();
 }
 
 TEST("slack cache: a thread turned off by hand stays off after a restart") {

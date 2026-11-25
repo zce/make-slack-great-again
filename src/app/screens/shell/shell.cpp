@@ -1297,6 +1297,7 @@ void Shell::runCommand(ConvRef conv, Ts thread, const std::string &name, const s
 Shell::~Shell() {
     // Invalidate queued work before teardown can re-enter the event loop.
     _alive.reset();
+    _ctx.app.platform().setBadgePermissionPromptEnabled(false);
     for (int id : _shortcutIds)
         _win.removeShortcut(id);
     _shortcutIds.clear();
@@ -3275,8 +3276,8 @@ void Shell::handleAppEvent(const plat::Event &e) {
 }
 
 // Unread badges and the tray icon: each workspace's own dot on
-// its rail tile; the launcher badge and the tray dot sum every workspace
-// except the muted ones (their tiles still show).
+// its rail tile; the app icon badge (Dock, taskbar, launcher) and the tray
+// dot sum every workspace except the muted ones (their tiles still show).
 void Shell::updateAttention() {
     if (_attentionTimer) {
         _ctx.app.cancelTimer(_attentionTimer);
@@ -3284,6 +3285,7 @@ void Shell::updateAttention() {
     }
     const model::Store      &open     = _ctx.store();
     const model::NotifyLevel fallback = defaultLevel();
+    const bool               bold     = _settings.boldMentionsOnly;
     std::vector<Attention>   unmuted;
     bool                     attached = false;
     for (const auto &r : _running) {
@@ -3292,7 +3294,7 @@ void Shell::updateAttention() {
             r->dirty = true; // the open one is recounted on every call, as before
         }
         if (r->dirty) {
-            r->att   = workspaceAttention(*r->store, fallback, r->backend->nowSecs());
+            r->att   = workspaceAttention(*r->store, fallback, r->backend->nowSecs(), bold);
             r->dirty = false;
         }
         if (RailTile *t = _wsStack->find(r->key))
@@ -3301,20 +3303,21 @@ void Shell::updateAttention() {
             unmuted.push_back(r->att);
     }
     if (!attached && _signedIn) { // the demo, tests: the open Store alone
-        const Attention a = workspaceAttention(open, fallback, _ctx.backend().nowSecs());
+        const Attention a = workspaceAttention(open, fallback, _ctx.backend().nowSecs(), bold);
         if (RailTile *t = _wsStack->find(_activeKey))
             t->setDot(a.dot());
         if (!open.workspaceMuted)
             unmuted.push_back(a);
     }
-    const Attention sum = sumAttention(unmuted);
-    const int       n   = sum.important;
-    if (n != _lastBadge)
-        _ctx.app.platform().setBadgeCount(n);
+    const Attention sum   = sumAttention(unmuted);
+    const int       n     = sum.important;
+    const AppBadge  badge = appBadge(sum, _settings.badgeLevel == 0);
+    if (badge != _lastBadge)
+        _ctx.app.platform().setBadgeCount(badge.count, badge.dot, badge.dot ? tr("Unread") : "");
     const int tray = sum.dot();
-    if (n != _lastBadge || tray != _lastTray)
+    if (n != _lastBadge.count || tray != _lastTray)
         refreshTrayIcon(n, sum.unread || n > 0);
-    _lastBadge = n;
+    _lastBadge = badge;
     _lastTray  = tray;
 }
 
@@ -4108,7 +4111,7 @@ void Shell::applySettings() {
     f.defaultLevel                       = defaultLevel();
     _sidebar->setFilters(f);
     for (const auto &r : _running)
-        r->dirty = true; // the default level decides what counts
+        r->dirty = true; // the default level and unread highlighting decide what counts
     // Settings → General → Use tray: the icon comes and goes at once. Without
     // it the window's close quits and minimizing leaves it on the taskbar.
     if (_settings.useTray && !_tray) {
@@ -4123,6 +4126,7 @@ void Shell::applySettings() {
         _tray.reset();
     }
     _lastTray = -1; // the tray picture may have changed
+    _ctx.app.platform().setBadgePermissionPromptEnabled(_settings.notifications);
     updateAttention();
 }
 

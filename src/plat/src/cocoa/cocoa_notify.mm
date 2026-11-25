@@ -310,6 +310,45 @@ bool CocoaApp::notify(uint64_t id, const Notification &n) {
     }
 }
 
+bool CocoaApp::canAskBadgePermission() const {
+    return _badgePromptEnabled && !_quit && NSApp.dockTile.badgeLabel.length > 0;
+}
+
+void CocoaApp::setBadgePermissionPromptEnabled(bool enabled) {
+    if (_badgePromptEnabled == enabled)
+        return;
+    _badgePromptEnabled = enabled;
+    if (enabled)
+        askBadgePermission(); // the badge may already have been drawn
+}
+
+// A badge may be the first thing to need OS permission. Ask only when
+// allowed by the caller, without submitting a notification. The status
+// arrives off-thread; the badge or permission to prompt may have gone away.
+void CocoaApp::askBadgePermission() {
+    if (!canAskBadgePermission() || _badgeAsked || _badgeChecking || !setUpNotifications())
+        return;
+    _badgeChecking = true;
+    @autoreleasepool {
+        UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
+        const std::shared_ptr<Alive> alive = _alive;
+        [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *s) {
+          toLoop(alive, [center, status = s.authorizationStatus](CocoaApp *app) {
+              app->_badgeChecking = false;
+              if (!app->canAskBadgePermission())
+                  return;
+              app->_badgeAsked = true;
+              if (status == UNAuthorizationStatusNotDetermined)
+                  [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert |
+                                                          UNAuthorizationOptionSound |
+                                                          UNAuthorizationOptionBadge
+                                        completionHandler:^(BOOL, NSError *) {
+                                        }];
+          });
+        }];
+    }
+}
+
 // By its request identifier: with a scope that names one from an earlier run
 // too (still in Notification Center). The delegate hears nothing of it. One
 // still on its way to the center (notify() is asynchronous) is removed again

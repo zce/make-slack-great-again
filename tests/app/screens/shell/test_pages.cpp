@@ -13,6 +13,7 @@
 #include "base/time.h"
 #include "screens/settings/settings_dialog.h"
 #include "screens/shell/fuzzy_match.h"
+#include "screens/shell/header.h"
 #include "screens/shell/quick_switcher.h"
 #include "screens/shell/saved_page.h"
 #include "screens/shell/shell.h"
@@ -905,6 +906,9 @@ TEST("emoji picker: the search finds what a fold-per-name search finds; recents 
 // reshapes: sweeping the pointer down the sidebar builds no text layout.
 TEST("pages: hovering sidebar rows reshapes no text") {
     Harness         h;
+    // The fixture's bookmarks arrive a fake round trip after the open and add
+    // the header's Bookmarks tab: on a slow machine that lands mid-sweep.
+    REQUIRE(until([&] { return h.sh->tabs().tab(shell::ConvTabs::kBookmarks)->visible(); }));
     const ui::RectF sb    = h.sh->sidebar().windowRect();
     auto            sweep = [&] {
         for (float y = sb.y + 4; y < sb.bottom() - 4; y += 7) {

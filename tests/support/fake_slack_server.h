@@ -23,6 +23,19 @@ const std::string &server();
 // A control request: /_ctl/reset, /_ctl/script, /_ctl/set, /_ctl/log.
 net::Response      ctl(const char *method, const std::string &path, std::string body = {});
 
+// The fake's Slack file hosts over HTTPS, behind a CONNECT proxy: a
+// certificate for files.slack.com and files.slack-edge.com, the same request
+// log, and a TLS port for direct external-host URLs. Empty when python3 or
+// openssl cannot provide it (set `ca` in SSL_CERT_FILE before the first TLS
+// request, and HTTPS_PROXY to `proxy`).
+struct TlsProxy {
+    std::string proxy;    // "http://127.0.0.1:port"; "" when unavailable
+    std::string ca;       // a PEM bundle for SSL_CERT_FILE
+    std::string error;    // why it is unavailable
+    int         port = 0; // the HTTPS server itself, for https://localhost URLs
+};
+const TlsProxy &tlsProxy();
+
 // Standing answers and one method's sequence of answers (raw JSON).
 void set(const std::string &answers);
 void script(const char *method, const std::string &responses);

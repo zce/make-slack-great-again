@@ -44,7 +44,7 @@ struct Env {
     model::UserRef                       me = model::kNoUser, mira = model::kNoUser;
     Ts                                   old = 0; // my message in #general
 
-    Env() {
+    explicit Env(bool oauthOnly = false) {
         ctl("POST", "/_ctl/reset");
         model::User u;
         u.id     = "UME";
@@ -71,8 +71,8 @@ struct Env {
         page.push_back(std::move(m));
         store.addPage(general, std::move(page));
         slack::Credentials cr;
-        cr.token  = "xoxc-test";
-        cr.cookie = "xoxd-test";
+        cr.token  = oauthOnly ? "xoxp-oauth" : "xoxc-test";
+        cr.cookie = oauthOnly ? "" : "xoxd-test";
         cr.teamId = "T1";
         be        = std::make_unique<slack::SlackBackend>(store, app(), client, cr);
     }
@@ -100,6 +100,54 @@ bool haveServer() {
     std::fprintf(stderr, "  skip: no python3 for the fake Slack\n");
     return false;
 }
+
+#if !defined(__APPLE__)
+// A download request the fake saw, and the credentials it carried.
+struct DownloadHit {
+    bool        found = false;
+    std::string path, auth, cookie;
+};
+
+// `redirect`: the /redirect request itself; otherwise only a file request
+// (the redirect's path also carries the target it was about to send).
+DownloadHit downloadHit(const Log &log, std::string_view needle, bool redirect = false) {
+    for (json::Value e : log.entries()) {
+        const std::string_view path = e["form"]["path"].str();
+        if (e["method"].str() != "download" || path.find(needle) == std::string_view::npos)
+            continue;
+        if (!redirect && !path.starts_with("/files-pri/"))
+            continue;
+        return {
+            true, std::string(path), std::string(e["auth"].str()), std::string(e["cookie"].str())
+        };
+    }
+    return {};
+}
+
+// The fake's Slack file hosts over HTTPS while it lives. NO_PROXY keeps
+// localhost (the "external provider") direct; files.slack.com and the CDN
+// go through its CONNECT proxy.
+struct ProxyEnv {
+    std::string httpsLower, httpsUpper, noLower, noUpper, cert;
+    explicit ProxyEnv(const fakeslack::TlsProxy &tls)
+        : httpsLower(base::env("https_proxy")), httpsUpper(base::env("HTTPS_PROXY")),
+          noLower(base::env("no_proxy")), noUpper(base::env("NO_PROXY")),
+          cert(base::env("SSL_CERT_FILE")) {
+        base::test::setEnv("https_proxy", tls.proxy);
+        base::test::setEnv("HTTPS_PROXY", tls.proxy);
+        base::test::setEnv("no_proxy", "localhost,127.0.0.1");
+        base::test::setEnv("NO_PROXY", "localhost,127.0.0.1");
+        base::test::setEnv("SSL_CERT_FILE", tls.ca);
+    }
+    ~ProxyEnv() {
+        base::test::restoreEnv("https_proxy", httpsLower);
+        base::test::restoreEnv("HTTPS_PROXY", httpsUpper);
+        base::test::restoreEnv("no_proxy", noLower);
+        base::test::restoreEnv("NO_PROXY", noUpper);
+        base::test::restoreEnv("SSL_CERT_FILE", cert);
+    }
+};
+#endif
 
 } // namespace
 
@@ -675,7 +723,7 @@ TEST("slack write: an upload goes URL, bytes, complete, then replaces the pendin
     CHECK(e.last(e.general)->files().size() == 1);
 }
 
-TEST("slack write: a forwarded file is downloaded with the workspace's auth, then uploaded") {
+TEST("slack write: a forwarded file is downloaded, then uploaded") {
     if (!haveServer())
         return;
     Env               e;
@@ -704,7 +752,10 @@ TEST("slack write: a forwarded file is downloaded with the workspace's auth, the
             "download,files.getUploadURLExternal,upload,files.completeUploadExternal", 0
         ) == 0
     );
-    CHECK_STR(log.get("download")["auth"].str(), "Bearer xoxc-test");
+    // Plain http in this fixture: no Slack credentials may go to it. The
+    // HTTPS path's credentials are checked by the file-download tests.
+    CHECK_STR(log.get("download")["auth"].str(), "");
+    CHECK_STR(log.get("download")["cookie"].str(), "");
     CHECK_STR(log.get("files.getUploadURLExternal")["form"]["filename"].str(), "photo.png");
     CHECK_STR(log.get("files.getUploadURLExternal")["form"]["length"].str(), "18");
     CHECK_STR(log.get("upload")["body"].str(), "bytes of photo.png");
@@ -1253,7 +1304,9 @@ TEST("slack write: canvases — look-up, meta, content, create, edit one change 
     CHECK_STR(link, "https://x/FC1");
     CHECK_STR(e.store.conversation(e.general).canvasTitle, "Plan");
 
-    // The content: files.info's url_private, fetched with the workspace's auth.
+    // The content: files.info's url_private. This fixture's is plain http, so
+    // it gets no credentials (the download boundary; https Slack hosts keep
+    // them); the body is served either way.
     script(
         "files.info",
         (R"([{"ok":true,"file":{"url_private":")" + server() + R"(/files-pri/T1-FC1/canvas"}}])")
@@ -1264,7 +1317,8 @@ TEST("slack write: canvases — look-up, meta, content, create, edit one change 
     REQUIRE(pumpUntil([&] { return herr != "-"; }));
     CHECK_STR(herr, "");
     CHECK(html.find("<p id=\"a\">Hello</p>") != std::string::npos);
-    CHECK_STR(Log().get("download")["auth"].str(), "Bearer xoxc-test");
+    CHECK_STR(Log().get("download")["auth"].str(), "");
+    CHECK_STR(Log().get("download")["cookie"].str(), "");
 
     // A rename then a whole-document replace: two canvases.edit calls.
     Result r;
@@ -1362,11 +1416,18 @@ TEST("slack: a conversation's files come a page at a time, newest first") {
         {"id":"F1","name":"a.png","mimetype":"image/png","pretty_type":"PNG","user":"UMIRA",
          "created":1700000000,"size":10,"url_private":"https://f/a","thumb_360":"https://t/a",
          "original_w":10,"original_h":10,"permalink":"https://p/a"},
-        {"id":"F2","name":"b.pdf","mimetype":"application/pdf","pretty_type":"PDF","user":"UME",
-         "created":1700000100,"size":2048,"url_private":"https://f/b","permalink":"https://p/b"}],
-        "paging":{"count":50,"total":3,"page":1,"pages":2}},
-        {"ok":true,"files":[{"id":"F0","name":"c.txt","user":"UNEW","created":1600000000}],
-         "paging":{"count":50,"total":3,"page":2,"pages":2}}])");
+         {"id":"F2","name":"b.pdf","mimetype":"application/pdf","pretty_type":"PDF","user":"UME",
+          "created":1700000100,"size":2048,"url_private":"https://f/b","permalink":"https://p/b",
+          "is_external":true,"external_url":"https://example.com/files/b.pdf"}],
+         "paging":{"count":50,"total":5,"page":1,"pages":2}},
+         {"ok":true,"files":[
+          {"id":"F0","name":"c.txt","user":"UNEW","created":1600000002,
+           "is_external":true,"external_url":"file:///tmp/document","permalink":"https://p/c"},
+          {"id":"F3","name":"d.txt","created":1600000001,"is_external":true,
+           "external_url":"https:///document","permalink":"https://p/d"},
+          {"id":"F4","name":"e.txt","created":1600000000,"external_url":"https://example.com/e",
+           "url_private":"https://f/e"}],
+          "paging":{"count":50,"total":5,"page":2,"pages":2}}])");
     model::Backend::FilesPage page;
     bool                      called = false;
     e.be->loadConversationFiles(e.general, 1, [&](model::Backend::FilesPage p) {
@@ -1379,6 +1440,8 @@ TEST("slack: a conversation's files come a page at a time, newest first") {
     CHECK(page.files[0].user == e.me);
     CHECK(page.files[0].created == 1700000100);
     CHECK_STR(page.files[0].file.permalink, "https://p/b");
+    CHECK_STR(page.files[0].file.webUrl(), "https://example.com/files/b.pdf");
+    CHECK_STR(page.files[0].file.source(), "https://f/b");
     CHECK(page.files[1].user == e.mira);
     CHECK_STR(page.files[1].file.path, "https://t/a"); // an image shows its thumb
     CHECK(page.nextPage == 2);
@@ -1392,62 +1455,218 @@ TEST("slack: a conversation's files come a page at a time, newest first") {
         called = true, page = std::move(p);
     });
     REQUIRE(pumpUntil([&] { return called; }));
-    REQUIRE(page.files.size() == 1);
+    REQUIRE(page.files.size() == 3);
     CHECK_STR(page.files[0].file.id, "F0");
     CHECK(page.files[0].user != model::kNoUser); // someone the roster doesn't have yet
+    CHECK_STR(page.files[0].file.webUrl(), "https://p/c");
+    CHECK_STR(page.files[1].file.webUrl(), "https://p/d");
+    CHECK_STR(page.files[2].file.webUrl(), "https://f/e");
     CHECK(page.nextPage == 0);
     CHECK_STR(Log().get("files.list", 1)["form"]["page"].str(), "2");
 }
 
-TEST("slack write: downloadFile fetches with the workspace's credentials, writes off-thread") {
+#if !defined(__APPLE__)
+// A Slack-hosted download still carries the workspace's credentials. The
+// fake's HTTPS file host is behind its CONNECT proxy, so the request really
+// is HTTPS to files.slack.com: the received headers are what is checked.
+TEST("slack write: a Slack file download carries the token and d cookie") {
     if (!haveServer())
         return;
-    const char       *t = std::getenv("TMPDIR");
-    const std::string dir =
-        file::join(t && *t ? t : "/tmp", "msga-test-download-" + std::to_string(getpid()));
-    REQUIRE(file::makeDirs(dir));
-    const std::string to = file::join(dir, "photo.bin");
-    {
-        Env    e;
-        Result r;
-        e.be->downloadFile(server() + "/files-pri/T1-F1/photo.bin", to, r.cb());
-        CHECK_FALSE(r.called); // never inside the call
-        REQUIRE(pumpUntil([&] { return r.called; }));
-        CHECK(r.ok);
-        std::string got;
-        REQUIRE(file::readAll(to, &got));
-        REQUIRE(got.size() == 1024);
-        for (size_t i = 0; i < got.size(); ++i)
-            if (uint8_t(got[i]) != i % 256) {
-                CHECK(false);
-                break;
-            }
-        Log log;
-        CHECK_STR(log.get("download")["auth"].str(), "Bearer xoxc-test");
-        CHECK(log.get("download")["cookie"].str().find("d=xoxd-test") != std::string_view::npos);
-        // An error status: a failure, nothing written.
-        Result            miss;
-        const std::string none = file::join(dir, "none.bin");
-        e.be->downloadFile(server() + "/files-pri/T1-F2/missing", none, miss.cb());
-        REQUIRE(pumpUntil([&] { return miss.called; }));
-        CHECK_FALSE(miss.ok);
-        CHECK_STR(miss.err, "http 404");
-        CHECK_FALSE(file::exists(none));
-        // The backend gone before the answer: done still runs (the caller's
-        // background job ends), as a failure.
-        Result gone;
-        e.be->downloadFile(
-            server() + "/files-pri/T1-F3/late.bin", file::join(dir, "late.bin"), gone.cb()
-        );
-        e.be.reset();
-        REQUIRE(pumpUntil([&] { return gone.called; }));
-        CHECK_FALSE(gone.ok);
-        CHECK_STR(gone.err, "cancelled");
+    const fakeslack::TlsProxy &tls = fakeslack::tlsProxy();
+    if (tls.proxy.empty()) {
+        std::fprintf(stderr, "  skip: %s\n", tls.error.c_str());
+        return;
     }
-    file::remove(to);
-    file::remove(file::join(dir, "late.bin"));
-    file::remove(dir);
+    ProxyEnv          env(tls);
+    Env               e;
+    const std::string dir = base::test::makeTempDir("msga-slack-download-");
+    REQUIRE(!dir.empty());
+    const std::string to = file::join(dir, "photo.bin");
+    Result            r;
+    e.be->downloadFile("https://files.slack.com/files-pri/T1-F1/photo.bin", to, r.cb());
+    CHECK_FALSE(r.called); // never inside the call
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    CHECK(r.ok);
+    std::string got;
+    REQUIRE(file::readAll(to, &got));
+    REQUIRE(got.size() == 1024);
+    for (size_t i = 0; i < got.size(); ++i)
+        if (uint8_t(got[i]) != i % 256) {
+            CHECK(false);
+            break;
+        }
+    const Log         log;
+    const DownloadHit hit = downloadHit(log, "photo.bin");
+    REQUIRE(hit.found);
+    CHECK_STR(hit.path, "/files-pri/T1-F1/photo.bin");
+    CHECK_STR(hit.auth, "Bearer xoxc-test");
+    CHECK(hit.cookie.find("d=xoxd-test") != std::string::npos);
+
+    // An error status: a failure, nothing written.
+    Result            miss;
+    const std::string none = file::join(dir, "none.bin");
+    e.be->downloadFile("https://files.slack.com/files-pri/T1-F2/missing", none, miss.cb());
+    REQUIRE(pumpUntil([&] { return miss.called; }));
+    CHECK_FALSE(miss.ok);
+    CHECK_STR(miss.err, "http 404");
+    CHECK_FALSE(file::exists(none));
+    // The backend gone before the answer: done still runs (the caller's
+    // background job ends), as a failure.
+    Result gone;
+    e.be->downloadFile(
+        "https://files.slack.com/files-pri/T1-F3/late.bin", file::join(dir, "late.bin"), gone.cb()
+    );
+    e.be.reset();
+    REQUIRE(pumpUntil([&] { return gone.called; }));
+    CHECK_FALSE(gone.ok);
+    CHECK_STR(gone.err, "cancelled");
 }
+
+// An OAuth workspace has no session cookie: only its Bearer token goes.
+TEST("slack write: an OAuth Slack file download carries only its Bearer token") {
+    if (!haveServer())
+        return;
+    const fakeslack::TlsProxy &tls = fakeslack::tlsProxy();
+    if (tls.proxy.empty()) {
+        std::fprintf(stderr, "  skip: %s\n", tls.error.c_str());
+        return;
+    }
+    ProxyEnv          env(tls);
+    Env               e(true);
+    const std::string dir = base::test::makeTempDir("msga-slack-oauth-");
+    REQUIRE(!dir.empty());
+    Result r;
+    e.be->downloadFile(
+        "https://files.slack.com/files-pri/T1-F1/oauth.bin", file::join(dir, "oauth.bin"), r.cb()
+    );
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    CHECK(r.ok);
+    const Log         log;
+    const DownloadHit hit = downloadHit(log, "oauth.bin");
+    REQUIRE(hit.found);
+    CHECK_STR(hit.auth, "Bearer xoxp-oauth");
+    CHECK_STR(hit.cookie, "");
+}
+
+// A file's url_private is not proof it lives on Slack: an external file's
+// points at its provider. Only Slack's own https hosts may see the token
+// and the d cookie; the public CDN and plain http never do.
+TEST("slack write: external, CDN and plain-http downloads carry no credentials") {
+    if (!haveServer())
+        return;
+    const fakeslack::TlsProxy &tls = fakeslack::tlsProxy();
+    if (tls.proxy.empty()) {
+        std::fprintf(stderr, "  skip: %s\n", tls.error.c_str());
+        return;
+    }
+    ProxyEnv          env(tls);
+    Env               e;
+    const std::string dir = base::test::makeTempDir("msga-slack-external-");
+    REQUIRE(!dir.empty());
+    // An arbitrary third-party https host (the fake's TLS server, direct).
+    Result r;
+    e.be->downloadFile(
+        "https://localhost:" + std::to_string(tls.port) + "/files-pri/T1-F1/provider.bin",
+        file::join(dir, "provider.bin"),
+        r.cb()
+    );
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    CHECK(r.ok); // it serves without auth; the bytes are still downloaded
+    {
+        const Log         log;
+        const DownloadHit hit = downloadHit(log, "provider.bin");
+        REQUIRE(hit.found);
+        CHECK_STR(hit.auth, "");
+        CHECK_STR(hit.cookie, "");
+    }
+    // Slack's public CDN (files.slack-edge.com) needs none.
+    Result cdn;
+    e.be->downloadFile(
+        "https://files.slack-edge.com/files-pri/T1-F1/cdn.bin", file::join(dir, "cdn.bin"), cdn.cb()
+    );
+    REQUIRE(pumpUntil([&] { return cdn.called; }));
+    CHECK(cdn.ok);
+    {
+        const Log         log;
+        const DownloadHit hit = downloadHit(log, "cdn.bin");
+        REQUIRE(hit.found);
+        CHECK_STR(hit.auth, "");
+        CHECK_STR(hit.cookie, "");
+    }
+    // Plain http: never, even when the host name looks like a file.
+    Result http;
+    e.be->downloadFile(
+        server() + "/files-pri/T1-F1/http.bin", file::join(dir, "http.bin"), http.cb()
+    );
+    REQUIRE(pumpUntil([&] { return http.called; }));
+    CHECK(http.ok);
+    {
+        const Log         log;
+        const DownloadHit hit = downloadHit(log, "http.bin");
+        REQUIRE(hit.found);
+        CHECK_STR(hit.auth, "");
+        CHECK_STR(hit.cookie, "");
+    }
+    // Invalid URLs do not reach the network at all.
+    Result bad;
+    e.be->downloadFile("file:///tmp/nope", file::join(dir, "nope"), bad.cb());
+    REQUIRE(pumpUntil([&] { return bad.called; }));
+    CHECK_FALSE(bad.ok);
+    CHECK_STR(bad.err, "url");
+    CHECK_FALSE(file::exists(file::join(dir, "nope")));
+}
+
+// A Slack-hosted file can redirect anywhere. The first request carries the
+// credentials; the redirected request to another host must not.
+TEST("slack write: a Slack file redirect cannot forward credentials") {
+    if (!haveServer())
+        return;
+    const fakeslack::TlsProxy &tls = fakeslack::tlsProxy();
+    if (tls.proxy.empty()) {
+        std::fprintf(stderr, "  skip: %s\n", tls.error.c_str());
+        return;
+    }
+    ProxyEnv          env(tls);
+    Env               e;
+    const std::string dir = base::test::makeTempDir("msga-slack-redirect-");
+    REQUIRE(!dir.empty());
+    const std::string target =
+        "https://localhost:" + std::to_string(tls.port) + "/files-pri/T1-F1/redirected.bin";
+    Result r;
+    e.be->downloadFile(
+        "https://files.slack.com/redirect?to=" + net::percentEncode(target),
+        file::join(dir, "redirected.bin"),
+        r.cb()
+    );
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    CHECK(r.ok); // the other https host serves it without credentials
+    {
+        const Log         log;
+        const DownloadHit first  = downloadHit(log, "/redirect?", true);
+        const DownloadHit second = downloadHit(log, "redirected.bin");
+        REQUIRE(first.found);
+        REQUIRE(second.found);
+        CHECK_STR(first.auth, "Bearer xoxc-test");
+        CHECK(first.cookie.find("d=xoxd-test") != std::string::npos);
+        CHECK_STR(second.auth, "");
+        CHECK_STR(second.cookie, "");
+    }
+    // An https -> http redirect is not followed at all: the 302 comes back,
+    // and the plain-http server never sees the request.
+    Result downgrade;
+    e.be->downloadFile(
+        "https://files.slack.com/redirect?to=" +
+            net::percentEncode(server() + "/files-pri/T1-F1/downgrade.bin"),
+        file::join(dir, "downgrade.bin"),
+        downgrade.cb()
+    );
+    REQUIRE(pumpUntil([&] { return downgrade.called; }));
+    CHECK_FALSE(downgrade.ok);
+    CHECK_STR(downgrade.err, "http 302");
+    const Log log;
+    CHECK_FALSE(downloadHit(log, "downgrade.bin").found);
+}
+#endif // !__APPLE__
 
 TEST("slack: on Grid the org's methods go with the org token and the workspace's team_id") {
     if (!haveServer())

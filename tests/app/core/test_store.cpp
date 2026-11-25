@@ -156,6 +156,22 @@ TEST("store: global LRU trims the oldest conversation first") {
     CHECK(f.s.conversation(c2).messages.size() == 60);
 }
 
+TEST("store: external links in shared files count toward the history budget") {
+    const std::string url = "https://example.com/" + std::string(1024, 'a');
+    const auto bytes = [&](bool external) {
+        Fixture f;
+        Message m = msg(1, f.mira);
+        File    file;
+        if (external)
+            file.external = url;
+        m.extras().files.push_back(file);
+        m.extras().attachments.emplace_back().files.push_back(std::move(file));
+        f.s.addMessage(f.c, std::move(m));
+        return f.s.historyBytes();
+    };
+    CHECK(bytes(true) >= bytes(false) + 2 * 1024);
+}
+
 TEST("store: cold conversations keep their warm tail until pressure requires release") {
     Fixture f;
     f.s.setVisibleConversation(f.c);

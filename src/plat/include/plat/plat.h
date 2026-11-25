@@ -800,8 +800,15 @@ public:
     // with the notification delegate already listening. False elsewhere.
     virtual bool launchedFromNotification() { return false; }
 
-    // Unread count on the Dock icon / taskbar button / launcher entry; 0 clears.
-    virtual void setBadgeCount(int count) {}
+    // Unread count on the Dock icon / taskbar button / launcher entry.
+    // `dot` with a count of 0: unread activity without a number (the Dock's
+    // "•", a plain disc on the taskbar); launcher entries have nothing for
+    // it and stay clear. A count > 0 always wins. The optional UTF-8
+    // `dotDescription` is what Windows screen readers announce for the dot.
+    virtual void setBadgeCount(int count, bool dot = false, std::string_view dotDescription = {}) {}
+    // Cocoa: let a non-empty Dock badge request OS authorization if not
+    // already decided. This never disables a badge the OS already allows.
+    virtual void setBadgePermissionPromptEnabled(bool enabled) {}
 
     // ── Monitors ────────────────────────────────────────────────────────────
     virtual std::vector<Monitor> monitors() const { return {}; }

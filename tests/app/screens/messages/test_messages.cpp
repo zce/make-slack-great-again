@@ -2554,6 +2554,54 @@ TEST("actions: the file bar reacts to an image thumbnail too") {
     pump(2);
 }
 
+TEST("actions: external files open their web page from both the chip and viewer") {
+    Env e(false);
+    std::string opened;
+    e.ctx.openUrl = [&](const std::string &url) { opened = url; };
+    model::File doc;
+    doc.id        = "FDOC";
+    doc.name      = "Shared document.html";
+    doc.mime      = "text/html";
+    doc.path      = "https://files.test/document.html";
+    doc.permalink = "https://t.slack.com/files/U2/FDOC";
+    doc.external  = "https://example.com/docs/1#start";
+    model::Message m = msg(1, base::nowSecs() - 60, "Reference");
+    const Ts ts = m.ts;
+    m.extras().files.push_back(doc);
+    std::vector<model::Message> messages;
+    messages.push_back(std::move(m));
+    const ConvRef c = addConv(e.store, std::move(messages));
+    e.list->showConversation(c);
+    e.list->scrollToMessage(ts, false, false);
+    REQUIRE(until([&] { return e.row(ts) != nullptr; }));
+    const auto find = [&](auto &&self, ui::View *v) -> ui::View * {
+        if (v->accessibleName() == doc.name)
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *match = self(self, v->child(i)))
+                return match;
+        return nullptr;
+    };
+    ui::View *chip = find(find, e.row(ts));
+    REQUIRE(chip != nullptr && chip->focusable());
+    static_cast<ui::Clickable *>(chip)->activate();
+    CHECK_STR(opened, doc.external);
+    CHECK(e.backend.asked.empty()); // not the Slack-hosted HTML download path
+
+    model::File preview = doc;
+    preview.path.clear();
+    preview.permalink.clear(); // a preview with only its provider's browser target
+    preview.mime  = "application/pdf";
+    preview.thumb = asset("avatars/mira.png");
+    ui::Popup *viewer = screens::showFileViewer(e.ctx, *e.win, nullptr, 0, preview);
+    REQUIRE(viewer != nullptr);
+    ui::View *open = findByTooltip(viewer, "Open in browser");
+    REQUIRE(open != nullptr && open->visible());
+    opened.clear();
+    static_cast<ui::Clickable *>(open)->activate();
+    CHECK_STR(opened, preview.external);
+}
+
 TEST("actions: the file bar on a file narrower than it stays inside the list") {
     Env           e(false);
     const int64_t t0 = base::nowSecs() - 600;
