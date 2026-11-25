@@ -2101,6 +2101,30 @@ TEST("actions: a message link is a chip; a click jumps there or opens the browse
     CHECK(jumps.empty());
     REQUIRE(urls.size() == 1);
     CHECK_STR(urls[0], "https://other.slack.com/archives/C77/p1700000000000100");
+    // A labelled permalink keeps the author's text but still names a message
+    // here: it jumps in-app instead of opening the browser.
+    click("<https://acme.slack.com/archives/C1/p1700000000000100|see this>");
+    REQUIRE(jumps.size() == 1);
+    CHECK(
+        jumps[0].c == c && jumps[0].ts == model::parseTs("1700000000.000100") && !jumps[0].thread
+    );
+    CHECK(urls.empty());
+    click(
+        "<https://acme.slack.com/archives/C1/p1700000000000200?thread_ts=1700000000.000100&cid=C1|"
+        "see this>"
+    );
+    REQUIRE(jumps.size() == 1);
+    CHECK(jumps[0].thread == model::parseTs("1700000000.000100"));
+    CHECK(urls.empty());
+    // Another workspace's message link, or an ordinary URL, still opens.
+    click("<https://other.slack.com/archives/C77/p1700000000000100|see this>");
+    CHECK(jumps.empty());
+    REQUIRE(urls.size() == 1);
+    CHECK_STR(urls[0], "https://other.slack.com/archives/C77/p1700000000000100");
+    click("<https://example.com/docs|docs>");
+    CHECK(jumps.empty());
+    REQUIRE(urls.size() == 1);
+    CHECK_STR(urls[0], "https://example.com/docs");
 }
 
 // Hovering a URL link underlines it and shows the URL: only the label's

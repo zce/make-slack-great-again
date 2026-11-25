@@ -447,9 +447,23 @@ void activateTarget(
     Context &ctx, const LinkTarget &tg, ui::Window *w, ui::PointF at, ui::RectF card
 ) {
     switch (tg.kind) {
-    case Kind::Link:
+    case Kind::Link: {
+        // A labelled permalink is a plain link so the author's text stays (a
+        // bare one is a chip), but it still names a message in this
+        // workspace: jump there instead of going through the browser. Links
+        // into another workspace, or to a conversation this one doesn't
+        // have, keep the browser path.
+        const mrkdwn::MessageRef ref = mrkdwn::parseMessageLink(tg.data);
+        if (ref.valid() && ctx.openMessage) {
+            const model::ConvRef c = ctx.store().findConversation(ref.conv);
+            if (c != model::kNoConv) {
+                ctx.openMessage(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
+                break;
+            }
+        }
         openLink(ctx, tg.data, w, at);
         break;
+    }
     case Kind::MessageLink: {
         const mrkdwn::MessageRef ref    = mrkdwn::refFromToken(tg.data);
         const model::ConvRef     c      = ctx.store().findConversation(ref.conv);
