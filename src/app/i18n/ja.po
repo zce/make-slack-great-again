@@ -2821,6 +2821,10 @@ msgid "Notification status: %1"
 msgstr "通知の状態: %1"
 
 #: src/app/screens/shell/shell.cpp
+msgid "Unread"
+msgstr "未読"
+
+#: src/app/screens/shell/shell.cpp
 msgid "Workspace options"
 msgstr ""
 

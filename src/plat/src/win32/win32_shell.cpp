@@ -404,6 +404,7 @@ struct Shell final : IconHost {
 
     int            badge        = 0;
     bool           badgeDot     = false; // the count is 0
+    std::wstring   badgeDotDescription;
     HICON          badgeIcon    = nullptr;
     ITaskbarList3 *taskbar      = nullptr;
     bool           taskbarTried = false;
@@ -1211,18 +1212,22 @@ void Win32App::forceBalloonNotifications(bool on) {
 
 // ── badge ───────────────────────────────────────────────────────────────────
 
-void Win32App::setBadgeCount(int count, bool dot) {
+void Win32App::setBadgeCount(int count, bool dot, std::string_view dotDescription) {
     Shell &s = shell();
     count    = std::max(0, count);
     dot      = dot && count == 0;
-    if (count == s.badge && dot == s.badgeDot)
+    std::wstring description = dot ? toWide(dotDescription) : std::wstring();
+    if (count == s.badge && dot == s.badgeDot && description == s.badgeDotDescription)
         return;
-    s.badge    = count;
-    s.badgeDot = dot;
-    if (s.badgeIcon)
-        DestroyIcon(s.badgeIcon);
-    s.badgeIcon =
-        count > 0 || dot ? iconFromImage(badgeImage(count, dot, smallIconSize())) : nullptr;
+    if (count != s.badge || dot != s.badgeDot) {
+        s.badge    = count;
+        s.badgeDot = dot;
+        if (s.badgeIcon)
+            DestroyIcon(s.badgeIcon);
+        s.badgeIcon =
+            count > 0 || dot ? iconFromImage(badgeImage(count, dot, smallIconSize())) : nullptr;
+    }
+    s.badgeDotDescription = std::move(description);
     for (auto *w : _windows)
         applyBadge(w->hwnd());
 }
@@ -1248,9 +1253,11 @@ void Win32App::applyBadge(HWND h) {
     if (!s.taskbar)
         return;
     // The description is what screen readers announce for the overlay.
-    const std::wstring text = s.badge > 0  ? std::to_wstring(s.badge) + L" unread"
-                              : s.badgeDot ? std::wstring(L"Unread")
-                                           : std::wstring();
+    std::wstring text;
+    if (s.badge > 0)
+        text = std::to_wstring(s.badge) + L" unread";
+    else if (s.badgeDot)
+        text = s.badgeDotDescription.empty() ? L"Unread" : s.badgeDotDescription;
     s.taskbar->SetOverlayIcon(h, s.badgeIcon, text.empty() ? nullptr : text.c_str());
 }
 

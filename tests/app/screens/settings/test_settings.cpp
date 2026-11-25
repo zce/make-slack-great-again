@@ -256,6 +256,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     const shell::Settings def = shell::Settings::load(path);
     CHECK(def.useTray);
     CHECK(def.notifications);
+    CHECK(def.badgeLevel == 1);
     CHECK(def.fontFamily.empty());
     CHECK(def.fontSize == 1);
     CHECK(def.paletteLight == int(ui::Palette::Purple));
@@ -291,6 +292,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.unreadsOnlyAppliesToStarred        = true;
     s.animateMedia               = false;
     s.notifyLevel                = 1;
+    s.badgeLevel                 = 0;
     s.notifySound                = false;
     s.cacheLimitMb               = 600;
     s.historyProfile             = 2;
@@ -333,6 +335,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK(r.relevantDays == 45);
     CHECK(r.names == 2);
     CHECK(r.notifyLevel == 1);
+    CHECK(r.badgeLevel == 0);
     CHECK_FALSE(r.notifySound);
     CHECK(r.cacheLimitMb == 600);
     CHECK(r.historyProfile == 2);
@@ -361,14 +364,17 @@ TEST("settings: every value survives the file, which is owner-only") {
     // A corrupt file clamps instead of breaking the dialog.
     REQUIRE(file::writeAtomic(
         path,
-        R"({"relevantDays":0,"paletteDark":99,"notifyLevel":7,)"
+        R"({"relevantDays":0,"paletteDark":99,"notifyLevel":7,"badgeLevel":-7,)"
         R"("historyProfile":99})"
     ));
     const shell::Settings c = shell::Settings::load(path);
     CHECK(c.relevantDays == 1);
     CHECK(c.paletteDark == int(ui::Palette::Count) - 1);
     CHECK(c.notifyLevel == 1);
+    CHECK(c.badgeLevel == 0);
     CHECK(c.historyProfile == 2);
+    REQUIRE(file::writeAtomic(path, R"({"notifyLevel":0})")); // before badgeLevel existed
+    CHECK(shell::Settings::load(path).badgeLevel == 1);
     file::remove(path);
 }
 
@@ -1050,6 +1056,42 @@ TEST("settings: notification level, and the master switch greys out the rest") {
     h.settings.notifications = false;
     post("with notifications off");
     CHECK(notificationCount() == before + 2);
+}
+
+TEST("settings: the app icon badge is independent of desktop notifications and waits for Save") {
+    const std::string path = testPath();
+    file::remove(path);
+    Harness h(path);
+    const auto edit = [&] {
+        SettingsDialog &d = h.open();
+        d.showPage(SettingsDialog::Page::Notifications);
+        pump();
+        h.click(d.find("Enable desktop notifications"));
+        ui::View *all = d.find("All unread messages");
+        REQUIRE(all != nullptr && all->enabled());
+        ui::View *badgeImportant = findIn(all->parent(), "Direct messages and mentions only");
+        REQUIRE(badgeImportant != nullptr && badgeImportant->enabled());
+        ui::View *alertImportant = d.find("Direct messages and mentions only");
+        REQUIRE(alertImportant != nullptr && alertImportant != badgeImportant);
+        CHECK_FALSE(alertImportant->enabled());
+        d.scroll().ensureVisible(all, 8);
+        pump();
+        h.click(all);
+        CHECK(static_cast<ui::Radio *>(all)->checked());
+        CHECK(h.settings.badgeLevel == 1 && h.settings.notifications); // draft, not applied
+    };
+    edit();
+    h.key(plat::Key::Escape);
+    CHECK(h.sh->settingsDialog() == nullptr);
+    CHECK(h.settings.badgeLevel == 1 && h.settings.notifications);
+
+    edit();
+    h.click(h.sh->settingsDialog()->find("Save"));
+    CHECK(h.settings.badgeLevel == 0 && !h.settings.notifications);
+    CHECK(h.settings.notifyLevel == 0);
+    REQUIRE(until([&] { return shell::Settings::load(path).badgeLevel == 0; }));
+    CHECK_FALSE(shell::Settings::load(path).notifications);
+    file::remove(path);
 }
 
 #ifdef __linux__

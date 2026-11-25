@@ -256,7 +256,7 @@ public:
     }
     // Gone from the "server": a probe no longer finds it.
     void withdrawNotification(uint64_t id) override { notifications.erase(id); }
-    void setBadgeCount(int n, bool dot) override {
+    void setBadgeCount(int n, bool dot, std::string_view) override {
         badge    = n;
         dotBadge = n <= 0 && dot;
     }

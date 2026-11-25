@@ -310,25 +310,41 @@ bool CocoaApp::notify(uint64_t id, const Notification &n) {
     }
 }
 
-// The Dock may hide an app's badge until the user allowed it badges in
-// the app's notification settings, and an app that never asked has none.
-// The badge is often the first thing to need that (no notification sent
-// yet, or desktop notifications off in the app), so the first badge asks,
-// with the same prompt notify() shows; once asked, it's the user's call in
-// System Settings.
-void CocoaApp::askBadgePermission() {
-    if (_badgeAsked || !setUpNotifications())
+bool CocoaApp::canAskBadgePermission() const {
+    return _badgePromptEnabled && !_quit && NSApp.dockTile.badgeLabel.length > 0;
+}
+
+void CocoaApp::setBadgePermissionPromptEnabled(bool enabled) {
+    if (_badgePromptEnabled == enabled)
         return;
-    _badgeAsked = true;
+    _badgePromptEnabled = enabled;
+    if (enabled)
+        askBadgePermission(); // the badge may already have been drawn
+}
+
+// A badge may be the first thing to need OS permission. Ask only when
+// allowed by the caller, without submitting a notification. The status
+// arrives off-thread; the badge or permission to prompt may have gone away.
+void CocoaApp::askBadgePermission() {
+    if (!canAskBadgePermission() || _badgeAsked || _badgeChecking || !setUpNotifications())
+        return;
+    _badgeChecking = true;
     @autoreleasepool {
         UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
+        const std::shared_ptr<Alive> alive = _alive;
         [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *s) {
-          if (s.authorizationStatus == UNAuthorizationStatusNotDetermined)
-              [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert |
-                                                      UNAuthorizationOptionSound |
-                                                      UNAuthorizationOptionBadge
-                                    completionHandler:^(BOOL, NSError *) {
-                                    }];
+          toLoop(alive, [center, status = s.authorizationStatus](CocoaApp *app) {
+              app->_badgeChecking = false;
+              if (!app->canAskBadgePermission())
+                  return;
+              app->_badgeAsked = true;
+              if (status == UNAuthorizationStatusNotDetermined)
+                  [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert |
+                                                          UNAuthorizationOptionSound |
+                                                          UNAuthorizationOptionBadge
+                                        completionHandler:^(BOOL, NSError *) {
+                                        }];
+          });
         }];
     }
 }

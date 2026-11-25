@@ -456,7 +456,7 @@ public:
     bool                  notificationsAvailable() const override;
     bool                  notify(uint64_t id, const Notification &n) override;
     void                  withdrawNotification(uint64_t id) override;
-    void                  setBadgeCount(int count, bool dot) override;
+    void                  setBadgeCount(int count, bool dot, std::string_view dotDescription) override;
 
     bool darkMode() const override;
     int  doubleClickMs() const override { return int(GetDoubleClickTime()); }

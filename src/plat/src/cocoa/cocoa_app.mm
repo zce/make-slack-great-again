@@ -314,6 +314,7 @@ void CocoaApp::run() {
 
 void CocoaApp::quit() {
     _quit = true;
+    NSApp.dockTile.badgeLabel = nil;
     noteWork();
 }
 
@@ -565,19 +566,14 @@ bool CocoaApp::openUrl(std::string_view url) {
     }
 }
 
-void CocoaApp::setBadgeCount(int count, bool dot) {
+void CocoaApp::setBadgeCount(int count, bool dot, std::string_view) {
     ensureLaunched(); // the Dock tile only exists once we are in the Dock
-    // Plain AppKit; the Dock hides it when the user turned "Badge app icon"
-    // off, and may until the app asked for notifications at all.
-    if (count > 0 || dot)
-        askBadgePermission();
-    // The tile outlives the process, so an app should clear it before it
-    // quits or the count sticks to the Dock icon.
-    // The dot is a bullet in the same red badge, as other chat apps show
-    // unread activity that has no number.
+    // The dot is a bullet in the same red badge. The OS may hide either
+    // when the user has not allowed badges.
     NSApp.dockTile.badgeLabel = count > 0 ? [NSString stringWithFormat:@"%d", count]
                                 : dot     ? @"\u2022"
                                           : nil;
+    askBadgePermission();
 }
 
 void CocoaApp::onThemeChanged() {

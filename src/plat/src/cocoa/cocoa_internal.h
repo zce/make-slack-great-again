@@ -274,7 +274,8 @@ public:
     bool                  notify(uint64_t id, const Notification &n) override;
     void                  withdrawNotification(uint64_t id) override;
     bool                  launchedFromNotification() override;
-    void                  setBadgeCount(int count, bool dot) override;
+    void                  setBadgeCount(int count, bool dot, std::string_view) override;
+    void                  setBadgePermissionPromptEnabled(bool enabled) override;
 
     bool darkMode() const override;
     int  doubleClickMs() const override;
@@ -427,8 +428,10 @@ private:
     bool                   setUpNotifications() const; // lazily, once
     std::string            notificationIdentifier(uint64_t id) const;
     void                   tearDownNotifications();
-    void                   askBadgePermission(); // once, for the first badge
-    bool                   _badgeAsked     = false;
+    void                   askBadgePermission();
+    bool                   canAskBadgePermission() const;
+    bool                   _badgePromptEnabled = false;
+    bool                   _badgeChecking = false, _badgeAsked = false;
     std::shared_ptr<Alive> _alive          = std::make_shared<Alive>();
     mutable int            _notifyState    = 0; // 0 unknown, 1 usable, -1 unavailable
     mutable id             _notifyDelegate = nil;

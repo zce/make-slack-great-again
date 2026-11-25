@@ -420,6 +420,7 @@ TEST("sidebar_model: sumAttention — important adds, unread ORs, empty is quiet
 }
 
 TEST("sidebar_model: appBadge — DMs and mentions count; the dot only for \"All unread\"") {
+    constexpr int64_t now = kMaxNotifyAgeSecs + 1'000'000;
     Store   s;
     ConvRef quiet                = addChannel(s, "C1");
     s.conversation(quiet).unread = 4;
@@ -427,19 +428,25 @@ TEST("sidebar_model: appBadge — DMs and mentions count; the dot only for \"All
 
     // Not on the tray's blue dot (a mentions-only channel), but bold in the
     // sidebar by default, so "All unread messages" dots the app icon.
-    Attention att = workspaceAttention(s, NotifyLevel::All, 1'000'000);
+    Attention att = workspaceAttention(s, NotifyLevel::All, now);
     CHECK(att.important == 0 && !att.unread && att.anyUnread);
     CHECK(appBadge(att, false) == (AppBadge{0, false})); // "DMs and mentions only"
     CHECK(appBadge(att, true) == (AppBadge{0, true}));
     // The sidebar doesn't highlight it: neither does the badge.
-    CHECK_FALSE(workspaceAttention(s, NotifyLevel::All, 1'000'000, false).anyUnread);
+    CHECK_FALSE(workspaceAttention(s, NotifyLevel::All, now, false).anyUnread);
+    s.conversation(quiet).latest = Ts(now - kMaxNotifyAgeSecs - 1) * 1'000'000;
+    CHECK_FALSE(workspaceAttention(s, NotifyLevel::All, now).anyUnread);
+    s.conversation(quiet).latest = 0;
+    s.conversation(quiet).member = false;
+    CHECK_FALSE(workspaceAttention(s, NotifyLevel::All, now).anyUnread);
+    s.conversation(quiet).member = true;
     // A mute suppresses the plain unread dot, not the important count.
     s.conversation(quiet).muted = true;
-    CHECK_FALSE(workspaceAttention(s, NotifyLevel::All, 1'000'000).anyUnread);
+    CHECK_FALSE(workspaceAttention(s, NotifyLevel::All, now).anyUnread);
 
     // Even muted, a mention gets counted and the number wins over the dot.
     s.conversation(quiet).mentions = 1;
-    att                            = workspaceAttention(s, NotifyLevel::All, 1'000'000);
+    att = workspaceAttention(s, NotifyLevel::All, now);
     CHECK(appBadge(att, true) == (AppBadge{1, false}));
     CHECK(appBadge(att, false) == (AppBadge{1, false}));
 

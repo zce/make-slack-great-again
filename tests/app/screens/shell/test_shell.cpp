@@ -76,6 +76,16 @@ void pump(int n = 10) {
         app().pump(2);
 }
 
+bool until(const std::function<bool()> &done, int ms = 3000) {
+    const double end = app().nowMs() + ms;
+    while (!done()) {
+        if (app().nowMs() > end)
+            return false;
+        app().pump(2);
+    }
+    return true;
+}
+
 // A whole shell over the test fixture, loaded synchronously.
 struct Harness {
     Store             store;
@@ -1914,12 +1924,7 @@ TEST("attention: the app icon badge, DMs and mentions only or all unread") {
     plat::TestHooks *hooks = app().platform().testHooks();
     REQUIRE(hooks != nullptr);
     // Unread changes are recounted after a 50 ms settle (Shell::attentionSoon).
-    auto settles = [](const std::function<bool()> &done) {
-        for (int i = 0; i < 400 && !done(); ++i)
-            app().pump(5);
-        return done();
-    };
-    CHECK(settles([&] { return hooks->badgeCount() == 3; })); // the fixture's DMs and mentions
+    CHECK(until([&] { return hooks->badgeCount() == 3; })); // the fixture's DMs and mentions
     CHECK_FALSE(hooks->badgeDot());
     // Read every DM and mention: other channels stay unread.
     for (ConvRef c = 0; c < h.store.conversationCount(); ++c) {
@@ -1927,17 +1932,18 @@ TEST("attention: the app icon badge, DMs and mentions only or all unread") {
         if (cv.unread && (cv.isDirect() || cv.mentions))
             h.backend.markRead(c, cv.latest);
     }
-    CHECK(settles([&] { return hooks->badgeCount() == 0; }));
+    CHECK(until([&] { return hooks->badgeCount() == 0; }));
     CHECK_FALSE(hooks->badgeDot()); // "Direct messages and mentions only", the default
-    h.settings.badgeLevel = 0;      // Settings → "All unread messages"
+    h.settings.badgeLevel     = 0; // Settings → "All unread messages"
+    h.settings.notifications = false;
     h.sh->applySettings();
-    CHECK(settles([&] { return hooks->badgeDot(); }));
+    CHECK(until([&] { return hooks->badgeDot(); }));
     CHECK(hooks->badgeCount() == 0);
     // Everything read: nothing at all.
     for (ConvRef c = 0; c < h.store.conversationCount(); ++c)
         if (h.store.conversation(c).unread)
             h.backend.markRead(c, h.store.conversation(c).latest);
-    CHECK(settles([&] { return !hooks->badgeDot(); }));
+    CHECK(until([&] { return !hooks->badgeDot(); }));
     CHECK(hooks->badgeCount() == 0);
 }
 
@@ -2854,16 +2860,6 @@ bool showsText(ui::View *v, std::string_view text) {
         if (showsText(v->child(i), text))
             return true;
     return false;
-}
-
-bool until(const std::function<bool()> &done, int ms = 3000) {
-    const double end = app().nowMs() + ms;
-    while (!done()) {
-        if (app().nowMs() > end)
-            return false;
-        app().pump(2);
-    }
-    return true;
 }
 
 } // namespace
@@ -4087,11 +4083,17 @@ TEST("workspaces: each tile shows its own dot; the badge sums the unmuted ones")
     w.post(w.b, "C0GENERAL", "news");
     REQUIRE(until([&] { return w.sh->workspaceDot(kKeyB) == 1; }));
     CHECK(w.sh->workspaceDot(kKeyA) == 0);
+    CHECK_FALSE(app().platform().testHooks()->badgeDot());
+    w.settings.badgeLevel = 0;
+    w.sh->applySettings();
+    CHECK(app().platform().testHooks()->badgeDot());
+    CHECK(w.sh->workspaceDot(kKeyB) == 1);
     // A mention: red, and it counts on the launcher badge.
     w.post(w.b, "C0GENERAL", "<@U0ALEX> look");
     REQUIRE(w.b.conversation(bGeneral).mentions == 1);
     REQUIRE(until([&] { return w.sh->workspaceDot(kKeyB) == 2; }));
     CHECK(app().platform().testHooks()->badgeCount() == 1);
+    CHECK_FALSE(app().platform().testHooks()->badgeDot()); // the number wins
     // One in the open workspace too: both add up.
     // (The open workspace recounts after its burst too: attentionSoon.)
     w.post(w.a, "C0GENERAL", "<@U0ALEX> here too");
@@ -4102,6 +4104,7 @@ TEST("workspaces: each tile shows its own dot; the badge sums the unmuted ones")
     w.a.markRead(aGeneral, w.a.conversation(aGeneral).latest);
     REQUIRE(until([&] { return app().platform().testHooks()->badgeCount() == 0; }));
     CHECK(w.sh->workspaceDot(kKeyB) == 2);
+    CHECK_FALSE(app().platform().testHooks()->badgeDot()); // mute excludes the whole workspace
     w.b.workspaceMuted = false;
     // Switching keeps each one's state: the tiles trade places, nothing reloads.
     w.show(kKeyB);

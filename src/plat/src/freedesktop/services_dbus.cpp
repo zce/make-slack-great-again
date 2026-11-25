@@ -157,7 +157,10 @@ public:
     void withdrawNotification(uint64_t id) override { _notifier.withdraw(id); }
 
     void setBadgeCount(int count) override {
-        _badge    = std::max(0, count);
+        count = std::max(0, count);
+        if (_badgeSet && _badge == count)
+            return; // a dot-only change has no launcher entry representation
+        _badge    = count;
         _badgeSet = true;
         if (_bus.ready())
             sendBadge();

@@ -1297,6 +1297,7 @@ void Shell::runCommand(ConvRef conv, Ts thread, const std::string &name, const s
 Shell::~Shell() {
     // Invalidate queued work before teardown can re-enter the event loop.
     _alive.reset();
+    _ctx.app.platform().setBadgePermissionPromptEnabled(false);
     for (int id : _shortcutIds)
         _win.removeShortcut(id);
     _shortcutIds.clear();
@@ -3312,7 +3313,7 @@ void Shell::updateAttention() {
     const int       n     = sum.important;
     const AppBadge  badge = appBadge(sum, _settings.badgeLevel == 0);
     if (badge != _lastBadge)
-        _ctx.app.platform().setBadgeCount(badge.count, badge.dot);
+        _ctx.app.platform().setBadgeCount(badge.count, badge.dot, badge.dot ? tr("Unread") : "");
     const int tray = sum.dot();
     if (n != _lastBadge.count || tray != _lastTray)
         refreshTrayIcon(n, sum.unread || n > 0);
@@ -4110,7 +4111,7 @@ void Shell::applySettings() {
     f.defaultLevel                       = defaultLevel();
     _sidebar->setFilters(f);
     for (const auto &r : _running)
-        r->dirty = true; // the default level decides what counts
+        r->dirty = true; // the default level and unread highlighting decide what counts
     // Settings → General → Use tray: the icon comes and goes at once. Without
     // it the window's close quits and minimizing leaves it on the taskbar.
     if (_settings.useTray && !_tray) {
@@ -4125,6 +4126,7 @@ void Shell::applySettings() {
         _tray.reset();
     }
     _lastTray = -1; // the tray picture may have changed
+    _ctx.app.platform().setBadgePermissionPromptEnabled(_settings.notifications);
     updateAttention();
 }
 

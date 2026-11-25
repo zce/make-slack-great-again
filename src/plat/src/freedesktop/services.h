@@ -85,7 +85,7 @@ public:
     bool notificationsAvailable() const override { return services().notificationsAvailable(); }
     bool notify(uint64_t id, const Notification &n) override { return services().notify(id, n); }
     void withdrawNotification(uint64_t id) override { services().withdrawNotification(id); }
-    void setBadgeCount(int n, bool) override { services().setBadgeCount(n); } // no dot there
+    void setBadgeCount(int n, bool, std::string_view) override { services().setBadgeCount(n); }
     bool darkMode() const override { return services().darkMode().value_or(false); }
 
 #ifdef PLAT_TEST_HOOKS
