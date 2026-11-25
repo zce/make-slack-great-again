@@ -951,7 +951,7 @@ TEST("files: the tab lists the conversation's files newest first; a click opens 
     h.sh->open(general);
     pump();
     model::Message shared;
-    shared.ts   = h.store.conversation(general).latest + 1000;
+    shared.ts   = h.store.conversation(general).latest + 1'000'000; // files are sorted by seconds
     shared.user = h.store.findUser("U0MIRA");
     model::File external;
     external.id        = "FEXTERNAL";
