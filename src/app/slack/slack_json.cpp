@@ -6,6 +6,7 @@
 #include "app/mrkdwn/mrkdwn.h"
 #include "base/i18n.h"
 #include "base/str.h"
+#include "net/net.h"
 
 #include <algorithm>
 #include <cmath>
@@ -753,9 +754,17 @@ File toFile(const Value &o) {
     f.original   = owned(o["url_private_download"]);
     if (f.original.empty())
         f.original = f.path;
-    // A Google Doc (Dropbox, Box…) shared into Slack: its page there.
-    if (o["is_external"].boolean())
-        f.external = owned(o["external_url"]);
+    // A browser destination, not a path or a source for authenticated fetches.
+    if (o["is_external"].boolean()) {
+        const std::string_view external = o["external_url"].str();
+        net::Url               url;
+        const bool             clean =
+            std::none_of(external.begin(), external.end(), [](unsigned char c) {
+                return c <= ' ' || c == 0x7f || c == '\\';
+            });
+        if (clean && url.parse(external) && (url.scheme == "https" || url.scheme == "http"))
+            f.external = external; // Keep the browser URL's query and fragment.
+    }
     if (str::startsWith(f.mime, "image/") && f.mime != "image/gif")
         for (const char *key : kThumbs)
             if (const std::string_view t = o[key].str(); !t.empty()) {

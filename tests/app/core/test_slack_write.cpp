@@ -1362,11 +1362,18 @@ TEST("slack: a conversation's files come a page at a time, newest first") {
         {"id":"F1","name":"a.png","mimetype":"image/png","pretty_type":"PNG","user":"UMIRA",
          "created":1700000000,"size":10,"url_private":"https://f/a","thumb_360":"https://t/a",
          "original_w":10,"original_h":10,"permalink":"https://p/a"},
-        {"id":"F2","name":"b.pdf","mimetype":"application/pdf","pretty_type":"PDF","user":"UME",
-         "created":1700000100,"size":2048,"url_private":"https://f/b","permalink":"https://p/b"}],
-        "paging":{"count":50,"total":3,"page":1,"pages":2}},
-        {"ok":true,"files":[{"id":"F0","name":"c.txt","user":"UNEW","created":1600000000}],
-         "paging":{"count":50,"total":3,"page":2,"pages":2}}])");
+         {"id":"F2","name":"b.pdf","mimetype":"application/pdf","pretty_type":"PDF","user":"UME",
+          "created":1700000100,"size":2048,"url_private":"https://f/b","permalink":"https://p/b",
+          "is_external":true,"external_url":"https://example.com/files/b.pdf"}],
+         "paging":{"count":50,"total":5,"page":1,"pages":2}},
+         {"ok":true,"files":[
+          {"id":"F0","name":"c.txt","user":"UNEW","created":1600000002,
+           "is_external":true,"external_url":"file:///tmp/document","permalink":"https://p/c"},
+          {"id":"F3","name":"d.txt","created":1600000001,"is_external":true,
+           "external_url":"https:///document","permalink":"https://p/d"},
+          {"id":"F4","name":"e.txt","created":1600000000,"external_url":"https://example.com/e",
+           "url_private":"https://f/e"}],
+          "paging":{"count":50,"total":5,"page":2,"pages":2}}])");
     model::Backend::FilesPage page;
     bool                      called = false;
     e.be->loadConversationFiles(e.general, 1, [&](model::Backend::FilesPage p) {
@@ -1379,6 +1386,8 @@ TEST("slack: a conversation's files come a page at a time, newest first") {
     CHECK(page.files[0].user == e.me);
     CHECK(page.files[0].created == 1700000100);
     CHECK_STR(page.files[0].file.permalink, "https://p/b");
+    CHECK_STR(page.files[0].file.webUrl(), "https://example.com/files/b.pdf");
+    CHECK_STR(page.files[0].file.source(), "https://f/b");
     CHECK(page.files[1].user == e.mira);
     CHECK_STR(page.files[1].file.path, "https://t/a"); // an image shows its thumb
     CHECK(page.nextPage == 2);
@@ -1392,9 +1401,12 @@ TEST("slack: a conversation's files come a page at a time, newest first") {
         called = true, page = std::move(p);
     });
     REQUIRE(pumpUntil([&] { return called; }));
-    REQUIRE(page.files.size() == 1);
+    REQUIRE(page.files.size() == 3);
     CHECK_STR(page.files[0].file.id, "F0");
     CHECK(page.files[0].user != model::kNoUser); // someone the roster doesn't have yet
+    CHECK_STR(page.files[0].file.webUrl(), "https://p/c");
+    CHECK_STR(page.files[1].file.webUrl(), "https://p/d");
+    CHECK_STR(page.files[2].file.webUrl(), "https://f/e");
     CHECK(page.nextPage == 0);
     CHECK_STR(Log().get("files.list", 1)["form"]["page"].str(), "2");
 }

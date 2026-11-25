@@ -222,7 +222,7 @@ size_t fileStorage(const File &f) {
            stringStorage(f.prettyType) + stringStorage(f.path) + stringStorage(f.original) +
            stringStorage(f.permalink) + stringStorage(f.subtype) +
            stringStorage(f.transcript) + stringStorage(f.transcriptVtt) +
-           stringStorage(f.thumb) + stringStorage(f.title);
+           stringStorage(f.thumb) + stringStorage(f.title) + stringStorage(f.external);
 }
 
 size_t blockStorage(const Block &b) {

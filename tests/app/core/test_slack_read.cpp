@@ -257,8 +257,8 @@ TEST("slack read: history pages arrive oldest first, hasMoreBefore follows has_m
                     "size": 12345},
                    {"id": "F2", "name": "Terms", "mimetype": "application/vnd.google-apps.document",
                     "pretty_type": "Google Docs", "is_external": true, "external_type": "gdrive",
-                    "external_url": "https://docs.google.com/document/d/X/edit",
-                    "url_private": "https://docs.google.com/document/d/X/edit",
+                    "external_url": "https://docs.google.com/document/d/X/edit?usp=sharing#heading",
+                    "url_private": "https://files/terms.bin",
                     "permalink": "https://t.slack.com/files/UMIRA/F2/terms", "size": 273}],
          "attachments": [{"from_url": "https://news/x", "title": "News", "service_name": "News",
                           "color": "3FCB8E", "text": "story", "thumb_url": "https://news/t.png",
@@ -283,8 +283,9 @@ TEST("slack read: history pages arrive oldest first, hasMoreBefore follows has_m
     CHECK(pic.files()[0].external.empty());
     CHECK_STR(pic.files()[0].webUrl(), "https://files/cat720.png"); // no permalink: the file
     // A Google Doc opens in Google Docs, not on its Slack page.
-    CHECK_STR(pic.files()[1].external, "https://docs.google.com/document/d/X/edit");
-    CHECK_STR(pic.files()[1].webUrl(), "https://docs.google.com/document/d/X/edit");
+    CHECK_STR(pic.files()[1].external, "https://docs.google.com/document/d/X/edit?usp=sharing#heading");
+    CHECK_STR(pic.files()[1].webUrl(), "https://docs.google.com/document/d/X/edit?usp=sharing#heading");
+    CHECK_STR(pic.files()[1].source(), "https://files/terms.bin");
     CHECK_STR(pic.files()[1].permalink, "https://t.slack.com/files/UMIRA/F2/terms");
     REQUIRE(pic.attachments().size() == 1);
     CHECK(pic.attachments()[0].linkPreview);

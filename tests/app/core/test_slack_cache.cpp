@@ -244,6 +244,29 @@ TEST("slack cache: a broadcast reply keeps its thread context across a restart")
     CHECK_STR(broadcast.extra->threadParentText, "original topic");
 }
 
+TEST("slack cache: files from an older cache still open their Slack page") {
+    wipe();
+    const std::string dir = cacheDir();
+    REQUIRE(file::writeAtomic(file::join(dir, "roster.json"), R"({"v":1,"c":[["C1","general"]]})"));
+    // The old positional File record ends at transcriptVtt, with no external URL.
+    REQUIRE(file::writeAtomic(file::join(dir, "messages/C1.json"), R"({"v":1,"m":[
+        [1700000001000000,0,0,"UME","",0,"shared",0,[],[],
+         ["","","",[["F1","terms.txt","text/plain","Plain text","https://files/terms.txt",
+                    "","",0,0,0,0,"","https://t.slack.com/files/UME/F1","","",""]]]]]})"));
+    model::Store s;
+    cache::WorkspaceCache wc(app(), s, dir);
+    REQUIRE(wc.load(nullptr));
+    const ConvRef c = s.findConversation("C1");
+    REQUIRE(wc.loadMessages(c) != 0);
+    REQUIRE(s.conversation(c).messages.size() == 1);
+    const auto &files = s.conversation(c).messages[0].files();
+    REQUIRE(files.size() == 1);
+    CHECK(files[0].external.empty());
+    CHECK_STR(files[0].webUrl(), "https://t.slack.com/files/UME/F1");
+    wc.close(false);
+    wipe();
+}
+
 TEST("slack cache: a thread turned off by hand stays off after a restart") {
     if (!haveServer())
         return;

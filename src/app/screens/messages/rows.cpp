@@ -223,6 +223,7 @@ public:
         if (_list)
             _list->fileGone(this);
     }
+    std::string accessibleName() const override { return _name; }
     bool onEvent(ui::Event &e) override {
         if (_list &&
             (e.type == ui::EventType::PointerEnter || e.type == ui::EventType::PointerLeave))
@@ -1867,11 +1868,10 @@ void MessageRow::buildFile(ui::View *col, const model::File &f, Ts ts) {
     auto *chip = col->add<FileChip>(ts ? &_list : nullptr, ts, f);
     chip->style().alignSelf(Align::Start).margins(0, 6, 0, 0);
     const model::File file = f;
-    // A chip click: an HTML file renders in the browser (fetched to a
-    // local copy), a Google Doc opens in Google Docs, anything else opens
-    // its Slack page (else the file).
-    chip->onClick          = [this, file] {
-        if (file.isHtml() && !file.path.empty())
+    // Slack-hosted HTML renders from a local copy. External documents open
+    // at their provider; other files open their Slack page (else the file).
+    chip->onClick = [this, file] {
+        if (file.external.empty() && file.isHtml() && !file.path.empty())
             _list.openHtmlFile(file);
         else if (_list.ctx().openUrl) {
             const std::string &url = file.webUrl();
