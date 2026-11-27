@@ -2563,6 +2563,60 @@ TEST("forward: mention tokens become plain text in the quote") {
     );
 }
 
+TEST("forward: user and subteam mention names protect Markdown") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    model::User   eve;
+    eve.id          = "U0EVE";
+    eve.name        = "eve";
+    eve.displayName = "Eve *Lead* _Ops_ ~Away~";
+    h.store.addUser(std::move(eve));
+    model::User back;
+    back.id          = "U0BACK";
+    back.name        = "back";
+    back.displayName = "Back `Tick`";
+    h.store.addUser(std::move(back));
+    model::User amp;
+    amp.id          = "U0AMP";
+    amp.name        = "amp";
+    amp.displayName = "Eve & <Co>";
+    h.store.addUser(std::move(amp));
+    h.store.usersChanged();
+    Message m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "<@U0EVE> <@U0BACK> <@U0AMP> <!subteam^S1|@devs *Lead*> "
+             "*bold* <https://x.test/p|the plan>";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Mira Okafor* wrote in #design:\n"
+        "> @`Eve *Lead* _Ops_ ~Away~` @`Back 'Tick'` "
+        "@Eve &amp; &lt;Co&gt; @`devs *Lead*` *bold* <https://x.test/p|the plan>"
+    );
+}
+
 // Where a message was written is named only for a public channel: a private
 // channel's name, or who is in a DM, stays out of the forward. A name is
 // escaped, so a "<!channel>" in it can't ping the target.

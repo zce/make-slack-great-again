@@ -1262,10 +1262,14 @@ std::string portableMrkdwn(const model::Store &source, std::string_view in) {
         std::string words;
         if (tok[0] == '@') {
             const model::UserRef u = source.findUser(id);
-            words                  = "@" + (u != model::kNoUser && !source.user(u).placeholder
-                                                ? std::string(source.user(u).label())
-                                            : !label.empty() ? label
-                                                             : std::string(id));
+            std::string          name;
+            if (u != model::kNoUser && !source.user(u).placeholder)
+                name = std::string(source.user(u).label());
+            else if (!label.empty())
+                name = label;
+            else
+                name = std::string(id);
+            words = "@" + formatForwardName(name, false);
         } else if (tok[0] == '#') {
             // A channel name is safe only for a public channel we know. A
             // private channel (or an unknown one whose label may be sensitive)
@@ -1279,9 +1283,10 @@ std::string portableMrkdwn(const model::Store &source, std::string_view in) {
             else
                 words = "unknown channel";
         } else if (str::startsWith(id, "subteam^")) {
-            words = !label.empty() ? label : "@" + std::string(id.substr(8));
-            if (words[0] != '@')
-                words.insert(0, 1, '@');
+            std::string name = !label.empty() ? label : std::string(id.substr(8));
+            if (!name.empty() && name[0] == '@')
+                name.erase(0, 1);
+            words = "@" + formatForwardName(name, false);
         } else if (str::startsWith(id, "date^")) {
             words = label;
         } else { // here, channel, everyone: plain words, no broadcast
