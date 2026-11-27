@@ -651,7 +651,7 @@ text::AttributedText canvasPreviewText(
         i = e + 1;
     }
     std::string              t;
-    std::vector<uint16_t>    fmt;
+    std::vector<uint32_t>    fmt;
     std::vector<std::string> links;
     ui::rich::fromHtml(
         canvas::editorHtml(html, {f.title, canvasTitle(ctx, f)}, nullptr), &t, &fmt, &links
@@ -727,7 +727,7 @@ text::AttributedText canvasPreviewText(
             while (j < nl && j < fmt.size() && i < fmt.size() && fmt[j] == fmt[i])
                 ++j;
             text::Style    s    = st;
-            const uint16_t fm   = i < fmt.size() ? fmt[i] : 0;
+            const uint32_t fm   = i < fmt.size() ? fmt[i] : 0;
             const size_t   link = fm >> 8;
             if (fm & ui::TextEdit::Bold)
                 s.weight = text::Weight::Bold;

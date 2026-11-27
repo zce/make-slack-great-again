@@ -69,6 +69,9 @@ public:
     ReaderText(EditAt edit, uint32_t from) : _edit(std::move(edit)), _from(from) {
         setCursor(plat::Cursor::IBeam);
     }
+    // A display offset per byte of the label, then the end: a cell with an
+    // escaped pipe shows one byte fewer than its place in the body.
+    void setBodyOffsets(std::vector<uint32_t> offsets) { _bodyAt = std::move(offsets); }
     bool onEvent(Event &e) override {
         if (Label::onEvent(e)) // a link
             return true;
@@ -79,8 +82,15 @@ public:
         case EventType::PointerUp:
             if (!std::exchange(_pressed, false))
                 return false;
-            if (bounds().contains(e.pos))
-                _edit(_from + std::min<uint32_t>(offsetAt(e.pos), uint32_t(text().size())));
+            if (bounds().contains(e.pos)) {
+                const uint32_t shown =
+                    std::min<uint32_t>(offsetAt(e.pos), uint32_t(text().size()));
+                const uint32_t at =
+                    _bodyAt.empty()
+                        ? _from + shown
+                        : _bodyAt[std::min<size_t>(shown, _bodyAt.size() - 1)];
+                _edit(at);
+            }
             return true;
         case EventType::PointerCancel:
             _pressed = false;
@@ -91,9 +101,16 @@ public:
     }
 
 private:
-    EditAt   _edit;
-    uint32_t _from;
-    bool     _pressed = false;
+    EditAt                _edit;
+    uint32_t              _from;
+    std::vector<uint32_t> _bodyAt;
+    bool                  _pressed = false;
+};
+
+struct ReaderFormat {
+    uint16_t format = 0;
+    uint32_t link   = 0;
+    bool     operator==(const ReaderFormat &) const = default;
 };
 
 bool startsWith(std::string_view s, std::string_view p) {
@@ -112,23 +129,35 @@ bool tableRule(std::string_view line) {
     return dash;
 }
 
+// A pipe escaped by an odd run of backslashes is cell text, not a separator.
+bool escapedPipe(std::string_view text, uint32_t at, uint32_t from) {
+    size_t slashes = 0;
+    for (uint32_t i = at; i > from && text[i - 1] == '\\'; --i)
+        ++slashes;
+    return slashes % 2 == 1;
+}
+
 // The cells of a table row: [from, to) per cell, spaces trimmed, between the
-// row's pipes.
+// row's unescaped pipes. A trailing pipe is a delimiter, not another cell.
 std::vector<std::pair<uint32_t, uint32_t>>
 tableCells(std::string_view text, uint32_t from, uint32_t to) {
     std::vector<std::pair<uint32_t, uint32_t>> out;
-    uint32_t                                   start = from + 1; // past the leading '|'
-    for (uint32_t i = start; i < to; ++i) {
-        if (text[i] != '|')
-            continue;
-        uint32_t a = start, b = i;
+    uint32_t start = from < to && text[from] == '|' ? from + 1 : from;
+    auto     add   = [&](uint32_t a, uint32_t b) {
         while (a < b && text[a] == ' ')
             ++a;
         while (b > a && text[b - 1] == ' ')
             --b;
         out.push_back({a, b});
+    };
+    for (uint32_t i = start; i < to; ++i) {
+        if (text[i] != '|' || escapedPipe(text, i, from))
+            continue;
+        add(start, i);
         start = i + 1;
     }
+    if (start < to)
+        add(start, to);
     return out;
 }
 
@@ -185,10 +214,18 @@ CanvasPage::CanvasPage(screens::Context &ctx) : _ctx(ctx), _alive(std::make_shar
         if (onTitleChanged && !_fileId.empty())
             onTitleChanged(std::string(str::trim(_title->text())));
     };
-    _body->onSubmit      = [] { return false; }; // Enter is a new line
-    // Leaving the editor shows the reading view again.
+    _body->onSubmit = [] { return false; }; // Enter is a new line
+    // Entering the editor, and leaving it: an existing canvas with an empty
+    // body shows the editor, but is not editing until the user gets there.
     _body->onFocusChange = [this](bool focused) {
-        if (!focused && _editing) {
+        if (_loading)
+            return;
+        if (focused) {
+            if (!_editing && _ro == ReadOnly::None) {
+                _editing = true;
+                refreshMode();
+            }
+        } else if (_editing) {
             _editing = false;
             refreshMode();
         }
@@ -202,6 +239,10 @@ CanvasPage::CanvasPage(screens::Context &ctx) : _ctx(ctx), _alive(std::make_shar
     _body->onChange = [this] {
         if (_loading)
             return;
+        if (!_editing && _ro == ReadOnly::None) {
+            _editing = true;
+            refreshMode();
+        }
         _bodyDirty = true;
         armSave();
     };
@@ -336,55 +377,80 @@ void CanvasPage::rebuildReader() {
     const EditAt       edit = [this](uint32_t at) { this->edit(at); };
 
     // The body's formats per byte, as TextEdit keeps them: format bits, and
-    // a link as (index into _readerLinks + 1) << 8.
-    std::vector<uint16_t> fmt(t.size(), 0);
+    // a link id (index into _readerLinks + 1).
+    std::vector<ReaderFormat> fmt(t.size());
     for (const TextEdit::Run &r : _body->runs()) {
-        uint16_t v = r.format;
+        ReaderFormat v{r.format, 0};
         if (!r.link.empty()) {
             auto it = std::find(_readerLinks.begin(), _readerLinks.end(), r.link);
             if (it == _readerLinks.end())
                 it = _readerLinks.insert(_readerLinks.end(), std::string(r.link));
-            v = uint16_t(v | (uint16_t(it - _readerLinks.begin() + 1) << 8));
+            v.link = uint32_t(it - _readerLinks.begin() + 1);
         }
         for (uint32_t i = r.start; i < r.end && i < t.size(); ++i)
             fmt[i] = v;
     }
     text::Style body = font(Font::Body);
     body.color       = themed(C::Text);
-    // [a, b) of the body in `base`, its own formats on top.
-    auto rich        = [&](uint32_t a, uint32_t b, const text::Style &base) {
+    // [a, b) of the body in `base`, its own formats on top. unescapePipes
+    // turns a cell's "\|" into the literal pipe it shows; map then records
+    // the body offset of every shown byte for click-to-edit.
+    auto rich = [&](uint32_t               a,
+                    uint32_t               b,
+                    const text::Style     &base,
+                    bool                   unescapePipes,
+                    std::vector<uint32_t> *map) {
         text::AttributedText out;
         for (uint32_t i = a; i < b;) {
-            uint32_t j = i + 1;
-            while (j < b && fmt[j] == fmt[i])
-                ++j;
-            const uint16_t f  = fmt[i];
-            text::Style    st = base;
-            if (f & TextEdit::Bold)
+            const ReaderFormat f  = fmt[i];
+            text::Style        st = base;
+            if (f.format & TextEdit::Bold)
                 st.weight = text::Weight::Bold;
-            if (f & TextEdit::Italic)
+            if (f.format & TextEdit::Italic)
                 st.italic = true;
-            if (f & TextEdit::Strike)
+            if (f.format & TextEdit::Strike)
                 st.strike = true;
-            if (f & TextEdit::Code) {
+            if (f.format & TextEdit::Code) {
                 st.mono       = true;
                 st.size       = std::max(10.f, base.size - 2);
                 st.color      = themed(C::CodeText);
                 st.background = themed(C::CodeBg);
             }
-            if (f >> 8) {
+            if (f.link) {
                 st.color     = themed(C::Link);
                 st.underline = true;
-                st.linkId    = f >> 8;
+                st.linkId    = f.link;
             }
-            out.append(std::string_view(t).substr(i, j - i), st);
+            std::string run;
+            uint32_t    j = i;
+            while (j < b && fmt[j] == f) {
+                if (unescapePipes && t[j] == '\\' && j + 1 < b && t[j + 1] == '|') {
+                    ++j;
+                    continue;
+                }
+                run += t[j];
+                if (map)
+                    map->push_back(j);
+                ++j;
+            }
+            if (!run.empty())
+                out.append(run, st);
             i = j;
         }
+        if (map)
+            map->push_back(b);
         return out;
     };
-    auto label = [&](View *in, uint32_t a, uint32_t b, const text::Style &base) {
+    auto label = [&](View              *in,
+                     uint32_t           a,
+                     uint32_t           b,
+                     const text::Style &base,
+                     bool               unescapePipes = false) {
+        std::vector<uint32_t> map;
         auto *l = in->add<ReaderText>(edit, a);
-        l->setRichText(rich(a, b, base));
+        l->setRichText(rich(a, b, base, unescapePipes, unescapePipes ? &map : nullptr));
+        if (unescapePipes)
+            l->setBodyOffsets(std::move(map));
         l->onLink = [this](uint32_t id) {
             if (id && id <= _readerLinks.size()) {
                 const std::string &url = _readerLinks[id - 1];
@@ -425,6 +491,16 @@ void CanvasPage::rebuildReader() {
     auto             flushTable = [&] {
         if (table.empty())
             return;
+        // A table needs the header rule row; a paragraph that merely starts
+        // with "|" is ordinary text and keeps its pipes.
+        if (table.size() < 2 ||
+            !tableRule(std::string_view(t).substr(table[1].from, table[1].to - table[1].from))) {
+            View *in = host(tableQuoted);
+            for (const Row &r : table)
+                label(in, r.from, r.to, body);
+            table.clear();
+            return;
+        }
         View *in   = host(tableQuoted);
         auto *grid = in->add<ReaderBlock>(edit, table.front().from);
         grid->style().column().margins(0, 4, 0, 4);
@@ -458,7 +534,7 @@ void CanvasPage::rebuildReader() {
                     text::Style st = body;
                     if (header && i == 0)
                         st.weight = text::Weight::Semibold;
-                    label(cell, cells[c].first, cells[c].second, st);
+                    label(cell, cells[c].first, cells[c].second, st, true);
                 }
             }
             first = false;
@@ -655,7 +731,7 @@ void CanvasPage::applyRemoteHtml(const std::string &html) {
 void CanvasPage::setBody(const std::string &editorHtml) {
     // The same text again (a save coming back): leave the caret alone.
     std::string              text;
-    std::vector<uint16_t>    fmt;
+    std::vector<uint32_t>    fmt;
     std::vector<std::string> links;
     rich::fromHtml(editorHtml, &text, &fmt, &links);
     if (!editorHtml.empty() && text == _body->text()) {

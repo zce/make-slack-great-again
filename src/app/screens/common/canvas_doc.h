@@ -35,7 +35,7 @@ editorHtml(std::string_view html, const std::vector<std::string> &titles, std::s
 std::string markdown(const std::string &text, const std::vector<ui::TextEdit::Run> &runs);
 // The same from rich::fromHtml's per-byte formats.
 std::string markdown(
-    const std::string &text, const std::vector<uint16_t> &fmt, const std::vector<std::string> &links
+    const std::string &text, const std::vector<uint32_t> &fmt, const std::vector<std::string> &links
 );
 
 // One section of a canvas at the diff's granularity.

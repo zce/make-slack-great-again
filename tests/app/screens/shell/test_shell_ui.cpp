@@ -1137,6 +1137,148 @@ TEST("canvas: reads formatted until clicked into, then edits its markdown there"
 
 }
 
+TEST("canvas: an existing empty canvas stays in edit mode through autosave") {
+    Harness       h;
+    const ConvRef eng = h.conv("C0ENG");
+    bool          created = false;
+    std::string   error;
+    h.backend.createChannelCanvas(eng, "", [&](std::string, std::string err) {
+        created = true;
+        error   = std::move(err);
+    });
+    REQUIRE(until([&] { return created; }));
+    CHECK(error.empty());
+    h.sh->open(eng);
+    pump();
+    h.sh->showCanvas(true);
+    shell::CanvasPage &cp = h.sh->canvasPage();
+    pump(30);
+    CHECK_FALSE(cp.editing());
+    CHECK(cp.body().visible());
+    // The user gets into the empty editor and types; the body is empty, so
+    // nothing in refreshMode() would otherwise have marked it as editing.
+    cp.body().focus();
+    pump();
+    CHECK(cp.editing());
+    cp.body().insertText("New draft");
+    cp.flushPendingSave();
+    pump(50);
+    CHECK(cp.editing());
+    CHECK(cp.body().visible());
+    CHECK_FALSE(cp.reader().visible());
+    CHECK_STR(cp.body().text(), "New draft");
+    cp.stopEditing();
+    pump();
+    CHECK_FALSE(cp.editing());
+    CHECK(cp.reader().visible());
+    CHECK_FALSE(cp.body().visible());
+}
+
+TEST("canvas: a paragraph beginning with a pipe is not a table") {
+    Harness       h;
+    const ConvRef eng = h.conv("C0ENG");
+    bool          created = false;
+    h.backend.createChannelCanvas(eng, "", [&](std::string, std::string) { created = true; });
+    REQUIRE(until([&] { return created; }));
+    h.sh->open(eng);
+    pump();
+    h.sh->showCanvas(true);
+    shell::CanvasPage &cp = h.sh->canvasPage();
+    pump(30);
+    cp.edit(0);
+    cp.body().setText("| This is a shell output\n");
+    cp.stopEditing();
+    pump();
+    std::function<bool(ui::View *, std::string_view)> has = [&](ui::View *v, std::string_view s) {
+        if (v->accessibleName() == s)
+            return true;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (has(v->child(i), s))
+                return true;
+        return false;
+    };
+    CHECK(has(&cp.reader(), "| This is a shell output"));
+    CHECK_FALSE(has(&cp.reader(), "This is a shell output"));
+}
+
+TEST("canvas: table cells keep escaped pipes and empty trailing cells") {
+    Harness       h;
+    const ConvRef eng = h.conv("C0ENG");
+    bool          created = false;
+    h.backend.createChannelCanvas(eng, "", [&](std::string, std::string) { created = true; });
+    REQUIRE(until([&] { return created; }));
+    h.sh->open(eng);
+    pump();
+    h.sh->showCanvas(true);
+    shell::CanvasPage &cp = h.sh->canvasPage();
+    pump(30);
+    cp.edit(0);
+    cp.body().setText("| A | B |\n| --- | --- |\n| x \\| y |  |\n");
+    cp.stopEditing();
+    pump();
+    std::function<ui::Label *(ui::View *, std::string_view)> find =
+        [&](ui::View *v, std::string_view s) -> ui::Label * {
+        if (v->role() == ui::Role::Text && v->accessibleName() == s)
+            return static_cast<ui::Label *>(v);
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::Label *l = find(v->child(i), s))
+                return l;
+        return nullptr;
+    };
+    CHECK(find(&cp.reader(), "A") != nullptr);
+    CHECK(find(&cp.reader(), "B") != nullptr);
+    CHECK(find(&cp.reader(), "x | y") != nullptr);
+    CHECK(find(&cp.reader(), "x \\| y") == nullptr);
+}
+
+TEST("canvas: the 256th distinct link resolves to its own destination") {
+    Harness       h;
+    const ConvRef eng = h.conv("C0ENG");
+    bool          created = false;
+    h.backend.createChannelCanvas(eng, "", [&](std::string, std::string) { created = true; });
+    REQUIRE(until([&] { return created; }));
+    h.sh->open(eng);
+    pump();
+    h.sh->showCanvas(true);
+    shell::CanvasPage &cp = h.sh->canvasPage();
+    pump(30);
+    std::string text;
+    for (int i = 1; i <= 256; ++i)
+        text += "link" + std::to_string(i) + "\n";
+    cp.edit(0);
+    cp.body().setText(text);
+    for (int i = 1; i <= 256; ++i) {
+        const std::string label = "link" + std::to_string(i);
+        const uint32_t    at    = uint32_t(cp.body().text().find(label));
+        REQUIRE(at != uint32_t(std::string::npos));
+        cp.body().setSelection(at, at + uint32_t(label.size()));
+        cp.body().setLink("https://example.test/" + std::to_string(i));
+    }
+    cp.stopEditing();
+    pump();
+    std::function<ui::Label *(ui::View *, std::string_view)> find =
+        [&](ui::View *v, std::string_view s) -> ui::Label * {
+        if (v->role() == ui::Role::Text && v->accessibleName() == s)
+            return static_cast<ui::Label *>(v);
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::Label *l = find(v->child(i), s))
+                return l;
+        return nullptr;
+    };
+    ui::Label *last = find(&cp.reader(), "link256");
+    REQUIRE(last != nullptr);
+    REQUIRE(last->richText() != nullptr);
+    bool id256 = false;
+    for (const text::Span &span : last->richText()->spans)
+        id256 = id256 || span.style.linkId == 256;
+    CHECK(id256);
+    std::string opened;
+    h.ctx.openUrl = [&](const std::string &u) { opened = u; };
+    REQUIRE(last->onLink != nullptr);
+    last->onLink(256);
+    CHECK_STR(opened, "https://example.test/256");
+}
+
 TEST("canvas: \"Add canvas\" creates it on the first save, then the tab names it") {
     Harness       h;
     const ConvRef eng = h.conv("C0ENG");

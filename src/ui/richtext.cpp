@@ -131,14 +131,14 @@ std::string_view tagAttr(std::string_view tag, std::string_view name, bool stric
 }
 
 std::string
-toHtml(std::string_view text, const uint16_t *fmt, const std::vector<std::string> &links) {
+toHtml(std::string_view text, const uint32_t *fmt, const std::vector<std::string> &links) {
     std::string out;
     size_t      i = 0;
     while (i < text.size()) {
         size_t j = i + 1;
         while (j < text.size() && fmt[j] == fmt[i])
             ++j;
-        const uint16_t f    = fmt[i];
+        const uint32_t f    = fmt[i];
         const size_t   link = f >> 8;
         if (link && link <= links.size()) {
             out += "<a href=\"";
@@ -172,13 +172,13 @@ toHtml(std::string_view text, const uint16_t *fmt, const std::vector<std::string
 void fromHtml(
     std::string_view          h,
     std::string              *text,
-    std::vector<uint16_t>    *fmt,
+    std::vector<uint32_t>    *fmt,
     std::vector<std::string> *links
 ) {
     struct Open {
         std::string_view name;
         uint16_t         formats; // what this element turned on
-        uint16_t         link;    // link index it set (0 = none)
+        uint32_t         link;    // link index it set (0 = none)
         bool             pre;
     };
     std::vector<Open> stack;
@@ -192,13 +192,13 @@ void fromHtml(
         h = h.substr(s + 20, e == std::string_view::npos ? std::string_view::npos : e - s - 20);
     }
     auto current = [&]() {
-        uint16_t f = 0, link = 0;
+        uint32_t f = 0, link = 0;
         for (const Open &o : stack) {
             f |= o.formats;
             if (o.link)
                 link = o.link;
         }
-        return uint16_t(f | (link << 8));
+        return f | (link << 8);
     };
     auto inPre = [&]() {
         for (const Open &o : stack)
@@ -206,7 +206,7 @@ void fromHtml(
                 return true;
         return false;
     };
-    auto emit = [&](std::string_view s, uint16_t f) {
+    auto emit = [&](std::string_view s, uint32_t f) {
         text->append(s);
         fmt->insert(fmt->end(), s.size(), f);
     };
@@ -263,9 +263,9 @@ void fromHtml(
                 o.pre = true;
             } else if (str::iequals(name, "a")) {
                 std::string href = attr(tag, "href");
-                if (!href.empty() && links->size() < 255) {
+                if (!href.empty()) {
                     links->push_back(std::move(href));
-                    o.link = uint16_t(links->size());
+                    o.link = uint32_t(links->size());
                 }
             }
             // Inline styles (Google Docs wraps everything in <b style="font-weight:normal">).
@@ -295,7 +295,7 @@ void fromHtml(
             e = h.size();
         if (!skip) {
             const std::string t   = decode(h.substr(i, e - i));
-            const uint16_t    f   = current();
+            const uint32_t    f   = current();
             const bool        pre = inPre();
             std::string       run;
             for (char c : t) {

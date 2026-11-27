@@ -66,7 +66,7 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
             const size_t close = open == std::string_view::npos ? open : h.find("</h1>", open);
             if (close != std::string_view::npos) {
                 std::string              text;
-                std::vector<uint16_t>    fmt;
+                std::vector<uint32_t>    fmt;
                 std::vector<std::string> links;
                 ui::rich::fromHtml(h.substr(open + 1, close - open - 1), &text, &fmt, &links);
                 const std::string t(str::trim(text));
@@ -369,7 +369,7 @@ std::string markdown(const std::string &t, const std::vector<ui::TextEdit::Run> 
 }
 
 std::string markdown(
-    const std::string &t, const std::vector<uint16_t> &fmt, const std::vector<std::string> &links
+    const std::string &t, const std::vector<uint32_t> &fmt, const std::vector<std::string> &links
 ) {
     std::vector<ui::TextEdit::Run> runs;
     const uint32_t                 n = uint32_t(std::min(t.size(), fmt.size()));
@@ -473,7 +473,7 @@ size_t elementEnd(std::string_view h, size_t start, std::string_view name) {
 std::string elementMd(std::string_view element) {
     const std::string        eh = editorHtml(element, {}, nullptr);
     std::string              text;
-    std::vector<uint16_t>    fmt;
+    std::vector<uint32_t>    fmt;
     std::vector<std::string> links;
     ui::rich::fromHtml(eh, &text, &fmt, &links);
     return markdown(text, fmt, links);
