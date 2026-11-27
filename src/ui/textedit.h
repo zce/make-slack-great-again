@@ -170,7 +170,7 @@ private:
     struct Edit {
         uint32_t              pos = 0;
         std::string           removed, inserted;
-        std::vector<uint16_t> removedFmt, insertedFmt;
+        std::vector<uint32_t> removedFmt, insertedFmt;
         uint32_t              anchorBefore = 0, caretBefore = 0, anchorAfter = 0, caretAfter = 0;
         double                time = 0;
         EditKind              kind = EditKind::Other;
@@ -180,8 +180,8 @@ private:
         uint32_t         from,
         uint32_t         to,
         std::string_view ins,
-        const uint16_t  *fmt,
-        uint16_t         fillFmt,
+        const uint32_t  *fmt,
+        uint32_t         fillFmt,
         EditKind         kind
     );
     void     apply(const Edit &e, bool reverse);
@@ -255,7 +255,7 @@ private:
     };
 
     std::string                   _text;
-    std::vector<uint16_t>         _fmt;   // per byte: format bits | link index << 8
+    std::vector<uint32_t>         _fmt;   // per byte: format bits | link index << 8
     std::vector<std::string>      _links; // link index - 1
     std::vector<Range>            _squiggles;
     std::vector<Wave>             _waves; // placeWaves(), while _wavesValid
@@ -287,15 +287,15 @@ private:
 };
 
 // HTML fragments ↔ formatted text (the clipboard's text/html; also handy for
-// the app's mrkdwn bridge). fmt/link encoding as in TextEdit: one uint16 per
+// the app's mrkdwn bridge). fmt/link encoding as in TextEdit: one uint32 per
 // byte, format bits | (link index + 1) << 8 into `links`.
 namespace rich {
 std::string
-toHtml(std::string_view text, const uint16_t *fmt, const std::vector<std::string> &links);
+toHtml(std::string_view text, const uint32_t *fmt, const std::vector<std::string> &links);
 void fromHtml(
     std::string_view          html,
     std::string              *text,
-    std::vector<uint16_t>    *fmt,
+    std::vector<uint32_t>    *fmt,
     std::vector<std::string> *links
 );
 

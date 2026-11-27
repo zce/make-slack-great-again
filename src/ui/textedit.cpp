@@ -14,7 +14,7 @@ namespace {
 constexpr size_t   kUndoLimit  = 200;
 constexpr double   kCoalesceMs = 1500;
 constexpr float    kWheelStep  = 50;
-constexpr uint16_t kLinkMask   = 0xff00;
+constexpr uint32_t kLinkMask   = 0xffffff00U;
 
 inline bool isSpace(char c) {
     return c == ' ' || c == '\t' || c == '\n';
@@ -210,7 +210,7 @@ float TextEdit::lineHeight() const {
 std::unique_ptr<text::Layout> TextEdit::buildPara(const Para &p, float w) const {
     const text::Style    base = baseStyle(C::Text);
     text::AttributedText t;
-    auto                 styleFor = [&](uint16_t f) {
+    auto                 styleFor = [&](uint32_t f) {
         text::Style st = base;
         if (f & Bold)
             st.weight = text::Weight::Bold;
@@ -546,7 +546,7 @@ uint16_t TextEdit::typingFormat() const {
 void TextEdit::apply(const Edit &e, bool reverse) {
     const std::string           &out = reverse ? e.inserted : e.removed;
     const std::string           &in  = reverse ? e.removed : e.inserted;
-    const std::vector<uint16_t> &inF = reverse ? e.removedFmt : e.insertedFmt;
+    const std::vector<uint32_t> &inF = reverse ? e.removedFmt : e.insertedFmt;
     shiftSquiggles(e.pos, out.size(), in.size());
     _text.replace(e.pos, out.size(), in);
     _fmt.erase(_fmt.begin() + e.pos, _fmt.begin() + e.pos + out.size());
@@ -558,8 +558,8 @@ void TextEdit::replace(
     uint32_t         from,
     uint32_t         to,
     std::string_view ins,
-    const uint16_t  *fmt,
-    uint16_t         fill,
+    const uint32_t  *fmt,
+    uint32_t         fill,
     EditKind         kind
 ) {
     from = std::min(from, uint32_t(_text.size()));
@@ -739,17 +739,17 @@ void TextEdit::replaceTyped(uint32_t from, uint32_t to, std::string_view s) {
 
 void TextEdit::insertHtml(std::string_view html) {
     std::string              t;
-    std::vector<uint16_t>    f;
+    std::vector<uint32_t>    f;
     std::vector<std::string> links;
     rich::fromHtml(html, &t, &f, &links);
     // Remap the fragment's link indices into ours.
     const size_t base = _links.size();
     for (auto &l : links)
         _links.push_back(std::move(l));
-    for (uint16_t &x : f)
+    for (uint32_t &x : f)
         if (x & kLinkMask) {
             const size_t idx = ((x >> 8) - 1) + base + 1;
-            x                = uint16_t((x & 0xff) | (idx <= 255 ? idx << 8 : 0));
+            x                = uint32_t((x & 0xff) | (uint32_t(idx) << 8));
         }
     replace(std::min(_caret, _anchor), std::max(_caret, _anchor), t, f.data(), 0, EditKind::Other);
 }
@@ -810,9 +810,9 @@ void TextEdit::toggleFormat(Format f) {
     bool           all = true;
     for (uint32_t i = a; i < b; ++i)
         all &= (_fmt[i] & f) != 0;
-    std::vector<uint16_t> nf(_fmt.begin() + a, _fmt.begin() + b);
-    for (uint16_t &x : nf)
-        x = all ? uint16_t(x & ~f) : uint16_t(x | f);
+    std::vector<uint32_t> nf(_fmt.begin() + a, _fmt.begin() + b);
+    for (uint32_t &x : nf)
+        x = all ? (x & ~uint32_t(f)) : (x | f);
     const std::string same = _text.substr(a, b - a);
     replace(a, b, same, nf.data(), 0, EditKind::Format);
 }
@@ -830,15 +830,15 @@ bool TextEdit::formatActive(Format f) const {
 void TextEdit::setLink(std::string url) {
     if (!hasSelection())
         return;
-    uint16_t idx = 0;
-    if (!url.empty() && _links.size() < 255) {
+    uint32_t idx = 0;
+    if (!url.empty()) {
         _links.push_back(std::move(url));
-        idx = uint16_t(_links.size());
+        idx = uint32_t(_links.size());
     }
     const uint32_t        a = std::min(_caret, _anchor), b = std::max(_caret, _anchor);
-    std::vector<uint16_t> nf(_fmt.begin() + a, _fmt.begin() + b);
-    for (uint16_t &x : nf)
-        x = uint16_t((x & 0xff) | (idx << 8));
+    std::vector<uint32_t> nf(_fmt.begin() + a, _fmt.begin() + b);
+    for (uint32_t &x : nf)
+        x = (x & 0xff) | (idx << 8);
     const std::string same = _text.substr(a, b - a);
     replace(a, b, same, nf.data(), 0, EditKind::Format);
 }

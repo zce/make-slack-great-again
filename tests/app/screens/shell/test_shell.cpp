@@ -449,6 +449,58 @@ TEST("sidebar: a presence flip restyles rows in place; a roster-shape change reb
     CHECK_FALSE(sb.rowState(mira).exists);
 }
 
+TEST("sidebar: hovering a DM's status emoji shows the status and when it ends") {
+    Harness       h;
+    auto         &sb   = h.sh->sidebar();
+    const ConvRef mira = h.conv("D0MIRA");
+    const UserRef peer = h.store.conversation(mira).dmUser;
+    const int64_t now  = h.backend.nowSecs();
+    auto         &u    = h.store.user(peer);
+    u.statusEmoji      = "palm_tree";
+    u.statusText       = "Vacation";
+    u.statusExpiry     = 0;
+    h.store.usersChanged();
+    pump();
+    // The emoji is the only view in the row with a tooltip of its own (the
+    // row's is its truncated name, none here).
+    const auto tip = [&]() -> std::string {
+        const ui::View *row = sb.rowView(mira);
+        if (!row)
+            return "(no row)";
+        std::function<std::string(const ui::View &)> find = [&](const ui::View &v) {
+            for (size_t i = 0; i < v.childCount(); ++i) {
+                const ui::View &c = *v.child(i);
+                std::string     t = c.tooltip();
+                if (t.empty())
+                    t = find(c);
+                if (!t.empty())
+                    return t;
+            }
+            return std::string();
+        };
+        return find(*row);
+    };
+    const std::string palm = "\xF0\x9F\x8C\xB4";
+    CHECK_STR(tip(), palm + " Vacation"); // no end: one line
+
+    // Read when shown: a new text (no rebuild for it) is current.
+    u.statusText            = "Out for lunch";
+    const base::CivilTime n = base::localTime(now);
+    u.statusExpiry          = base::fromLocal(n.year, n.month, n.day + 2, 10, 0);
+    h.store.usersChanged();
+    pump();
+    CHECK_STR(tip(), palm + " Out for lunch\nUntil " + base::formatDateTime(u.statusExpiry));
+    const int64_t tonight = base::fromLocal(n.year, n.month, n.day, 23, 59);
+    if (tonight > now) { // today: the time only
+        u.statusExpiry = tonight;
+        CHECK_STR(tip(), palm + " Out for lunch\nUntil " + base::formatTime(tonight));
+    }
+    // Emoji only: its shortcode stands for the text.
+    u.statusText   = "";
+    u.statusExpiry = 0;
+    CHECK_STR(tip(), palm + " :palm_tree:");
+}
+
 TEST("sidebar: under unreads-only a Meta rebuilds only when a row's unread state flips") {
     Harness       h;
     auto         &sb  = h.sh->sidebar();
@@ -2340,13 +2392,48 @@ void press(ui::Window &w, plat::Key k) {
     pump(2);
 }
 
+// The text a forward posts for `m` of `conv`: its lines quoted under a line
+// naming its author and, for a public channel, the conversation, with
+// `comment` above it when there is one. `text` stands for `m.text` when the
+// message crossed to another workspace (its portable mrkdwn).
+std::string asForwardLines(
+    const Store     &st,
+    ConvRef          conv,
+    const Message   &m,
+    std::string_view text,
+    std::string_view comment = {}
+) {
+    std::string out = comment.empty() ? std::string() : str::concat({comment, "\n\n"});
+    // Only a public channel is named.
+    out += str::concat(
+        {"> *",
+         st.user(m.user).label(),
+         st.conversation(conv).kind == ConvKind::Channel
+             ? str::concat({"* wrote in #", st.displayName(conv), ":"})
+             : std::string("* wrote:")}
+    );
+    for (size_t at = 0; at < text.size();) {
+        const size_t           nl   = text.find('\n', at);
+        const size_t           end  = nl == std::string_view::npos ? text.size() : nl;
+        const std::string_view line = text.substr(at, end - at);
+        out += line.empty() ? std::string("\n>") : str::concat({"\n> ", line});
+        at = end + 1;
+    }
+    return out;
+}
+
+// A message's own text, as it goes to its own workspace.
+std::string
+asForward(const Store &st, ConvRef conv, const Message &m, std::string_view comment = {}) {
+    return asForwardLines(st, conv, m, m.text, comment);
+}
+
 } // namespace
 
 TEST("forward: pick a channel, add a comment, the message is re-posted there") {
-    Harness           h;
-    const ConvRef     design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
-    const Ts          ts   = h.store.conversation(design).messages.back().ts;
-    const std::string text = h.store.conversation(design).messages.back().text;
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    const Ts      ts = h.store.conversation(design).messages.back().ts;
     REQUIRE(h.ctx.forwardMessage);
     h.ctx.forwardMessage(design, ts, {});
     pump();
@@ -2371,7 +2458,10 @@ TEST("forward: pick a channel, add a comment, the message is re-posted there") {
     press(*h.win, plat::Key::Enter);
     pump();
     REQUIRE(h.store.conversation(general).messages.size() == before + 1);
-    CHECK_STR(h.store.conversation(general).messages.back().text, "fyi\n" + text);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        asForward(h.store, design, h.store.conversation(design).messages.back(), "fyi")
+    );
     CHECK(h.store.conversation(general).messages.back().user == h.store.me);
 
     // The comment is converted like any message: in Markdown's formatting
@@ -2391,7 +2481,420 @@ TEST("forward: pick a channel, add a comment, the message is re-posted there") {
     press(*h.win, plat::Key::Enter);
     pump();
     REQUIRE(h.store.conversation(general).messages.size() == before + 2);
-    CHECK_STR(h.store.conversation(general).messages.back().text, "*fyi* _now_\n" + text);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        asForward(h.store, design, h.store.conversation(design).messages.back(), "*fyi* _now_")
+    );
+}
+
+// The quote itself: every line of the message under one quote mark, a blank
+// line kept a bare ">" so the quote does not end there, and a line that is
+// already a quote nested inside it.
+TEST("forward: the text is quoted, under its author's and the channel's names") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    Message       m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "one\n\ntwo\n> quoted already";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Mira Okafor* wrote in #design:\n> one\n>\n> two\n> > quoted already"
+    );
+}
+
+TEST("forward: mention tokens become plain text in the quote") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    Message       m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "<!channel> <!here> <!everyone> <@U0MIRA> <!subteam^S1|@devs> "
+             "*bold* _it_ <https://x.test/p|the plan>";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Mira Okafor* wrote in #design:\n"
+        "> @channel @here @everyone @Mira Okafor @devs *bold* _it_ "
+        "<https://x.test/p|the plan>"
+    );
+}
+
+TEST("forward: user and subteam mention names protect Markdown") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    model::User   eve;
+    eve.id          = "U0EVE";
+    eve.name        = "eve";
+    eve.displayName = "Eve *Lead* _Ops_ ~Away~";
+    h.store.addUser(std::move(eve));
+    model::User back;
+    back.id          = "U0BACK";
+    back.name        = "back";
+    back.displayName = "Back `Tick`";
+    h.store.addUser(std::move(back));
+    model::User amp;
+    amp.id          = "U0AMP";
+    amp.name        = "amp";
+    amp.displayName = "Eve & <Co>";
+    h.store.addUser(std::move(amp));
+    h.store.usersChanged();
+    Message m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "<@U0EVE> <@U0BACK> <@U0AMP> <!subteam^S1|@devs *Lead*> "
+             "*bold* <https://x.test/p|the plan>";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Mira Okafor* wrote in #design:\n"
+        "> @`Eve *Lead* _Ops_ ~Away~` @`Back 'Tick'` "
+        "@Eve &amp; &lt;Co&gt; @`devs *Lead*` *bold* <https://x.test/p|the plan>"
+    );
+}
+
+// Where a message was written is named only for a public channel: a private
+// channel's name, or who is in a DM, stays out of the forward. A name is
+// escaped, so a "<!channel>" in it can't ping the target.
+TEST("forward: a private channel or DM is not named, and the author's name is escaped") {
+    Harness       h;
+    const ConvRef general = h.conv("C0GENERAL");
+    model::User   eve;
+    eve.id               = "U0EVE";
+    eve.name             = "eve";
+    eve.displayName      = "Eve <!channel> & co";
+    const UserRef eveRef = h.store.addUser(std::move(eve));
+    h.store.usersChanged();
+    model::Conversation secret;
+    secret.id   = "C0SECRET";
+    secret.name = "secret";
+    secret.kind = ConvKind::Private;
+    model::Conversation dm;
+    dm.id     = "D0EVE";
+    dm.kind   = ConvKind::Dm;
+    dm.dmUser = eveRef;
+    for (const ConvRef c :
+         {h.store.addConversation(std::move(secret)), h.store.addConversation(std::move(dm))}) {
+        Message m;
+        m.ts   = 1700000000000;
+        m.user = eveRef;
+        m.text = "hush";
+        h.store.addMessage(c, std::move(m));
+        h.ctx.forwardMessage(c, h.store.conversation(c).messages.back().ts, {});
+        pump();
+        auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+        REQUIRE(dlg != nullptr);
+        typeInto(*h.win, "#gen");
+        press(*h.win, plat::Key::Enter);
+        const size_t before = h.store.conversation(general).messages.size();
+        std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+            if (v->accessibleName() == "Forward")
+                return v;
+            for (size_t i = 0; i < v->childCount(); ++i)
+                if (ui::View *f = byName(v->child(i)))
+                    return f;
+            return nullptr;
+        };
+        auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+        REQUIRE(fwd != nullptr);
+        REQUIRE(fwd->enabled());
+        fwd->activate();
+        pump();
+        REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+        CHECK_STR(
+            h.store.conversation(general).messages.back().text,
+            "> *Eve &lt;!channel&gt; &amp; co* wrote:\n> hush"
+        );
+    }
+}
+
+TEST("forward: Markdown marks in an author's name cannot break the quote header") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    model::User   eve;
+    eve.id          = "U0EVE";
+    eve.name        = "eve";
+    eve.displayName = "Eve *Lead* _Ops_ `x` ~y~";
+    const UserRef eveRef = h.store.addUser(std::move(eve));
+    h.store.usersChanged();
+    Message m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = eveRef;
+    m.text = "hush";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> `Eve *Lead* _Ops_ 'x' ~y~` wrote in #design:\n> hush"
+    );
+}
+
+TEST("forward: Markdown marks in a public channel name use inline code") {
+    Harness             h;
+    const ConvRef       general = h.conv("C0GENERAL");
+    model::Conversation marked;
+    marked.id     = "C0MARKED";
+    marked.name   = "plan_*_2026";
+    marked.kind   = ConvKind::Channel;
+    marked.member = true;
+    const ConvRef c = h.store.addConversation(std::move(marked));
+    Message       m;
+    m.ts   = h.store.conversation(general).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "hush";
+    h.store.addMessage(c, std::move(m));
+    h.ctx.forwardMessage(c, h.store.conversation(c).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Mira Okafor* wrote in #`plan_*_2026`:\n> hush"
+    );
+}
+
+TEST("forward: private and unknown channel references do not leak names") {
+    Harness             h;
+    const ConvRef       design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    model::Conversation secret;
+    secret.id     = "C0SECRET";
+    secret.name   = "secret-launch";
+    secret.kind   = ConvKind::Private;
+    secret.member = true;
+    h.store.addConversation(std::move(secret));
+    Message m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "<#C0DESIGN|design> <#C0SECRET|secret-launch> "
+             "<#CUNKNOWN|super-secret> <#CUNKNOWN2>";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    const std::string &text = h.store.conversation(general).messages.back().text;
+    CHECK_STR(
+        text,
+        "> *Mira Okafor* wrote in #design:\n"
+        "> #design private channel unknown channel unknown channel"
+    );
+    CHECK(text.find("secret-launch") == std::string::npos);
+    CHECK(text.find("super-secret") == std::string::npos);
+}
+
+TEST("forward: a group DM is not named, and its members stay out of the quote") {
+    Harness       h;
+    const ConvRef general = h.conv("C0GENERAL");
+    model::User   eve;
+    eve.id          = "U0EVE";
+    eve.name        = "eve";
+    eve.displayName = "Eve Author";
+    const UserRef eveRef = h.store.addUser(std::move(eve));
+    h.store.usersChanged();
+    model::User nora;
+    nora.id          = "U0NORA";
+    nora.name        = "nora";
+    nora.displayName = "Nora Voss";
+    const UserRef noraRef = h.store.addUser(std::move(nora));
+    h.store.usersChanged();
+    // A group DM's display name is its members, which must not reach the target.
+    model::Conversation group;
+    group.id      = "G0SECRET";
+    group.kind    = ConvKind::Group;
+    group.members = {h.store.me, h.store.findUser("U0MIRA"), noraRef};
+    const ConvRef c = h.store.addConversation(std::move(group));
+    Message       m;
+    m.ts   = 1700000000000;
+    m.user = eveRef;
+    m.text = "hush";
+    h.store.addMessage(c, std::move(m));
+    h.ctx.forwardMessage(c, h.store.conversation(c).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    const std::string &text = h.store.conversation(general).messages.back().text;
+    CHECK_STR(text, std::string("> *Eve Author* wrote:") + char(10) + "> hush");
+    CHECK(text.find("Mira Okafor") == std::string::npos);
+    CHECK(text.find("Nora Voss") == std::string::npos);
+}
+
+TEST("forward: a public channel's Slack syntax is escaped in the quote header") {
+    Harness       h;
+    const ConvRef general = h.conv("C0GENERAL");
+    model::Conversation tricky;
+    tricky.id     = "C0TRICKY";
+    tricky.name   = "<!channel>";
+    tricky.kind   = ConvKind::Channel;
+    tricky.member = true;
+    const ConvRef c = h.store.addConversation(std::move(tricky));
+    Message       m;
+    m.ts   = 1700000000000;
+    m.user = h.store.me;
+    m.text = "hello";
+    h.store.addMessage(c, std::move(m));
+    h.ctx.forwardMessage(c, h.store.conversation(c).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    const std::string &text = h.store.conversation(general).messages.back().text;
+    CHECK_STR(
+        text,
+        std::string("> *") + std::string(h.store.user(h.store.me).label()) +
+            "* wrote in #&lt;!channel&gt;:" + char(10) + "> hello"
+    );
+    CHECK(text.find("#<!channel>") == std::string::npos);
 }
 
 TEST("forward: the picker matches people case-insensitively beyond ASCII") {
@@ -2424,6 +2927,158 @@ TEST("forward: the picker matches people case-insensitively beyond ASCII") {
     CHECK(fwd->enabled());
     dlg->reject();
     pump();
+}
+
+TEST("forward: a person with many group DMs is still pickable as themselves") {
+    Harness     h;
+    model::User nora;
+    nora.id          = "U0NORA";
+    nora.name        = "nora";
+    nora.displayName = "Nora Voss";
+    h.store.addUser(std::move(nora));
+    // The roster's order: group DMs first, DMs last (im.list comes last), so
+    // eight group DMs with Nora come before hers.
+    for (int i = 0; i < 8; ++i) {
+        model::Conversation g;
+        g.id      = "G0NORA" + std::to_string(i);
+        g.kind    = ConvKind::Group;
+        g.members = {h.store.me, h.store.findUser("U0NORA"), h.store.findUser("U0MIRA")};
+        h.store.addConversation(std::move(g));
+    }
+    model::Conversation dm;
+    dm.id                = "D0NORA";
+    dm.kind              = ConvKind::Dm;
+    dm.dmUser            = h.store.findUser("U0NORA");
+    const ConvRef noraDm = h.store.addConversation(std::move(dm));
+    h.store.usersChanged();
+    const ConvRef design = h.conv("C0DESIGN");
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    std::function<ui::View *(ui::View *, std::string_view)> byName =
+        [&](ui::View *v, std::string_view n) -> ui::View * {
+        if (v->accessibleName() == n)
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i), n))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg, "Forward"));
+    REQUIRE(fwd != nullptr);
+    typeInto(*h.win, "@nora");       // her name: the groups match too
+    press(*h.win, plat::Key::Enter); // the first match: picked
+    CHECK(fwd->enabled());
+    fwd->activate();
+    pump();
+    // Her DM, not one of the groups that merely has her in it.
+    CHECK(h.store.conversation(noraDm).messages.size() == 1);
+    for (int i = 0; i < 8; ++i)
+        CHECK(h.store.conversation(h.store.findConversation("G0NORA" + std::to_string(i)))
+                  .messages.empty());
+}
+
+TEST("forward: a person with many group DMs and no DM yet is still pickable") {
+    Harness     h;
+    model::User nora;
+    nora.id          = "U0NORA";
+    nora.name        = "nora";
+    nora.displayName = "Nora Voss";
+    h.store.addUser(std::move(nora));
+    for (int i = 0; i < 8; ++i) {
+        model::Conversation g;
+        g.id      = "G0NORA" + std::to_string(i);
+        g.kind    = ConvKind::Group;
+        g.members = {h.store.me, h.store.findUser("U0NORA"), h.store.findUser("U0MIRA")};
+        h.store.addConversation(std::move(g));
+    }
+    h.store.usersChanged();
+    const ConvRef design = h.conv("C0DESIGN");
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    std::function<ui::View *(ui::View *, std::string_view)> byName =
+        [&](ui::View *v, std::string_view n) -> ui::View * {
+        if (v->accessibleName() == n)
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i), n))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg, "Forward"));
+    REQUIRE(fwd != nullptr);
+    typeInto(*h.win, "@nora");       // the groups match too
+    press(*h.win, plat::Key::Enter); // the first match: picked
+    CHECK(fwd->enabled());
+    fwd->activate();
+    // A DM with her is opened for it, and gets the message.
+    const auto sent = [&] {
+        const ConvRef c = h.store.findConversation("DU0NORA");
+        return c != kNoConv && !h.store.conversation(c).messages.empty();
+    };
+    const double end = app().nowMs() + 3000;
+    while (!sent() && app().nowMs() < end)
+        app().pump(2);
+    const ConvRef noraDm = h.store.findConversation("DU0NORA");
+    REQUIRE(noraDm != kNoConv);
+    CHECK(h.store.conversation(noraDm).messages.size() == 1);
+    for (int i = 0; i < 8; ++i)
+        CHECK(h.store.conversation(h.store.findConversation("G0NORA" + std::to_string(i)))
+                  .messages.empty());
+}
+
+TEST("forward: the picker's field follows the theme, so its text stays readable") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN");
+    const Ts      ts     = h.store.conversation(design).messages.back().ts;
+    for (const ui::ThemeMode m : {ui::ThemeMode::Dark, ui::ThemeMode::Light}) {
+        app().setThemeMode(m);
+        h.ctx.forwardMessage(design, ts, {});
+        pump();
+        auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+        REQUIRE(dlg != nullptr);
+        std::function<ui::View *(ui::View *, std::string_view)> byName =
+            [&](ui::View *v, std::string_view n) -> ui::View * {
+            if (v->accessibleName() == n)
+                return v;
+            for (size_t i = 0; i < v->childCount(); ++i)
+                if (ui::View *f = byName(v->child(i), n))
+                    return f;
+            return nullptr;
+        };
+        auto *field = byName(dlg, "Search channels and people\xE2\x80\xA6");
+        REQUIRE(field != nullptr);
+        ui::View       *box = field->parent(); // the field around the editor
+        const float     sc  = h.win->scale();
+        const ui::RectF r   = box->windowRect();
+        uint32_t        px  = 0;
+        REQUIRE(
+            hooks().readPixel(h.win->native(), int((r.x + r.w / 2) * sc), int((r.y + 3) * sc), &px)
+        );
+        // The form's field colour, as the comment box below it: the theme's
+        // text and caret sit on it, so a fixed white would hide them in dark
+        // mode (and a fixed dark one in light mode).
+        CHECK(px == ui::color(ui::C::FormBg));
+        // Its list too: the rows' text is the theme's.
+        typeInto(*h.win, "#");
+        pump();
+        ui::View *list = h.win->topPopup();
+        REQUIRE(list != nullptr);
+        REQUIRE(list != dlg);
+        const ui::RectF lr = list->windowRect();
+        REQUIRE(
+            hooks().readPixel(
+                h.win->native(), int((lr.x + lr.w - 6) * sc), int((lr.y + lr.h / 2) * sc), &px
+            )
+        );
+        CHECK(px == ui::color(ui::C::FormBg));
+        dlg->reject();
+        pump();
+    }
+    app().setThemeMode(ui::ThemeMode::System);
 }
 
 TEST("forward: Escape with the picker's list open closes both") {
@@ -2535,7 +3190,7 @@ struct HostingHarness {
     ConvRef                       design = kNoConv, general = kNoConv;
     Ts                            ts = 0; // the message with the hosted file, in #design
 
-    HostingHarness() {
+    explicit HostingHarness(std::string text = "see this") {
         backend.setFixture(MSGA_TEST_ASSETS, base::fromLocal(2026, 9, 21, 16, 0));
         bool done = false;
         backend.connect([&](bool ok, const std::string &) { done = ok; });
@@ -2551,7 +3206,7 @@ struct HostingHarness {
         Message m;
         m.ts = ts = store.conversation(design).messages.back().ts + 1000;
         m.user    = store.me;
-        m.text    = "see this";
+        m.text    = std::move(text);
         File f;
         f.id       = "F0HOSTED";
         f.name     = "photo.png";
@@ -2621,7 +3276,10 @@ TEST("forward: a hosted file is downloaded, uploaded with the message, then its 
     CHECK_STR(h.backend.sentPaths[0], tmp);
     CHECK_STR(h.backend.sentBytes[0], "the original bytes");
     REQUIRE(h.store.conversation(h.general).messages.size() == before + 1);
-    CHECK_STR(h.store.conversation(h.general).messages.back().text, "see this");
+    CHECK_STR(
+        h.store.conversation(h.general).messages.back().text,
+        asForward(h.store, h.design, *h.store.findMessage(h.design, h.ts), {})
+    );
     // The downloaded copy is removed once the upload is over.
     REQUIRE(h.waitFor([&] { return !file::exists(tmp); }));
     CHECK_FALSE(file::exists(std::string(file::dirName(tmp))));
@@ -2653,7 +3311,26 @@ TEST("forward: a target that can't take uploads gets the file's link") {
     }));
     CHECK_STR(
         h.store.conversation(h.general).messages.back().text,
-        "see this\nhttps://files.example/F0HOSTED/photo.png"
+        asForward(h.store, h.design, *h.store.findMessage(h.design, h.ts), {}) +
+            "\nhttps://files.example/F0HOSTED/photo.png"
+    );
+}
+
+TEST("forward: a message of files only is attributed too") {
+    HostingHarness h("");
+    h.backend.fileUpload = false;
+    const size_t before  = h.store.conversation(h.general).messages.size();
+    h.forward();
+    REQUIRE(h.waitFor([&] {
+        return h.store.conversation(h.general).messages.size() == before + 1;
+    }));
+    CHECK_STR(
+        h.store.conversation(h.general).messages.back().text,
+        str::concat(
+            {"> *",
+             h.store.user(h.store.me).label(),
+             "* wrote in #design:\nhttps://files.example/F0HOSTED/photo.png"}
+        )
     );
 }
 
@@ -5054,6 +5731,27 @@ TEST("forward: portable text for another workspace — mentions become words") {
             " see #design and @here, @devs: *bold* <https://x.test|link> :tada: Sep 1"
     );
     CHECK_STR(shell::portableMrkdwn(w.a, "<@U0NOBODY|ghost> &lt;b&gt;"), "@ghost &lt;b&gt;");
+    // Cross-workspace source-channel names follow the same privacy and
+    // formatting rules.
+    model::Conversation secret;
+    secret.id     = "C0SECRET";
+    secret.name   = "secret-launch";
+    secret.kind   = ConvKind::Private;
+    secret.member = true;
+    w.a.addConversation(std::move(secret));
+    model::Conversation marked;
+    marked.id     = "C0MARKED";
+    marked.name   = "plan_*_2026";
+    marked.kind   = ConvKind::Channel;
+    marked.member = true;
+    w.a.addConversation(std::move(marked));
+    CHECK_STR(
+        shell::portableMrkdwn(
+            w.a, "<#C0SECRET|secret-launch> <#CUNKNOWN|super-secret> <#CUNKNOWN2>"
+        ),
+        "private channel unknown channel unknown channel"
+    );
+    CHECK_STR(shell::portableMrkdwn(w.a, "<#C0MARKED|label>"), "#`plan_*_2026`");
 }
 
 TEST("forward: with two workspaces a picker sends it into the other one") {
@@ -5098,9 +5796,15 @@ TEST("forward: with two workspaces a picker sends it into the other one") {
     fwd->onClick();
     pump();
     REQUIRE(w.b.conversation(target).messages.size() == before + 1);
+    // The mention became the words it reads as here, inside the quote too.
     CHECK_STR(
         w.b.conversation(target).messages.back().text,
-        "ask @" + std::string(w.a.user(w.a.findUser("U0MIRA")).label())
+        asForwardLines(
+            w.a,
+            design,
+            *w.a.findMessage(design, ts),
+            "ask @" + std::string(w.a.user(w.a.findUser("U0MIRA")).label())
+        )
     );
     CHECK(w.a.conversation(design).messages.size() == inA); // nothing in the source
 }
@@ -5758,6 +6462,20 @@ TEST("composer: a typed URL is a link once its word ends") {
     CHECK(linkAt(edit, 6).empty());
     edit.redo();
     CHECK_STR(linkAt(edit, 6), "https://x.test/p");
+}
+
+TEST("composer: a URL typed a key at a time is linked whole") {
+    Harness h;
+    auto   &edit = h.sh->composer().edit();
+    pump();
+    // Its "." ends "https://x" as a URL for a moment (trailing punctuation),
+    // but not the word: nothing is linked until the word ends.
+    for (const char c : std::string_view("see https://x.test/p"))
+        edit.insertText(std::string(1, c));
+    CHECK(linkAt(edit, 6).empty());
+    edit.insertText(" now");
+    CHECK_STR(linkAt(edit, 6), "https://x.test/p");
+    CHECK_STR(h.sh->composer().mrkdwn(), "see <https://x.test/p> now");
 }
 
 TEST("composer: the Link button makes a link, not a token") {

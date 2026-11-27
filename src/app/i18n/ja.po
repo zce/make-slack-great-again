@@ -2833,6 +2833,14 @@ msgid "Search channels and people…"
 msgstr "チャンネルやメンバーを検索…"
 
 #: src/app/screens/shell/shell_dialogs.cpp
+msgid "%1 wrote:"
+msgstr "%1 が書き込みました:"
+
+#: src/app/screens/shell/shell_dialogs.cpp
+msgid "%1 wrote in #%2:"
+msgstr "%1 が #%2 に書き込みました:"
+
+#: src/app/screens/shell/shell_dialogs.cpp
 msgid "Forward this message"
 msgstr "このメッセージを転送"
 
@@ -3004,6 +3012,10 @@ msgstr "チャンネルを追加"
 #: src/app/screens/shell/sidebar.cpp
 msgid "Open a direct message"
 msgstr "ダイレクトメッセージを開く"
+
+#: src/app/screens/shell/sidebar.cpp
+msgid "Until %1"
+msgstr "%1まで"
 
 #: src/app/screens/shell/sidebar.cpp src/app/screens/shell/threads_page.cpp
 msgid "you"

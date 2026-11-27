@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <string_view>
+#include <utility>
 
 using namespace ui;
 using gfx::Icon;
@@ -25,6 +27,156 @@ namespace {
 
 constexpr float kColumnMaxW  = 1040; // the editor column, Slack's measure
 constexpr int   kSaveDelayMs = 2500; // autosave this long after typing stops
+
+using EditAt = std::function<void(uint32_t at)>;
+
+// A part of the reading view that edits the body at `at` when clicked
+// (a list marker, a table's frame, the space between rows).
+class ReaderBlock final : public View {
+public:
+    ReaderBlock(EditAt edit, uint32_t at) : _edit(std::move(edit)), _at(at) {
+        setCursor(plat::Cursor::IBeam);
+    }
+    bool onEvent(Event &e) override {
+        switch (e.type) {
+        case EventType::PointerDown:
+            _pressed = e.button == plat::Button::Left;
+            return _pressed;
+        case EventType::PointerUp:
+            if (!std::exchange(_pressed, false))
+                return false;
+            if (bounds().contains(e.pos))
+                _edit(_at);
+            return true;
+        case EventType::PointerCancel:
+            _pressed = false;
+            return false;
+        default:
+            return false;
+        }
+    }
+
+private:
+    EditAt   _edit;
+    uint32_t _at;
+    bool     _pressed = false;
+};
+
+// Text of the body from `from` on (as many bytes as it shows): a click on a
+// link opens it, anywhere else edits the body at the offset under the pointer.
+class ReaderText final : public Label {
+public:
+    ReaderText(EditAt edit, uint32_t from) : _edit(std::move(edit)), _from(from) {
+        setCursor(plat::Cursor::IBeam);
+    }
+    // A display offset per byte of the label, then the end: a cell with an
+    // escaped pipe shows one byte fewer than its place in the body.
+    void setBodyOffsets(std::vector<uint32_t> offsets) { _bodyAt = std::move(offsets); }
+    bool onEvent(Event &e) override {
+        if (Label::onEvent(e)) // a link
+            return true;
+        switch (e.type) {
+        case EventType::PointerDown:
+            _pressed = e.button == plat::Button::Left;
+            return _pressed;
+        case EventType::PointerUp:
+            if (!std::exchange(_pressed, false))
+                return false;
+            if (bounds().contains(e.pos)) {
+                const uint32_t shown =
+                    std::min<uint32_t>(offsetAt(e.pos), uint32_t(text().size()));
+                const uint32_t at =
+                    _bodyAt.empty()
+                        ? _from + shown
+                        : _bodyAt[std::min<size_t>(shown, _bodyAt.size() - 1)];
+                _edit(at);
+            }
+            return true;
+        case EventType::PointerCancel:
+            _pressed = false;
+            return false;
+        default:
+            return false;
+        }
+    }
+
+private:
+    EditAt                _edit;
+    uint32_t              _from;
+    std::vector<uint32_t> _bodyAt;
+    bool                  _pressed = false;
+};
+
+struct ReaderFormat {
+    uint16_t format = 0;
+    uint32_t link   = 0;
+    bool     operator==(const ReaderFormat &) const = default;
+};
+
+bool startsWith(std::string_view s, std::string_view p) {
+    return s.substr(0, p.size()) == p;
+}
+
+// A pipe escaped by an odd run of backslashes is cell text, not a separator.
+bool escapedPipe(std::string_view text, uint32_t at, uint32_t from) {
+    size_t slashes = 0;
+    for (uint32_t i = at; i > from && text[i - 1] == '\\'; --i)
+        ++slashes;
+    return slashes % 2 == 1;
+}
+
+// The cells of a table row: [from, to) per cell, spaces trimmed, between the
+// row's unescaped pipes. A trailing pipe is a delimiter, not another cell.
+std::vector<std::pair<uint32_t, uint32_t>>
+tableCells(std::string_view text, uint32_t from, uint32_t to) {
+    std::vector<std::pair<uint32_t, uint32_t>> out;
+    uint32_t start = from < to && text[from] == '|' ? from + 1 : from;
+    auto     add   = [&](uint32_t a, uint32_t b) {
+        while (a < b && text[a] == ' ')
+            ++a;
+        while (b > a && text[b - 1] == ' ')
+            --b;
+        out.push_back({a, b});
+    };
+    for (uint32_t i = start; i < to; ++i) {
+        if (text[i] != '|' || escapedPipe(text, i, from))
+            continue;
+        add(start, i);
+        start = i + 1;
+    }
+    if (start < to)
+        add(start, to);
+    return out;
+}
+
+// A delimiter cell is an optional leading colon, one or more dashes, and an
+// optional trailing colon ("---", ":--:", "--:"); no other characters.
+bool tableDelimiterCell(std::string_view cell) {
+    if (cell.empty())
+        return false;
+    size_t at = 0, end = cell.size();
+    if (cell[at] == ':')
+        ++at;
+    if (end > at && cell[end - 1] == ':')
+        --end;
+    if (at >= end)
+        return false;
+    for (size_t i = at; i < end; ++i)
+        if (cell[i] != '-')
+            return false;
+    return true;
+}
+
+// A markdown table's rule row ("| --- | :-: |").
+bool tableRule(std::string_view line) {
+    const auto cells = tableCells(line, 0, uint32_t(line.size()));
+    if (cells.empty())
+        return false;
+    for (const auto &[from, to] : cells)
+        if (!tableDelimiterCell(line.substr(from, to - from)))
+            return false;
+    return true;
+}
 
 } // namespace
 
@@ -55,6 +207,11 @@ CanvasPage::CanvasPage(screens::Context &ctx) : _ctx(ctx), _alive(std::make_shar
     _title->setPlaceholder(tr("Your canvas title"));
     _title->setMaxLines(0);
     _title->setPlainPaste(true);
+    _reader = col->add<ReaderBlock>([this](uint32_t at) { edit(at); }, 0);
+    // The editor's own padding, so the text stays put between the two.
+    _reader->style().column().spacing(6).flex(1).padding(8, 6);
+    _reader->style().minH = 12 * 21; // the editor's 12 lines: room to click into
+    _reader->setVisible(false);
     _body = col->add<TextEdit>();
     _body->setPlaceholder(tr("Go ahead, start writing!"));
     _body->setMinLines(12);
@@ -75,9 +232,34 @@ CanvasPage::CanvasPage(screens::Context &ctx) : _ctx(ctx), _alive(std::make_shar
             onTitleChanged(std::string(str::trim(_title->text())));
     };
     _body->onSubmit = [] { return false; }; // Enter is a new line
+    // Entering the editor, and leaving it: an existing canvas with an empty
+    // body shows the editor, but is not editing until the user gets there.
+    _body->onFocusChange = [this](bool focused) {
+        if (_loading)
+            return;
+        if (focused) {
+            if (!_editing && _ro == ReadOnly::None) {
+                _editing = true;
+                refreshMode();
+            }
+        } else if (_editing) {
+            _editing = false;
+            refreshMode();
+        }
+    };
+    _body->onKey = [this](const Event &e) {
+        if (e.key != plat::Key::Escape)
+            return false;
+        stopEditing();
+        return true;
+    };
     _body->onChange = [this] {
         if (_loading)
             return;
+        if (!_editing && _ro == ReadOnly::None) {
+            _editing = true;
+            refreshMode();
+        }
         _bodyDirty = true;
         armSave();
     };
@@ -155,6 +337,8 @@ void CanvasPage::openFile(ConvRef conv, const std::string &fileId, const std::st
     _title->setText(_serverTitle);
     _loading    = false;
     _titleDirty = false;
+    // A blank page is written; a canvas is read until clicked into.
+    _editing    = _fileId.empty();
     setBody({});
     _menuBtn->setVisible(!_fileId.empty());
     if (_fileId.empty()) {
@@ -162,6 +346,323 @@ void CanvasPage::openFile(ConvRef conv, const std::string &fileId, const std::st
         return;
     }
     loadContent();
+}
+
+void CanvasPage::edit(uint32_t at) {
+    if (_ro != ReadOnly::None)
+        return;
+    _editing = true;
+    refreshMode();
+    const uint32_t end = uint32_t(_body->text().size());
+    _body->focus();
+    _body->setSelection(std::min(at, end), std::min(at, end));
+}
+
+void CanvasPage::stopEditing() {
+    if (!_editing)
+        return;
+    _editing = false;
+    if (Window *w = window(); w && w->focusView() == _body)
+        w->setFocus(nullptr); // onFocusChange: the reading view
+    refreshMode();
+}
+
+void CanvasPage::refreshMode() {
+    // Nothing to read yet (a new canvas): the editor and its placeholder.
+    const bool reading = !_editing && (!_body->empty() || _ro != ReadOnly::None);
+    if (reading)
+        rebuildReader();
+    const bool switched = _reader->visible() != reading;
+    _reader->setVisible(reading);
+    _body->setVisible(!reading);
+    if (!switched)
+        return;
+    // The page stays where it was: once the other view is laid out (its
+    // height differs), scroll back to the same offset.
+    const float y = _scroll->scrollOffset();
+    if (y > 0)
+        _ctx.app.addTimer(0, false, [this, alive = std::weak_ptr<bool>(_alive), y] {
+            if (!alive.expired())
+                _scroll->scrollTo(y);
+        });
+}
+
+void CanvasPage::rebuildReader() {
+    _reader->clearChildren();
+    _readerLinks.clear();
+    const std::string &t    = _body->text();
+    const EditAt       edit = [this](uint32_t at) { this->edit(at); };
+
+    // The body's formats per byte, as TextEdit keeps them: format bits, and
+    // a link id (index into _readerLinks + 1).
+    std::vector<ReaderFormat> fmt(t.size());
+    for (const TextEdit::Run &r : _body->runs()) {
+        ReaderFormat v{r.format, 0};
+        if (!r.link.empty()) {
+            auto it = std::find(_readerLinks.begin(), _readerLinks.end(), r.link);
+            if (it == _readerLinks.end())
+                it = _readerLinks.insert(_readerLinks.end(), std::string(r.link));
+            v.link = uint32_t(it - _readerLinks.begin() + 1);
+        }
+        for (uint32_t i = r.start; i < r.end && i < t.size(); ++i)
+            fmt[i] = v;
+    }
+    text::Style body = font(Font::Body);
+    body.color       = themed(C::Text);
+    // [a, b) of the body in `base`, its own formats on top. unescapePipes
+    // turns a cell's "\|" into the literal pipe it shows; map then records
+    // the body offset of every shown byte for click-to-edit.
+    auto rich = [&](uint32_t               a,
+                    uint32_t               b,
+                    const text::Style     &base,
+                    bool                   unescapePipes,
+                    std::vector<uint32_t> *map) {
+        text::AttributedText out;
+        for (uint32_t i = a; i < b;) {
+            const ReaderFormat f  = fmt[i];
+            text::Style        st = base;
+            if (f.format & TextEdit::Bold)
+                st.weight = text::Weight::Bold;
+            if (f.format & TextEdit::Italic)
+                st.italic = true;
+            if (f.format & TextEdit::Strike)
+                st.strike = true;
+            if (f.format & TextEdit::Code) {
+                st.mono       = true;
+                st.size       = std::max(10.f, base.size - 2);
+                st.color      = themed(C::CodeText);
+                st.background = themed(C::CodeBg);
+            }
+            if (f.link) {
+                st.color     = themed(C::Link);
+                st.underline = true;
+                st.linkId    = f.link;
+            }
+            std::string run;
+            uint32_t    j = i;
+            while (j < b && fmt[j] == f) {
+                if (unescapePipes && t[j] == '\\' && j + 1 < b && t[j + 1] == '|') {
+                    ++j;
+                    continue;
+                }
+                run += t[j];
+                if (map)
+                    map->push_back(j);
+                ++j;
+            }
+            if (!run.empty())
+                out.append(run, st);
+            i = j;
+        }
+        if (map)
+            map->push_back(b);
+        return out;
+    };
+    auto label = [&](View              *in,
+                     uint32_t           a,
+                     uint32_t           b,
+                     const text::Style &base,
+                     bool               unescapePipes = false) {
+        std::vector<uint32_t> map;
+        auto *l = in->add<ReaderText>(edit, a);
+        l->setRichText(rich(a, b, base, unescapePipes, unescapePipes ? &map : nullptr));
+        if (unescapePipes)
+            l->setBodyOffsets(std::move(map));
+        l->onLink = [this](uint32_t id) {
+            if (id && id <= _readerLinks.size()) {
+                const std::string &url = _readerLinks[id - 1];
+                if (_ctx.openUrl)
+                    _ctx.openUrl(url);
+                else
+                    _ctx.app.platform().openUrl(url);
+            }
+        };
+        return l;
+    };
+
+    // Quoted lines in a row: one bar down their side.
+    View *quote = nullptr;
+    auto  host  = [&](bool quoted) -> View  *{
+        if (!quoted) {
+            quote = nullptr;
+            return _reader;
+        }
+        if (!quote) {
+            View *row = _reader->add<View>();
+            row->style().row().spacing(12);
+            View *bar = row->add<View>();
+            bar->style().width(3).noShrink();
+            bar->setBackground(C::BorderStrong, 1.5f);
+            quote = row->add<View>();
+            quote->style().column().flex(1).spacing(6);
+        }
+        return quote;
+    };
+
+    // Table rows and code lines gather until their block ends.
+    struct Row {
+        uint32_t from, to;
+    };
+    std::vector<Row> table, code;
+    bool             tableQuoted = false, inCode = false;
+    auto             flushTable = [&] {
+        if (table.empty())
+            return;
+        // A table needs the header rule row, and header and rule must have the
+        // same column count; a paragraph that merely starts with "|" is
+        // ordinary text and keeps its pipes.
+        bool valid = table.size() >= 2;
+        if (valid) {
+            const auto headerCells = tableCells(t, table[0].from, table[0].to);
+            const auto ruleCells   = tableCells(t, table[1].from, table[1].to);
+            valid                  = !headerCells.empty() && headerCells.size() == ruleCells.size() &&
+                                     tableRule(std::string_view(t).substr(
+                                         table[1].from, table[1].to - table[1].from
+                                     ));
+        }
+        if (!valid) {
+            View *in = host(tableQuoted);
+            for (const Row &r : table)
+                label(in, r.from, r.to, body);
+            table.clear();
+            return;
+        }
+        View *in   = host(tableQuoted);
+        auto *grid = in->add<ReaderBlock>(edit, table.front().from);
+        grid->style().column().margins(0, 4, 0, 4);
+        grid->setBackground(C::Surface, 6);
+        grid->setBorder(C::TableBorder);
+        grid->setClipChildren(true);
+        const bool header = true;
+        size_t cols = 0;
+        for (const Row &r : table)
+            cols = std::max(cols, tableCells(t, r.from, r.to).size());
+        bool first = true;
+        for (size_t i = 0; i < table.size(); ++i) {
+            if (header && i == 1)
+                continue; // the rule row
+            if (!first) {
+                View *rule = grid->add<View>();
+                rule->style().height(1);
+                rule->setBackground(C::TableBorder);
+            }
+            View *row = grid->add<View>();
+            row->style().row();
+            if (header && i == 0)
+                row->setBackground(C::TableHeaderBg);
+            const auto cells = tableCells(t, table[i].from, table[i].to);
+            for (size_t c = 0; c < cols; ++c) {
+                View *cell = row->add<View>();
+                cell->style().column().padding(12, 7).flex(1);
+                if (c < cells.size()) {
+                    text::Style st = body;
+                    if (header && i == 0)
+                        st.weight = text::Weight::Semibold;
+                    label(cell, cells[c].first, cells[c].second, st, true);
+                }
+            }
+            first = false;
+        }
+        table.clear();
+    };
+    auto flushCode = [&](bool quoted) {
+        if (code.empty())
+            return;
+        auto *box = host(quoted)->add<ReaderBlock>(edit, code.front().from);
+        box->style().column().padding(12, 10);
+        box->setBackground(C::CodeBg, 6);
+        text::Style mono = body;
+        mono.mono        = true;
+        mono.size        = std::max(10.f, body.size - 2);
+        mono.color       = themed(C::CodeText);
+        for (const Row &r : code)
+            label(box, r.from, r.to, mono);
+        code.clear();
+    };
+
+    for (uint32_t i = 0; i <= t.size();) {
+        uint32_t e = uint32_t(t.find('\n', i));
+        if (e == uint32_t(std::string::npos) || e > t.size())
+            e = uint32_t(t.size());
+        uint32_t p = i;
+        while (startsWith(std::string_view(t).substr(p, e - p), "> "))
+            p += 2;
+        const bool             quoted = p > i;
+        const std::string_view line   = std::string_view(t).substr(p, e - p);
+        const uint32_t         next   = e + 1;
+
+        if (startsWith(line, "```")) { // a fence opens or closes a code block
+            flushTable();
+            if (inCode)
+                flushCode(quoted);
+            inCode = !inCode;
+        } else if (inCode) {
+            code.push_back({p, e});
+        } else if (startsWith(line, "|")) {
+            if (table.empty())
+                tableQuoted = quoted;
+            table.push_back({p, e});
+        } else {
+            flushTable();
+            View *in = host(quoted);
+            if (line.empty()) {
+                if (in->childCount())
+                    in->add<View>()->style().height(4);
+            } else if (
+                size_t h = line.find_first_not_of('#');
+                h >= 1 && h <= 6 && h < line.size() && line[h] == ' '
+            ) {
+                static constexpr float kScale[] = {1.6f, 1.35f, 1.15f, 1.05f, 1.f, 1.f};
+                text::Style            st       = body;
+                st.size *= kScale[h - 1];
+                st.weight = text::Weight::Bold;
+                label(in, p + uint32_t(h) + 1, e, st)->style().margins(0, 10, 0, 2);
+            } else {
+                // A list item: its indent (two spaces a level), then its marker.
+                size_t s = line.find_first_not_of(' ');
+                if (s == std::string_view::npos)
+                    s = line.size();
+                const std::string_view item = line.substr(s);
+                std::string            marker;
+                size_t                 skip    = 0;
+                bool                   checked = false;
+                if (startsWith(item, "- [ ] ") || startsWith(item, "- [x] ")) {
+                    checked = item[3] == 'x';
+                    marker  = checked ? "\xE2\x98\x91" : "\xE2\x98\x90"; // ☑ ☐
+                    skip    = 6;
+                } else if (startsWith(item, "- ") || startsWith(item, "* ")) {
+                    marker = "\xE2\x80\xA2"; // •
+                    skip   = 2;
+                } else if (
+                    const size_t d = item.find_first_not_of("0123456789");
+                    d > 0 && d != std::string_view::npos && startsWith(item.substr(d), ". ")
+                ) {
+                    marker = std::string(item.substr(0, d + 1));
+                    skip   = d + 2;
+                }
+                if (marker.empty()) {
+                    label(in, p, e, body);
+                } else {
+                    const uint32_t from = p + uint32_t(s + skip);
+                    auto          *row  = in->add<ReaderBlock>(edit, from);
+                    row->style().row().padding(float(s / 2) * 22, 0, 0, 0);
+                    auto *m = row->add<Label>(marker, Font::Body, C::TextMuted);
+                    m->style().width(24).noShrink();
+                    text::Style st = body;
+                    if (checked) {
+                        st.strike = true;
+                        st.color  = themed(C::TextMuted);
+                    }
+                    label(row, from, e, st)->style().flex(1);
+                }
+            }
+        }
+        if (e >= t.size())
+            break;
+        i = next;
+    }
+    flushTable();
+    flushCode(false);
 }
 
 void CanvasPage::loadContent() {
@@ -254,11 +755,12 @@ void CanvasPage::applyRemoteHtml(const std::string &html) {
 void CanvasPage::setBody(const std::string &editorHtml) {
     // The same text again (a save coming back): leave the caret alone.
     std::string              text;
-    std::vector<uint16_t>    fmt;
+    std::vector<uint32_t>    fmt;
     std::vector<std::string> links;
     rich::fromHtml(editorHtml, &text, &fmt, &links);
     if (!editorHtml.empty() && text == _body->text()) {
         _bodyDirty = false;
+        refreshMode();
         return;
     }
     const uint32_t caret = _body->caret();
@@ -271,6 +773,7 @@ void CanvasPage::setBody(const std::string &editorHtml) {
     }
     _loading   = false;
     _bodyDirty = false;
+    refreshMode();
 }
 
 void CanvasPage::flushPendingSave() {
@@ -424,7 +927,9 @@ void CanvasPage::setReadOnly(ReadOnly cause) {
     if (readOnly) {
         dropTimer();
         _bodyDirty = _titleDirty = false;
+        _editing                 = false;
     }
+    refreshMode();
 }
 
 void CanvasPage::showMenu() {

@@ -448,7 +448,7 @@ TEST("textedit: paragraphs place the caret as one layout of the whole text") {
 
 TEST("html: reader handles blocks, entities, links, whitespace") {
     std::string              text;
-    std::vector<uint16_t>    fmt;
+    std::vector<uint32_t>    fmt;
     std::vector<std::string> links;
     ui::rich::fromHtml(
         "<html><head><style>p{}</style></head><body>"
@@ -468,9 +468,26 @@ TEST("html: reader handles blocks, entities, links, whitespace") {
     CHECK(fmt[text.find("a  b")] == ui::TextEdit::Code);
 }
 
+TEST("html: more than 255 links keep their own indices") {
+    std::string              html, text;
+    std::vector<uint32_t>    fmt;
+    std::vector<std::string> links;
+    for (int i = 1; i <= 256; ++i) {
+        const std::string n = std::to_string(i);
+        html += "<a href=\"https://example.test/" + n + "\">L" + n + "</a> ";
+    }
+    ui::rich::fromHtml(html, &text, &fmt, &links);
+    REQUIRE(links.size() == 256);
+    REQUIRE(fmt.size() == text.size());
+    const size_t at = text.rfind("L256");
+    REQUIRE(at != std::string::npos);
+    CHECK(fmt[at] >> 8 == 256);
+    CHECK_STR(links[255], "https://example.test/256");
+}
+
 TEST("html: Google Docs' normal-weight <b> wrapper is not bold; writer escapes") {
     std::string              text;
-    std::vector<uint16_t>    fmt;
+    std::vector<uint32_t>    fmt;
     std::vector<std::string> links;
     ui::rich::fromHtml(
         "<meta charset=\"utf-8\"><b style=\"font-weight:normal;\" id=\"docs\">"
@@ -481,7 +498,7 @@ TEST("html: Google Docs' normal-weight <b> wrapper is not bold; writer escapes")
     );
     CHECK_STR(text, "Bold plain");
     CHECK(fmt[0] == ui::TextEdit::Bold && fmt[5] == 0);
-    const std::vector<uint16_t> f(5, 0);
+    const std::vector<uint32_t> f(5, 0);
     CHECK_STR(ui::rich::toHtml("a<b&\n", f.data(), {}), "a&lt;b&amp;<br>");
 }
 

@@ -7,6 +7,7 @@
 #include "app/model/timers.h"
 #include "app/screens/common/downloads.h"
 #include "app/screens/common/file_dialogs.h"
+#include "app/screens/common/message_rules.h"
 #include "app/screens/common/message_text.h"
 #include "app/screens/common/remote_images.h"
 #include "app/screens/common/avatar_initial.h"
@@ -54,9 +55,10 @@ struct Target {
 
 class ConvSelector;
 
-// The drop-down under the field: literal white, a divider.strong border,
-// radius 4; rows padded 6/12, hover surface.highlight, the current row
-// accent.subtleBg with replyLink text; at most 6 rows (200 px) tall.
+// The drop-down under the field: the field's form colours (the theme's, as
+// the field), a divider.strong border, radius 4; rows padded 6/12, hover
+// surface.highlight, the current row accent.subtleBg with replyLink text; at
+// most 6 rows (200 px) tall.
 class PickerList final : public Popup {
 public:
     PickerList(ConvSelector &owner, std::vector<Target> items)
@@ -75,7 +77,7 @@ public:
     }
     void paint(gfx::Painter &p) override {
         const RectF b = bounds();
-        p.fillRoundRect(b, 4, 0xffffffffU);
+        p.fillRoundRect(b, 4, ui::color(C::FormBg));
         p.save();
         p.clipRoundRect(b, 4);
         const float k = windowScale();
@@ -90,7 +92,7 @@ public:
                 p.fillRect({1, y, b.w - 2, rowH()}, ui::color(C::FormHighlight));
             // Shaped once per row (again for another width, scale or colour),
             // not on every paint (each hover move repaints).
-            const Color fg = cur ? ui::color(C::ReplyLink) : 0xff1d1c1dU;
+            const Color fg = ui::color(cur ? C::ReplyLink : C::FormText);
             if (_lines.size() != _items.size() || _linesW != b.w || _linesScale != k) {
                 _lines.clear();
                 _lines.resize(_items.size());
@@ -169,8 +171,13 @@ public:
 
     void paint(gfx::Painter &p) override {
         const RectF b = bounds();
-        p.fillRoundRect(b, 4, 0xffffffffU); // literal white, also in dark mode
-        p.strokeRoundRect(b, 4, 1, ui::color(_edit->focused() ? C::Accent : C::FormDividerStrong));
+        // The theme's field, as the comment box under it: the text and the
+        // caret wear the theme's colours, so a fixed white field would leave
+        // them unreadable in dark mode.
+        p.fillRoundRect(b, 4, ui::color(C::FormBg));
+        p.strokeRoundRect(
+            b, 4, 1, ui::color(_edit->focused() ? C::FieldBorderFocus : C::FieldBorder)
+        );
         if (_chip->visible()) { // the chip: accent.subtleBg, radius 12
             const RectF c = _chip->frame(), l = _chipLabel->frame();
             p.fillRoundRect({c.x + l.x, c.y + l.y, l.w, l.h}, 12, ui::color(C::AccentSubtle));
@@ -181,10 +188,10 @@ public:
         if (!_chip->visible())
             return;
         // The chip: accent.subtleBg, replyLink bold text, radius 12, padding 2/8,
-        // then the flat "×" (#666, #333 on hover).
+        // then the flat "×" (form text muted, form text on hover).
         const RectF c  = _chip->frame();
         const RectF x  = _x->frame();
-        const Color xc = _x->hovered() ? 0xff333333U : 0xff666666U;
+        const Color xc = ui::color(_x->hovered() ? C::FormText : C::FormTextMuted);
         const float cx = c.x + x.x + 9, cy = c.y + x.y + 9;
         p.drawLine({cx - 4, cy - 4}, {cx + 4, cy + 4}, 1.3f, xc);
         p.drawLine({cx + 4, cy - 4}, {cx - 4, cy + 4}, 1.3f, xc);
@@ -246,6 +253,19 @@ private:
             return fq.empty() || utf8::containsFoldedNeedle(s, fq);
         };
         std::vector<bool> hasDm(st.userCount(), false); // people with a DM
+        // Ranked, then listed in that order: someone's DM — or, without one
+        // yet, the person — beats a group DM or channel that merely has the
+        // name in it (the roster lists group DMs before DMs, so a person
+        // sharing a lot of group DMs would otherwise be pushed out of sight),
+        // and a label that starts with the query beats one that holds it.
+        struct Hit {
+            int    rank;
+            Target target;
+        };
+        std::vector<Hit> hits;
+        auto             rankOf = [&](bool direct, std::string_view label) {
+            return (direct ? 0 : 2) + (str::startsWith(utf8::foldCase(label), fq) ? 0 : 1);
+        };
         for (ConvRef c = 0; c < st.conversationCount(); ++c) {
             const auto &cv = st.conversation(c);
             if (cv.kind == ConvKind::Dm && cv.dmUser < hasDm.size())
@@ -256,8 +276,11 @@ private:
             if ((chans && direct) || (people && !direct))
                 continue;
             const std::string name = st.displayName(c);
-            if (match(name))
-                out.push_back({c, kNoUser, direct ? name : "#" + name});
+            if (!match(name))
+                continue;
+            hits.push_back(
+                {rankOf(cv.kind == ConvKind::Dm, name), {c, kNoUser, direct ? name : "#" + name}}
+            );
         }
         if (!chans) { // people without a DM (up to 50): prefix matches first
             struct Person {
@@ -282,8 +305,15 @@ private:
                 return a.prefix != b.prefix ? a.prefix : a.folded < b.folded;
             });
             for (auto it = ppl.begin(); it != top; ++it)
-                out.push_back(std::move(it->target));
+                hits.push_back({it->prefix ? 0 : 1, std::move(it->target)});
         }
+        // Stable: within a rank the workspace's order stands (people
+        // without a DM after the DMs, alphabetically).
+        std::stable_sort(hits.begin(), hits.end(), [](const Hit &a, const Hit &b) {
+            return a.rank < b.rank;
+        });
+        for (Hit &h : hits)
+            out.push_back(std::move(h.target));
         if (out.empty())
             return;
         auto l = std::make_unique<PickerList>(*this, std::move(out));
@@ -436,6 +466,69 @@ contextFor(const screens::Context &base, model::Store &store, model::Backend &ba
     return c;
 }
 
+// Slack has no general escape for its Markdown marks; inline code is the
+// supported way to keep them literal. Ordinary names keep the existing
+// presentation; names with marks use a code span (and a backtick, which a
+// code span cannot contain, becomes an apostrophe).
+std::string formatForwardName(std::string_view name, bool bold) {
+    if (name.empty())
+        return {};
+    const std::string escaped = mrkdwn::escapeEntities(name);
+    if (escaped.find_first_of("*_~`") == std::string::npos)
+        return bold ? str::concat({"*", escaped, "*"}) : escaped;
+    std::string literal;
+    literal.reserve(name.size());
+    for (const char c : name) {
+        if (c == '`')
+            literal += '\'';
+        else if (c == '\n' || c == '\r')
+            literal += ' ';
+        else
+            literal += c;
+    }
+    return str::concat({"`", mrkdwn::escapeEntities(literal), "`"});
+}
+
+// A message as a forward shows it: its text as one blockquote under a line
+// naming who wrote it and where, every line quoted (an empty one stays a bare
+// ">") so the marks hold together as one quote in the target. `text` is the
+// message's own mrkdwn, portable already when another workspace takes it.
+// Only a public channel is named: a private channel's name, or who is in a
+// DM or group DM, is not for the forward's readers. The names are escaped,
+// so a "<!channel>" in one stays words.
+std::string quotedForward(
+    const model::Store &st, ConvRef from, const model::Message &m, std::string_view text
+) {
+    const std::string_view rawWho = screens::authorName(st, m);
+    const std::string      who    = formatForwardName(rawWho, true);
+    const std::string      name =
+        st.conversation(from).kind == ConvKind::Channel
+            ? formatForwardName(st.displayName(from), false)
+            : std::string();
+    // A quote line: the text, or "" for a blank one — which must still be a
+    // quote line, or the quote would end there.
+    const auto        quote = [](std::string_view line) {
+        return line.empty() ? std::string(">") : str::concat({"> ", line});
+    };
+    std::string out;
+    const auto  add = [&out, &quote](std::string_view line) {
+        if (!out.empty())
+            out += '\n';
+        out += quote(line);
+    };
+    if (!rawWho.empty()) { // no author to name (nothing to attribute): the text alone
+        add(name.empty() ? i18n::arg(tr("%1 wrote:"), who)
+                         : i18n::arg(tr("%1 wrote in #%2:"), who, name));
+    }
+    for (size_t at = 0; at < text.size();) {
+        const size_t nl  = text.find('\n', at);
+        const size_t end = nl == std::string_view::npos ? text.size() : nl;
+        add(text.substr(at, end - at));
+        at = end + 1;
+    }
+    return out;
+}
+
 class ForwardDialog final : public Dialog {
 public:
     ForwardDialog(
@@ -570,18 +663,28 @@ private:
         if (!t || !m)
             return;
         const ForwardWorkspace &to   = _workspaces[size_t(_target)];
-        // No attribution header: the text is re-posted as mine — verbatim in
+        // As a quote naming its author and conversation — the text verbatim in
         // its own workspace, else as portable mrkdwn (mentions and channels
-        // become the words they read as here) — after
-        // the comment on its own line.
-        const bool              same = to.store == &_src->store();
+        // become the words they read as here) — with the comment above it, so
+        // the target reads a forward as one and not as something I wrote.
         const std::string       comment(str::trim(mrkdwn::convertOutgoing(_composer->mrkdwn())));
-        const std::string       fwd     = !_onlyFile.empty() ? std::string()
-                                          : same ? m->text
-                                                 : portableMrkdwn(_src->store(), m->text);
-        const std::string       full    = comment.empty() ? fwd
-                                          : fwd.empty()   ? comment
-                                                          : str::concat({comment, "\n", fwd});
+        std::string             body;
+        if (_onlyFile.empty()) // a file forward carries the file, not the text
+            // Always make tokens portable: a forward is quoted content, and
+            // Slack still treats <!channel>, <@U…> and <!subteam^…> in a
+            // blockquote as mention tokens. Plain labels keep the quote inert.
+            body = portableMrkdwn(_src->store(), m->text);
+        // A message of files only is attributed too (the files follow; one
+        // without a source goes nowhere, so it is no reason for a header).
+        bool hasFiles = false;
+        for (const model::File &f : m->files())
+            hasFiles = hasFiles || !f.source().empty();
+        const bool        quote = _onlyFile.empty() && (!body.empty() || hasFiles);
+        const std::string quoted =
+            quote ? quotedForward(_src->store(), _conv, *m, body) : std::string();
+        const std::string full    = comment.empty()  ? quoted
+                                    : quoted.empty() ? comment
+                                                     : str::concat({comment, "\n\n", quoted});
         // Into the pick — a DM may be opened first — once the files are
         // here, unless that workspace went meanwhile; downloaded copies go
         // when the send is over.
@@ -1159,19 +1262,31 @@ std::string portableMrkdwn(const model::Store &source, std::string_view in) {
         std::string words;
         if (tok[0] == '@') {
             const model::UserRef u = source.findUser(id);
-            words                  = "@" + (u != model::kNoUser && !source.user(u).placeholder
-                                                ? std::string(source.user(u).label())
-                                            : !label.empty() ? label
-                                                             : std::string(id));
+            std::string          name;
+            if (u != model::kNoUser && !source.user(u).placeholder)
+                name = std::string(source.user(u).label());
+            else if (!label.empty())
+                name = label;
+            else
+                name = std::string(id);
+            words = "@" + formatForwardName(name, false);
         } else if (tok[0] == '#') {
+            // A channel name is safe only for a public channel we know. A
+            // private channel (or an unknown one whose label may be sensitive)
+            // gets a generic label instead.
             const model::ConvRef c = source.findConversation(id);
-            words                  = "#" + (c != model::kNoConv ? source.displayName(c)
-                                            : !label.empty()    ? label
-                                                                : std::string(id));
+            if (c != model::kNoConv && source.conversation(c).kind == ConvKind::Channel &&
+                !source.displayName(c).empty())
+                words = "#" + formatForwardName(source.displayName(c), false);
+            else if (c != model::kNoConv)
+                words = "private channel";
+            else
+                words = "unknown channel";
         } else if (str::startsWith(id, "subteam^")) {
-            words = !label.empty() ? label : "@" + std::string(id.substr(8));
-            if (words[0] != '@')
-                words.insert(0, 1, '@');
+            std::string name = !label.empty() ? label : std::string(id.substr(8));
+            if (!name.empty() && name[0] == '@')
+                name.erase(0, 1);
+            words = "@" + formatForwardName(name, false);
         } else if (str::startsWith(id, "date^")) {
             words = label;
         } else { // here, channel, everyone: plain words, no broadcast
