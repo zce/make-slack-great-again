@@ -2655,9 +2655,95 @@ TEST("forward: Markdown marks in an author's name cannot break the quote header"
     REQUIRE(h.store.conversation(general).messages.size() == before + 1);
     CHECK_STR(
         h.store.conversation(general).messages.back().text,
-        "> *Eve &#42;Lead&#42; &#95;Ops&#95; &#96;x&#96; &#126;y&#126;* "
-        "wrote in #design:\n> hush"
+        "> `Eve *Lead* _Ops_ 'x' ~y~` wrote in #design:\n> hush"
     );
+}
+
+TEST("forward: Markdown marks in a public channel name use inline code") {
+    Harness             h;
+    const ConvRef       general = h.conv("C0GENERAL");
+    model::Conversation marked;
+    marked.id     = "C0MARKED";
+    marked.name   = "plan_*_2026";
+    marked.kind   = ConvKind::Channel;
+    marked.member = true;
+    const ConvRef c = h.store.addConversation(std::move(marked));
+    Message       m;
+    m.ts   = h.store.conversation(general).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "hush";
+    h.store.addMessage(c, std::move(m));
+    h.ctx.forwardMessage(c, h.store.conversation(c).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Mira Okafor* wrote in #`plan_*_2026`:\n> hush"
+    );
+}
+
+TEST("forward: private and unknown channel references do not leak names") {
+    Harness             h;
+    const ConvRef       design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    model::Conversation secret;
+    secret.id     = "C0SECRET";
+    secret.name   = "secret-launch";
+    secret.kind   = ConvKind::Private;
+    secret.member = true;
+    h.store.addConversation(std::move(secret));
+    Message m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "<#C0DESIGN|design> <#C0SECRET|secret-launch> "
+             "<#CUNKNOWN|super-secret> <#CUNKNOWN2>";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    const std::string &text = h.store.conversation(general).messages.back().text;
+    CHECK_STR(
+        text,
+        "> *Mira Okafor* wrote in #design:\n"
+        "> #design private channel unknown channel unknown channel"
+    );
+    CHECK(text.find("secret-launch") == std::string::npos);
+    CHECK(text.find("super-secret") == std::string::npos);
 }
 
 TEST("forward: a group DM is not named, and its members stay out of the quote") {
@@ -5591,6 +5677,27 @@ TEST("forward: portable text for another workspace — mentions become words") {
             " see #design and @here, @devs: *bold* <https://x.test|link> :tada: Sep 1"
     );
     CHECK_STR(shell::portableMrkdwn(w.a, "<@U0NOBODY|ghost> &lt;b&gt;"), "@ghost &lt;b&gt;");
+    // Cross-workspace source-channel names follow the same privacy and
+    // formatting rules.
+    model::Conversation secret;
+    secret.id     = "C0SECRET";
+    secret.name   = "secret-launch";
+    secret.kind   = ConvKind::Private;
+    secret.member = true;
+    w.a.addConversation(std::move(secret));
+    model::Conversation marked;
+    marked.id     = "C0MARKED";
+    marked.name   = "plan_*_2026";
+    marked.kind   = ConvKind::Channel;
+    marked.member = true;
+    w.a.addConversation(std::move(marked));
+    CHECK_STR(
+        shell::portableMrkdwn(
+            w.a, "<#C0SECRET|secret-launch> <#CUNKNOWN|super-secret> <#CUNKNOWN2>"
+        ),
+        "private channel unknown channel unknown channel"
+    );
+    CHECK_STR(shell::portableMrkdwn(w.a, "<#C0MARKED|label>"), "#`plan_*_2026`");
 }
 
 TEST("forward: with two workspaces a picker sends it into the other one") {

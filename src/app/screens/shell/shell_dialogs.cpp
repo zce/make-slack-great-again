@@ -466,23 +466,27 @@ contextFor(const screens::Context &base, model::Store &store, model::Backend &ba
     return c;
 }
 
-// A name inside the quote's emphasis must not supply Markdown marks. Numeric
-// references are msga's spelling for a literal mark (mrkdwn::decodeEntities),
-// so the name still reads the same but cannot open or close formatting.
-std::string escapeForwardName(std::string_view name) {
+// Slack has no general escape for its Markdown marks; inline code is the
+// supported way to keep them literal. Ordinary names keep the existing
+// presentation; names with marks use a code span (and a backtick, which a
+// code span cannot contain, becomes an apostrophe).
+std::string formatForwardName(std::string_view name, bool bold) {
+    if (name.empty())
+        return {};
     const std::string escaped = mrkdwn::escapeEntities(name);
-    std::string       out;
-    out.reserve(escaped.size());
-    for (const char c : escaped) {
-        if (c == '*' || c == '_' || c == '~' || c == '`') {
-            out += "&#";
-            out += str::number(static_cast<unsigned char>(c));
-            out += ';';
-        } else {
-            out += c;
-        }
+    if (escaped.find_first_of("*_~`") == std::string::npos)
+        return bold ? str::concat({"*", escaped, "*"}) : escaped;
+    std::string literal;
+    literal.reserve(name.size());
+    for (const char c : name) {
+        if (c == '`')
+            literal += '\'';
+        else if (c == '\n' || c == '\r')
+            literal += ' ';
+        else
+            literal += c;
     }
-    return out;
+    return str::concat({"`", mrkdwn::escapeEntities(literal), "`"});
 }
 
 // A message as a forward shows it: its text as one blockquote under a line
@@ -495,10 +499,12 @@ std::string escapeForwardName(std::string_view name) {
 std::string quotedForward(
     const model::Store &st, ConvRef from, const model::Message &m, std::string_view text
 ) {
-    const std::string who   = escapeForwardName(screens::authorName(st, m));
-    const std::string name  = st.conversation(from).kind == ConvKind::Channel
-                                  ? mrkdwn::escapeEntities(st.displayName(from))
-                                  : std::string();
+    const std::string_view rawWho = screens::authorName(st, m);
+    const std::string      who    = formatForwardName(rawWho, true);
+    const std::string      name =
+        st.conversation(from).kind == ConvKind::Channel
+            ? formatForwardName(st.displayName(from), false)
+            : std::string();
     // A quote line: the text, or "" for a blank one — which must still be a
     // quote line, or the quote would end there.
     const auto        quote = [](std::string_view line) {
@@ -510,10 +516,9 @@ std::string quotedForward(
             out += '\n';
         out += quote(line);
     };
-    if (!who.empty()) { // no author to name (nothing to attribute): the text alone
-        const std::string named = str::concat({"*", who, "*"});
-        add(name.empty() ? i18n::arg(tr("%1 wrote:"), named)
-                         : i18n::arg(tr("%1 wrote in #%2:"), named, name));
+    if (!rawWho.empty()) { // no author to name (nothing to attribute): the text alone
+        add(name.empty() ? i18n::arg(tr("%1 wrote:"), who)
+                         : i18n::arg(tr("%1 wrote in #%2:"), who, name));
     }
     for (size_t at = 0; at < text.size();) {
         const size_t nl  = text.find('\n', at);
@@ -1262,10 +1267,17 @@ std::string portableMrkdwn(const model::Store &source, std::string_view in) {
                                             : !label.empty() ? label
                                                              : std::string(id));
         } else if (tok[0] == '#') {
+            // A channel name is safe only for a public channel we know. A
+            // private channel (or an unknown one whose label may be sensitive)
+            // gets a generic label instead.
             const model::ConvRef c = source.findConversation(id);
-            words                  = "#" + (c != model::kNoConv ? source.displayName(c)
-                                            : !label.empty()    ? label
-                                                                : std::string(id));
+            if (c != model::kNoConv && source.conversation(c).kind == ConvKind::Channel &&
+                !source.displayName(c).empty())
+                words = "#" + formatForwardName(source.displayName(c), false);
+            else if (c != model::kNoConv)
+                words = "private channel";
+            else
+                words = "unknown channel";
         } else if (str::startsWith(id, "subteam^")) {
             words = !label.empty() ? label : "@" + std::string(id.substr(8));
             if (words[0] != '@')
