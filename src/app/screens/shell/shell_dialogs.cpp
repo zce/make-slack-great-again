@@ -466,6 +466,25 @@ contextFor(const screens::Context &base, model::Store &store, model::Backend &ba
     return c;
 }
 
+// A name inside the quote's emphasis must not supply Markdown marks. Numeric
+// references are msga's spelling for a literal mark (mrkdwn::decodeEntities),
+// so the name still reads the same but cannot open or close formatting.
+std::string escapeForwardName(std::string_view name) {
+    const std::string escaped = mrkdwn::escapeEntities(name);
+    std::string       out;
+    out.reserve(escaped.size());
+    for (const char c : escaped) {
+        if (c == '*' || c == '_' || c == '~' || c == '`') {
+            out += "&#";
+            out += str::number(static_cast<unsigned char>(c));
+            out += ';';
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 // A message as a forward shows it: its text as one blockquote under a line
 // naming who wrote it and where, every line quoted (an empty one stays a bare
 // ">") so the marks hold together as one quote in the target. `text` is the
@@ -476,7 +495,7 @@ contextFor(const screens::Context &base, model::Store &store, model::Backend &ba
 std::string quotedForward(
     const model::Store &st, ConvRef from, const model::Message &m, std::string_view text
 ) {
-    const std::string who   = mrkdwn::escapeEntities(screens::authorName(st, m));
+    const std::string who   = escapeForwardName(screens::authorName(st, m));
     const std::string name  = st.conversation(from).kind == ConvKind::Channel
                                   ? mrkdwn::escapeEntities(st.displayName(from))
                                   : std::string();
@@ -643,11 +662,13 @@ private:
         // its own workspace, else as portable mrkdwn (mentions and channels
         // become the words they read as here) — with the comment above it, so
         // the target reads a forward as one and not as something I wrote.
-        const bool              same = to.store == &_src->store();
         const std::string       comment(str::trim(mrkdwn::convertOutgoing(_composer->mrkdwn())));
         std::string             body;
         if (_onlyFile.empty()) // a file forward carries the file, not the text
-            body = same ? m->text : portableMrkdwn(_src->store(), m->text);
+            // Always make tokens portable: a forward is quoted content, and
+            // Slack still treats <!channel>, <@U…> and <!subteam^…> in a
+            // blockquote as mention tokens. Plain labels keep the quote inert.
+            body = portableMrkdwn(_src->store(), m->text);
         // A message of files only is attributed too (the files follow; one
         // without a source goes nowhere, so it is no reason for a header).
         bool hasFiles = false;

@@ -2525,6 +2525,44 @@ TEST("forward: the text is quoted, under its author's and the channel's names") 
     );
 }
 
+TEST("forward: mention tokens become plain text in the quote") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    Message       m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = h.store.findUser("U0MIRA");
+    m.text = "<!channel> <!here> <!everyone> <@U0MIRA> <!subteam^S1|@devs> "
+             "*bold* _it_ <https://x.test/p|the plan>";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Mira Okafor* wrote in #design:\n"
+        "> @channel @here @everyone @Mira Okafor @devs *bold* _it_ "
+        "<https://x.test/p|the plan>"
+    );
+}
+
 // Where a message was written is named only for a public channel: a private
 // channel's name, or who is in a DM, stays out of the forward. A name is
 // escaped, so a "<!channel>" in it can't ping the target.
@@ -2578,6 +2616,48 @@ TEST("forward: a private channel or DM is not named, and the author's name is es
             "> *Eve &lt;!channel&gt; &amp; co* wrote:\n> hush"
         );
     }
+}
+
+TEST("forward: Markdown marks in an author's name cannot break the quote header") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), general = h.conv("C0GENERAL");
+    model::User   eve;
+    eve.id          = "U0EVE";
+    eve.name        = "eve";
+    eve.displayName = "Eve *Lead* _Ops_ `x` ~y~";
+    const UserRef eveRef = h.store.addUser(std::move(eve));
+    h.store.usersChanged();
+    Message m;
+    m.ts   = h.store.conversation(design).messages.back().ts + 1000;
+    m.user = eveRef;
+    m.text = "hush";
+    h.store.addMessage(design, std::move(m));
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    const size_t                          before = h.store.conversation(general).messages.size();
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Forward")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(fwd != nullptr);
+    REQUIRE(fwd->enabled());
+    fwd->activate();
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(general).messages.back().text,
+        "> *Eve &#42;Lead&#42; &#95;Ops&#95; &#96;x&#96; &#126;y&#126;* "
+        "wrote in #design:\n> hush"
+    );
 }
 
 TEST("forward: a group DM is not named, and its members stay out of the quote") {
