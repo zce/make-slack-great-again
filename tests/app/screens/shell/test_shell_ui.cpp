@@ -1231,6 +1231,50 @@ TEST("canvas: table cells keep escaped pipes and empty trailing cells") {
     CHECK(find(&cp.reader(), "x \\| y") == nullptr);
 }
 
+TEST("canvas: malformed table delimiters fall back to text") {
+    Harness       h;
+    const ConvRef eng = h.conv("C0ENG");
+    bool          created = false;
+    h.backend.createChannelCanvas(eng, "", [&](std::string, std::string) { created = true; });
+    REQUIRE(until([&] { return created; }));
+    h.sh->open(eng);
+    pump();
+    h.sh->showCanvas(true);
+    shell::CanvasPage &cp = h.sh->canvasPage();
+    pump(30);
+    std::function<bool(ui::View *, std::string_view)> has = [&](ui::View *v, std::string_view s) {
+        if (v->accessibleName() == s)
+            return true;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (has(v->child(i), s))
+                return true;
+        return false;
+    };
+    const auto show = [&](std::string md) {
+        cp.edit(0);
+        cp.body().setText(std::move(md));
+        cp.stopEditing();
+        pump();
+    };
+    // ": " is not a delimiter cell.
+    show("| shell output\n| --- | : |\n");
+    CHECK(has(&cp.reader(), "| shell output"));
+    CHECK_FALSE(has(&cp.reader(), "shell output"));
+    // The header and delimiter must have the same number of cells.
+    show("| a | b |\n| --- |\n");
+    CHECK(has(&cp.reader(), "| a | b |"));
+    // A delimiter cell may contain only colons at its ends and dashes inside.
+    show("| a | b |\n| --- | --x-- |\n");
+    CHECK(has(&cp.reader(), "| a | b |"));
+    // Valid alignment delimiters still render a table.
+    show("| A | B |\n| :--- | ---: |\n| x | y |\n");
+    CHECK(has(&cp.reader(), "A"));
+    CHECK(has(&cp.reader(), "B"));
+    CHECK(has(&cp.reader(), "x"));
+    CHECK(has(&cp.reader(), "y"));
+    CHECK_FALSE(has(&cp.reader(), "| A | B |"));
+}
+
 TEST("canvas: the 256th distinct link resolves to its own destination") {
     Harness       h;
     const ConvRef eng = h.conv("C0ENG");

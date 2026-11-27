@@ -117,18 +117,6 @@ bool startsWith(std::string_view s, std::string_view p) {
     return s.substr(0, p.size()) == p;
 }
 
-// A markdown table's rule row ("| --- | :-: |").
-bool tableRule(std::string_view line) {
-    bool dash = false;
-    for (const char c : line) {
-        if (c == '-')
-            dash = true;
-        else if (c != '|' && c != ':' && c != ' ')
-            return false;
-    }
-    return dash;
-}
-
 // A pipe escaped by an odd run of backslashes is cell text, not a separator.
 bool escapedPipe(std::string_view text, uint32_t at, uint32_t from) {
     size_t slashes = 0;
@@ -159,6 +147,35 @@ tableCells(std::string_view text, uint32_t from, uint32_t to) {
     if (start < to)
         add(start, to);
     return out;
+}
+
+// A delimiter cell is an optional leading colon, one or more dashes, and an
+// optional trailing colon ("---", ":--:", "--:"); no other characters.
+bool tableDelimiterCell(std::string_view cell) {
+    if (cell.empty())
+        return false;
+    size_t at = 0, end = cell.size();
+    if (cell[at] == ':')
+        ++at;
+    if (end > at && cell[end - 1] == ':')
+        --end;
+    if (at >= end)
+        return false;
+    for (size_t i = at; i < end; ++i)
+        if (cell[i] != '-')
+            return false;
+    return true;
+}
+
+// A markdown table's rule row ("| --- | :-: |").
+bool tableRule(std::string_view line) {
+    const auto cells = tableCells(line, 0, uint32_t(line.size()));
+    if (cells.empty())
+        return false;
+    for (const auto &[from, to] : cells)
+        if (!tableDelimiterCell(line.substr(from, to - from)))
+            return false;
+    return true;
 }
 
 } // namespace
@@ -491,10 +508,19 @@ void CanvasPage::rebuildReader() {
     auto             flushTable = [&] {
         if (table.empty())
             return;
-        // A table needs the header rule row; a paragraph that merely starts
-        // with "|" is ordinary text and keeps its pipes.
-        if (table.size() < 2 ||
-            !tableRule(std::string_view(t).substr(table[1].from, table[1].to - table[1].from))) {
+        // A table needs the header rule row, and header and rule must have the
+        // same column count; a paragraph that merely starts with "|" is
+        // ordinary text and keeps its pipes.
+        bool valid = table.size() >= 2;
+        if (valid) {
+            const auto headerCells = tableCells(t, table[0].from, table[0].to);
+            const auto ruleCells   = tableCells(t, table[1].from, table[1].to);
+            valid                  = !headerCells.empty() && headerCells.size() == ruleCells.size() &&
+                                     tableRule(std::string_view(t).substr(
+                                         table[1].from, table[1].to - table[1].from
+                                     ));
+        }
+        if (!valid) {
             View *in = host(tableQuoted);
             for (const Row &r : table)
                 label(in, r.from, r.to, body);
@@ -507,9 +533,7 @@ void CanvasPage::rebuildReader() {
         grid->setBackground(C::Surface, 6);
         grid->setBorder(C::TableBorder);
         grid->setClipChildren(true);
-        const bool header =
-            table.size() > 1 &&
-            tableRule(std::string_view(t).substr(table[1].from, table[1].to - table[1].from));
+        const bool header = true;
         size_t cols = 0;
         for (const Row &r : table)
             cols = std::max(cols, tableCells(t, r.from, r.to).size());
