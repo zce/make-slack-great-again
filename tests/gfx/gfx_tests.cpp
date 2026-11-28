@@ -995,7 +995,7 @@ void testSnapped() {
 }
 
 void testIcons() {
-    CHECK(kIconCount == 97); // gfx/ui/*.svg + tray plane + logo + four presence states
+    CHECK(kIconCount == 98); // gfx/ui/*.svg + tray plane + logo + four presence states
     for (int size : {16, 20, 24, 48}) {
         int bad = 0;
         for (int i = 0; i < kIconCount; ++i) {

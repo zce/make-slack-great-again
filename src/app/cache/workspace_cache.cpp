@@ -411,6 +411,18 @@ void fields(IO &io, model::Conversation &c) {
     io.byte(shared);
     if (io.reading())
         c.extShared = shared == 0 ? std::nullopt : std::optional<bool>(shared == 2);
+    // Featured workflows: [trigger, title] each (their descriptions are
+    // looked up again). Appended after extShared so older records still read.
+    const size_t n = io.open(c.featuredWorkflows.size());
+    if (io.reading())
+        c.featuredWorkflows.resize(n);
+    for (model::WorkflowLink &w : c.featuredWorkflows) {
+        io.open(2);
+        io.str(w.trigger);
+        io.str(w.title);
+        io.close();
+    }
+    io.close();
 }
 
 // ── Files ───────────────────────────────────────────────────────────────────
