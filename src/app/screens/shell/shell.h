@@ -190,11 +190,29 @@ public:
     // asked for again when it opens and they are older than 5 minutes.
     const std::vector<model::Bookmark> &bookmarks() const;
     void                                lookUpBookmarks(model::ConvRef conv);
-    // The Bookmarks tab's menu: one item per bookmark; a pick opens it.
+    // The Bookmarks tab's menu: one item per link bookmark (the workflows
+    // have their own tab); a pick opens it.
     std::vector<ui::MenuItem>           bookmarkItems() const;
     void                                openBookmark(size_t i);
     void                                showBookmarksMenu();
 
+    // ── Workflows (Capabilities::workflows) ──
+    // The open conversation's workflows: the featured ones
+    // (Conversation::featuredWorkflows), then the bookmarked ones not
+    // featured too, each with its title as Slack has it now when looked up.
+    struct ConvWorkflows {
+        std::vector<model::WorkflowLink> featured, bookmarked;
+        bool empty() const { return featured.empty() && bookmarked.empty(); }
+    };
+    ConvWorkflows             conversationWorkflows() const;
+    // The Workflows tab's menu: a "Featured" and a "Bookmarked" part; a pick
+    // starts that workflow.
+    std::vector<ui::MenuItem> workflowItems() const;
+    void                      showWorkflowsMenu();
+    // Starts a workflow from the open conversation: its form (if it has one)
+    // opens as a dialog; a failure goes on the error banner. One at a time.
+    void                      startWorkflow(const std::string &trigger);
+    bool                      workflowStarting() const { return _workflowStarting; }
     // The sidebar's entries over the sections, each an overview page in the
     // content area in the conversation's place, no composer, refilled on
     // every open: Threads (the followed threads; the cards have their own
@@ -505,8 +523,13 @@ private:
         std::vector<model::Bookmark> items;
         int64_t                      at = 0; // epoch secs
     };
-    std::unordered_map<std::string, BookmarkList> _bookmarks;
-    std::string bookmarkKey(model::ConvRef conv) const;
+    std::unordered_map<std::string, BookmarkList>        _bookmarks;
+    // Workflow titles as Slack has them now, by "<workspace id>/<trigger>"
+    // (a bookmark keeps the title it was made with).
+    std::unordered_map<std::string, model::WorkflowLink> _workflowInfo;
+    bool                                                 _workflowStarting = false;
+    void                  lookUpWorkflowTitles(const std::vector<model::Bookmark> &items);
+    std::string           bookmarkKey(model::ConvRef conv) const;
 
     model::ConvRef              _current = model::kNoConv;
     NavHistory                  _nav;

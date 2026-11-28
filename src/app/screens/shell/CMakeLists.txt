@@ -31,6 +31,7 @@ add_library(msga_screens_shell STATIC
     sidebar.cpp
     sidebar_footer.cpp
     sidebar_model.cpp
+    workflow_form.cpp
     overview_page.cpp
     saved_page.cpp
     scheduled_page.cpp

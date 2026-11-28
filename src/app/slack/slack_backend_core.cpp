@@ -23,6 +23,7 @@ SlackBackend::SlackBackend(
     _read           = newRead(*this);
     _write          = newWrite(*this);
     _live           = newLive(*this);
+    _flows          = newFlows(*this);
 }
 
 SlackBackend::~SlackBackend() {
@@ -34,6 +35,7 @@ SlackBackend::~SlackBackend() {
     for (net::RequestId id : _inflight)
         _client.cancel(id);
     _inflight.clear();
+    deleteFlows(_flows); // holds the presence link: before it goes
     deleteLive(_live);
     deleteWrite(_write);
     deleteRead(_read);

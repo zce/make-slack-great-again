@@ -675,12 +675,22 @@ ConvTabs::ConvTabs() {
     addTab(Icon::StickyNotePlus, tr("Add canvas"));
     addTab(Icon::Paperclip, tr("Files"));
     addTab(Icon::Bookmark, tr("Bookmarks"));
+    addTab(Icon::Zap, tr("Workflows"));
     _tabs[kFiles]->setVisible(false);
     _tabs[kBookmarks]->setVisible(false);
+    _tabs[kWorkflows]->setVisible(false);
     _tabs[kBookmarks]->onClick = [this] {
         if (onBookmarks)
             onBookmarks();
     };
+    _tabs[kWorkflows]->onClick = [this] {
+        if (onWorkflows)
+            onWorkflows();
+    };
+}
+
+void ConvTabs::setWorkflows(bool visible) {
+    _tabs[kWorkflows]->setVisible(visible);
 }
 
 void ConvTabs::setFiles(bool visible) {
@@ -694,9 +704,10 @@ void ConvTabs::setBookmarks(bool visible) {
 }
 
 void ConvTabs::layout() {
-    // Too narrow for every tab with its text: Files and Bookmarks show their
-    // icons alone. MSGA puts a right-aligned huddle action area in this same
-    // strip, so its measured width must come out of the tab budget too.
+    // Too narrow for every tab with its text: Files, Bookmarks and Workflows
+    // show their icons alone. MSGA puts a right-aligned huddle action area in
+    // this same strip, so its measured width must come out of the tab budget
+    // too.
     const Style &st   = currentStyle();
     float        need = 0;
     for (View *v : _tabs)
@@ -714,7 +725,7 @@ void ConvTabs::layout() {
         reserved += c->measure(kInf, kInf).w + cs.margin.l + cs.margin.r + st.gap;
     }
     const bool compact = need + reserved > width() - st.pad.l - st.pad.r;
-    for (int i : {kFiles, kBookmarks})
+    for (int i : {kFiles, kBookmarks, kWorkflows})
         static_cast<Tab *>(_tabs[size_t(i)])->setCompact(compact);
     TabStrip::layout();
 }
